@@ -1,0 +1,219 @@
+@startuml class-backend-admin
+' Propósito: jerarquía OO del módulo admin (User/Role/Permission) — mixins, BaseRepository, services funcionales
+' Última actualización: 2026-05-26
+' Código de referencia: backend/app/modules/admin/ y backend/app/shared/
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 50
+skinparam ranksep 70
+skinparam defaultFontSize 13
+hide empty members
+
+title Class — Backend · Admin module
+
+' ─────────────────────────────────────────────────────────────
+' Shared layer — mixins y base genérica
+' ─────────────────────────────────────────────────────────────
+package "app.shared" <<Frame>> {
+
+  together {
+    class PrimaryKeyMixin <<mixin>> {
+      +id: str <<UUID>>
+    }
+    class ActiveMixin <<mixin>> {
+      +active: bool
+    }
+    class SoftDeleteMixin <<mixin>> {
+      +deleted_at: datetime?
+    }
+    class TimestampMixin <<mixin>> {
+      +created_on: datetime
+      +created_by: str
+      +updated_on: datetime
+      +updated_by: str
+    }
+  }
+
+  abstract class "BaseRepository<ModelT>" as BaseRepository {
+    +ALLOWED_FIELDS: set<str>
+    +model: type<ModelT>
+    --
+    +get_by_id(db, id, ...): ModelT?
+    +get_paginated(db, query_request, load): tuple<list, int>
+    +create(db, obj): ModelT
+    +update(db, obj, changes): ModelT
+    +soft_delete(db, obj): None
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Domain models — SQLAlchemy ORM
+' Nota: las tablas de asociación (user_role, role_permission,
+' user_permission) NO se muestran como clases — son labels de
+' las relaciones M:N abajo.
+' ─────────────────────────────────────────────────────────────
+package "app.modules.admin.models" <<Frame>> {
+
+  together {
+    class User <<entity>> {
+      +email: str <<unique>>
+      +password_hash: str
+      +first_name: str
+      +last_name: str
+      +second_last_name: str?
+      +document_type: str?
+      +document_number: str?
+      +phone: str?
+      --
+      +full_name: str <<property>>
+      +effective_permission_codes(): list<str>
+    }
+
+    class Role <<entity>> {
+      +name: str <<unique>>
+      +description: str
+    }
+
+    class Permission <<entity>> {
+      +code: str <<unique>>
+      +name: str
+      +description: str
+      +module: str
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Repositories — CRUD async tipado
+' ─────────────────────────────────────────────────────────────
+package "app.modules.admin.repositories" <<Frame>> {
+
+  together {
+    class UserRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_email(db, email): User?
+      +get_full(db, user_id): User?
+    }
+    class RoleRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_ids(db, ids): list<Role>
+    }
+    class PermissionRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_ids(db, ids): list<Permission>
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services — módulos funcionales (NO clases) con stereotype <<module>>
+' ─────────────────────────────────────────────────────────────
+package "app.modules.admin.services" <<Frame>> {
+
+  together {
+    class "user.py" as user_svc <<module>> {
+      +get_by_id(db, user_id)
+      +list_paginated(db, query)
+      +create(db, payload, actor_id)
+      +update(db, user_id, payload, actor_id)
+      +change_password(db, user, payload)
+    }
+
+    class "role.py" as role_svc <<module>> {
+      +get_by_id(...)
+      +list_paginated(...)
+      +create(...) / update(...) / delete(...)
+    }
+
+    class "permission.py" as perm_svc <<module>> {
+      +list_paginated(...)
+      +list_options(...)
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Herencia múltiple (mixins → entidades)
+' Cada entidad hereda de los 4 mixins. Lo dibujamos solo desde User
+' como representante; en el código las 3 entidades repiten el patrón.
+' Indicamos las extras como comentario/nota para no saturar.
+' ─────────────────────────────────────────────────────────────
+PrimaryKeyMixin <|-- User
+ActiveMixin     <|-- User
+SoftDeleteMixin <|-- User
+TimestampMixin  <|-- User
+
+PrimaryKeyMixin <|-- Role
+TimestampMixin  <|-- Role
+
+PrimaryKeyMixin <|-- Permission
+TimestampMixin  <|-- Permission
+
+note bottom of TimestampMixin
+  **Patrón aplicado a las 3 entidades**
+  ""User"", ""Role"" y ""Permission""
+  heredan los 4 mixins:
+  ""PrimaryKeyMixin, ActiveMixin,""
+  ""SoftDeleteMixin, TimestampMixin""
+
+  (En el diagrama solo se dibujan algunas
+  herencias para no saturar visualmente.)
+end note
+
+' Repositorios extienden el genérico parametrizado
+BaseRepository <|-- UserRepository       : "<User>"
+BaseRepository <|-- RoleRepository       : "<Role>"
+BaseRepository <|-- PermissionRepository : "<Permission>"
+
+' Relaciones de dominio M:N (las tablas de asociación van como label)
+User "1..*" --- "0..*" Role        : "user_role"
+Role "1..*" --- "0..*" Permission  : "role_permission"
+User "1..*" --- "0..*" Permission  : "user_permission\n(directa)"
+
+' Repositorios manejan su modelo
+UserRepository       ..> User       : manages
+RoleRepository       ..> Role       : manages
+PermissionRepository ..> Permission : manages
+
+' Services usan repositorios
+user_svc ..> UserRepository
+user_svc ..> RoleRepository
+user_svc ..> PermissionRepository
+role_svc ..> RoleRepository
+role_svc ..> PermissionRepository
+perm_svc ..> PermissionRepository
+
+' Notas explicativas
+note right of BaseRepository
+  Genérico ""<ModelT>"".
+  Lee siempre filtrando
+  ""deleted_at IS NULL""
+  (soft-delete aware).
+
+  ""ALLOWED_FIELDS"" es el
+  whitelist para filtros
+  y sorting dinámicos.
+end note
+
+note bottom of user_svc
+  **Patrón del template**:
+  los services son módulos
+  de funciones, **no clases**.
+  Cada función recibe
+  ""AsyncSession"" y devuelve
+  un response schema Pydantic.
+end note
+
+note right of User
+  ""effective_permission_codes()""
+  devuelve permisos directos
+  + heredados vía roles.
+  Usado para emitir el JWT.
+end note
+
+@enduml

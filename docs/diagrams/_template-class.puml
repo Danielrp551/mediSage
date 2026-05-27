@@ -1,0 +1,38 @@
+@startuml class-<area>
+' Propósito: <una línea — qué muestra este diagrama>
+' Última actualización: YYYY-MM-DD
+' Código de referencia: <path/al/módulo>
+
+!theme plain
+skinparam classAttributeIconSize 0
+hide empty members
+
+title Class — <Área>
+
+package "<paquete>" {
+  class Ejemplo {
+    +campo_publico: str
+    -campo_privado: int
+    #campo_protegido: bool
+    +metodo(): tipo
+  }
+
+  abstract class BaseEjemplo {
+    +{abstract} hacer(): void
+  }
+
+  interface Protocolo {
+    +contrato(): str
+  }
+}
+
+' Relaciones (descomenta las que apliquen)
+' BaseEjemplo <|-- Ejemplo                 : herencia
+' Protocolo <|.. Ejemplo                   : implementa
+' Ejemplo *-- Otro                         : composición (vida ligada)
+' Ejemplo o-- Otro                         : agregación (vida independiente)
+' Ejemplo --> Otro                         : asociación dirigida
+' Ejemplo "1" -- "*" Otro                  : multiplicidad
+' Ejemplo ..> Otro                         : dependencia (usa)
+
+@enduml

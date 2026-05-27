@@ -1,0 +1,74 @@
+# Deploy del backend a Cloud Run Production.
+# Dispara en push a la rama `prod`. El GitHub Environment `prod` debe tener
+# configurado **Required reviewers** (Settings → Environments → prod →
+# Deployment protection rules) para que cada deploy a producción requiera
+# aprobación manual. Sin esa configuración, el deploy corre directo —
+# documentado en docs/DEPLOYMENT.md.
+#
+# Acciones de terceros pinneadas a SHAs — ver comentario en backend-ci.yml.
+
+name: deploy-backend-prod
+
+on:
+  push:
+    branches: [prod]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend-prod.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend-prod
+  cancel-in-progress: false # nunca cancelar un deploy a prod en curso
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: prod
+      url: ${{ secrets.SERVICE_URL }} # link al service en el deployment record
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENV_NAME: prod
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - id: auth
+        uses: google-github-actions/auth@71f986410dfbc7added4569d411d040a91dc6935 # v2.1.5
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@77e7a554d41e2ee56fc945c52dfd3f33d12def9a # v2.1.2
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
+
+      - name: Build & push image
+        run: |
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/medisage/${{ secrets.CLOUD_RUN_SERVICE }}:${GITHUB_SHA}"
+          docker build --platform linux/amd64 -t "$IMAGE" backend
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "${{ secrets.CLOUD_RUN_SERVICE }}" \
+            --image "$IMAGE" \
+            --region "${{ secrets.GCP_REGION }}" \
+            --platform managed \
+            --service-account "${{ secrets.DEPLOY_SA }}" \
+            --execution-environment gen2 \
+            --ingress all \
+            --add-cloudsql-instances "${{ secrets.CLOUD_SQL_INSTANCE }}" \
+            --set-env-vars "USE_UNIX_SOCKET=True,CLOUD_SQL_INSTANCE=${{ secrets.CLOUD_SQL_INSTANCE }},ENV_NAME=${ENV_NAME},DEBUG=False,LOG_LEVEL=INFO,JWT_ISSUER=medisage-${ENV_NAME},JWT_AUDIENCE=medisage-${ENV_NAME},RATE_LIMIT_TRUST_FORWARDED=True,CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}" \
+            --set-secrets "SECRET_KEY=medisage-secret-key-${ENV_NAME}:latest,DB_USER=medisage-db-user-${ENV_NAME}:latest,DB_PASSWORD=medisage-db-password-${ENV_NAME}:latest,DB_NAME=medisage-db-name-${ENV_NAME}:latest" \
+            --memory 1Gi \
+            --cpu 1 \
+            --min-instances 1 \
+            --max-instances 10 \
+            --concurrency 80 \
+            --cpu-boost \
+            --timeout 60s

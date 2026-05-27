@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vercel
+.vercel
+
+# Diagram tooling (PlantUML JAR is descargable, no versionado)
+tools/plantuml.jar
+docs/diagrams/out/
+docs/diagrams/*.png
+docs/diagrams/*.svg
+docs/diagrams/classes_*.puml
+docs/diagrams/packages_*.puml

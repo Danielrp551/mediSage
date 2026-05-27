@@ -1,0 +1,51 @@
+# Local development — Postgres + backend with hot reload.
+# Frontend stays outside Docker; run `npm run dev` in another terminal.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bold_template
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bold_template"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: bold_template
+      DEBUG: "True"
+      LOG_LEVEL: DEBUG
+      SECRET_KEY: dev-secret-key-not-for-production-use-only
+      CORS_ORIGINS: http://localhost:3000
+      LOGIN_RATE_LIMIT: "1000/minute"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend:/app
+    command:
+      - sh
+      - -c
+      - |
+        alembic upgrade head &&
+        python -m app.core.seed &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+
+volumes:
+  db_data:

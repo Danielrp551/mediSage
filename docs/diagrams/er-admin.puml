@@ -1,0 +1,148 @@
+@startuml er-admin
+' Propósito: modelo relacional del módulo admin (User/Role/Permission + asociaciones)
+' Última actualización: 2026-05-26
+' Código de referencia: backend/app/modules/admin/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 80
+skinparam defaultFontSize 13
+hide circle
+hide empty members
+
+title ER — Backend · Admin module
+
+legend top right
+  | <#FFFFE0> Marker | Significado |
+  | * | NOT NULL |
+  | <<PK>> | Primary Key |
+  | <<FK>> | Foreign Key |
+  | <<unique>> | UNIQUE constraint |
+  | <<nullable>> | NULL permitido |
+  | <<join>> | Tabla de asociación M:N |
+endlegend
+
+' ─────────────────────────────────────────────────────────────
+' Entidades principales
+' ─────────────────────────────────────────────────────────────
+entity "user" as t_user {
+  * id : varchar(36) <<PK>>
+  --
+  * email : varchar(255) <<unique, indexed>>
+  * password_hash : varchar(255)
+  * first_name : varchar(80)
+  * last_name : varchar(80)
+  second_last_name : varchar(80) <<nullable>>
+  document_type : varchar(20) <<nullable>>
+  document_number : varchar(40) <<nullable, indexed>>
+  phone : varchar(40) <<nullable>>
+  --
+  ' Mixins heredados
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "role" as t_role {
+  * id : varchar(36) <<PK>>
+  --
+  * name : varchar(80) <<unique, indexed>>
+  * description : varchar(255)
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "permission" as t_perm {
+  * id : varchar(36) <<PK>>
+  --
+  * code : varchar(80) <<unique, indexed>>
+  * name : varchar(120)
+  * description : varchar(255)
+  * module : varchar(60) <<indexed>>
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Tablas de asociación M:N (composite PK + FK con CASCADE)
+' ─────────────────────────────────────────────────────────────
+entity "user_role" as t_ur <<join>> {
+  * user_id : varchar(36) <<PK, FK→user>>
+  * role_id : varchar(36) <<PK, FK→role>>
+  --
+  ON DELETE CASCADE
+}
+
+entity "role_permission" as t_rp <<join>> {
+  * role_id : varchar(36) <<PK, FK→role>>
+  * permission_id : varchar(36) <<PK, FK→permission>>
+  --
+  ON DELETE CASCADE
+}
+
+entity "user_permission" as t_up <<join>> {
+  * user_id : varchar(36) <<PK, FK→user>>
+  * permission_id : varchar(36) <<PK, FK→permission>>
+  --
+  ON DELETE CASCADE
+}
+
+' ─────────────────────────────────────────────────────────────
+' Relaciones (crow's foot)
+'   ||   = exactly one
+'   }o   = zero or many
+'   }|   = one or many
+' ─────────────────────────────────────────────────────────────
+
+' Usuario ↔ Rol (vía user_role)
+t_user ||--o{ t_ur
+t_ur }o--|| t_role
+
+' Rol ↔ Permiso (vía role_permission)
+t_role ||--o{ t_rp
+t_rp }o--|| t_perm
+
+' Usuario ↔ Permiso DIRECTA (vía user_permission)
+t_user ||--o{ t_up
+t_up }o--|| t_perm
+
+' ─────────────────────────────────────────────────────────────
+' Notas
+' ─────────────────────────────────────────────────────────────
+note right of t_user
+  **Persona = Identidad**
+  Auth + perfil viven en la misma tabla.
+  Para service accounts futuros,
+  agregar columnas nullables o usar
+  single-table inheritance.
+end note
+
+note bottom of t_up
+  **Permisos directos al usuario**
+  Independientes de los heredados por rol.
+  Sumados con los del rol en
+  ""User.effective_permission_codes()"".
+end note
+
+note top of t_user
+  **Soft delete**
+  ""deleted_at IS NULL"" = vivo.
+  ""BaseRepository"" filtra automáticamente
+  estos registros en todos los reads.
+end note
+
+@enduml

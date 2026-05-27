@@ -1,0 +1,31 @@
+/*
+ * Global resets only. Do NOT apply `height: 100%` to `body > div` here.
+ *
+ * Why: FluentProvider in App Router renders its portal target as a direct
+ * `body > div`. Setting `height: 100%` on that node (a) shrinks the portal
+ * container to its parent's height and (b) combined with the `contain:
+ * layout style` Griffel applies to the provider, it creates a containing
+ * block for `position: fixed`. That breaks Drawer / Menu / Dialog backdrops
+ * — they end up clamped to the provider's height instead of the viewport
+ * (the "drawer opens but background stays white / partially covered" bug).
+ *
+ * Layouts that need full-viewport sizing (MainShell, AuthShell) set their
+ * own `height: 100vh` via makeStyles.
+ */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  min-height: 100vh;
+  /* Falls back to system fonts during font load and on platforms without
+   * Manrope. The `--font-body` variable is set by `next/font` in layout.tsx
+   * and consumed by Fluent UI through `appTheme.fontFamilyBase`. */
+  font-family: var(--font-body), -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+code, pre, kbd, samp {
+  font-family: var(--font-mono), Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+a { color: inherit; text-decoration: none; }

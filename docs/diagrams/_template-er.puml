@@ -1,0 +1,49 @@
+@startuml er-<modulo>
+' Propósito: modelo relacional del módulo <modulo>
+' Última actualización: YYYY-MM-DD
+' Código de referencia: backend/app/modules/<modulo>/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 50
+skinparam ranksep 60
+hide circle
+hide empty members
+
+title ER — <Módulo>
+
+' ── Entidad ejemplo ────────────────────────────────────────
+entity "tabla_padre" as padre {
+  * id : varchar(36) <<PK>>
+  --
+  * nombre : varchar(80) <<unique>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+  deleted_at : timestamptz <<nullable>>
+  active : boolean
+}
+
+entity "tabla_hija" as hija {
+  * id : varchar(36) <<PK>>
+  --
+  * padre_id : varchar(36) <<FK>>
+  * descripcion : varchar(255)
+}
+
+' ── Tabla de asociación M:N ────────────────────────────────
+entity "padre_hija" as padre_hija <<join>> {
+  * padre_id : varchar(36) <<PK,FK>>
+  * hija_id : varchar(36) <<PK,FK>>
+}
+
+' ── Cardinalidad (crow's foot) ─────────────────────────────
+'   ||   = exactly one
+'   |o   = zero or one
+'   }o   = zero or many
+'   }|   = one or many
+padre ||--o{ padre_hija
+padre_hija }o--|| hija
+
+@enduml

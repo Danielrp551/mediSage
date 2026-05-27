@@ -1,0 +1,32 @@
+# Keep dependencies and pinned GitHub Actions current.
+# - github-actions: bumps the SHA pins in `.github/workflows/*.yml`.
+# - pip: bumps Python deps in `backend/pyproject.toml`.
+# - npm: bumps Node deps in `frontend/package.json`.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: "/backend"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps(backend)
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps(frontend)
+    open-pull-requests-limit: 5
