@@ -26,7 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: prod
-      url: ${{ secrets.SERVICE_URL }} # link al service en el deployment record
+      # NOTA: `environment.url` se evalúa ANTES del environment login, por lo
+      # que no tiene acceso a `secrets.*` del Environment. Si quieres mostrar
+      # la URL en el deployment record, hardcodéala aquí o usa `vars.*`.
     permissions:
       id-token: write
       contents: read
@@ -63,7 +65,7 @@ jobs:
             --execution-environment gen2 \
             --ingress all \
             --add-cloudsql-instances "${{ secrets.CLOUD_SQL_INSTANCE }}" \
-            --set-env-vars "USE_UNIX_SOCKET=True,CLOUD_SQL_INSTANCE=${{ secrets.CLOUD_SQL_INSTANCE }},ENV_NAME=${ENV_NAME},DEBUG=False,LOG_LEVEL=INFO,JWT_ISSUER=medisage-${ENV_NAME},JWT_AUDIENCE=medisage-${ENV_NAME},RATE_LIMIT_TRUST_FORWARDED=True,CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}" \
+            --set-env-vars "^@@^USE_UNIX_SOCKET=True@@CLOUD_SQL_INSTANCE=${{ secrets.CLOUD_SQL_INSTANCE }}@@ENV_NAME=${ENV_NAME}@@DEBUG=False@@LOG_LEVEL=INFO@@JWT_ISSUER=medisage-${ENV_NAME}@@JWT_AUDIENCE=medisage-${ENV_NAME}@@RATE_LIMIT_TRUST_FORWARDED=True@@CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}" \
             --set-secrets "SECRET_KEY=medisage-secret-key-${ENV_NAME}:latest,DB_USER=medisage-db-user-${ENV_NAME}:latest,DB_PASSWORD=medisage-db-password-${ENV_NAME}:latest,DB_NAME=medisage-db-name-${ENV_NAME}:latest" \
             --memory 1Gi \
             --cpu 1 \
