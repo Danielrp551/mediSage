@@ -64,3 +64,4 @@ Para un nuevo módulo de dominio (p. ej. `inventory`):
 5. Frontend: `actions/inventory.actions.ts`, `types/inventory.types.ts`, `app/(main)/inventory/page.tsx`.
 
 El patrón de `admin/users` (page RSC con prefetch + client component con `useTableQuery`) es el referente.
+
