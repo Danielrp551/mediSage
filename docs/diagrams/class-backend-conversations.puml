@@ -1,0 +1,365 @@
+@startuml class-backend-conversations
+' Propósito: jerarquía OO del módulo conversations — modelos, repos, services y webhook processors
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/conversations/ y app/routers/webhooks.py
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 50
+skinparam ranksep 65
+skinparam defaultFontSize 13
+hide empty members
+
+title Class — Backend · Conversations module
+
+' ─────────────────────────────────────────────────────────────
+' Shared
+' ─────────────────────────────────────────────────────────────
+package "app.shared" <<Frame>> {
+  together {
+    class PrimaryKeyMixin <<mixin>>
+    class ActiveMixin    <<mixin>>
+    class SoftDeleteMixin <<mixin>>
+    class TimestampMixin  <<mixin>>
+  }
+  abstract class "BaseRepository<ModelT>" as BaseRepository {
+    +ALLOWED_FIELDS: set<str>
+    +get_by_id / get_paginated / create / update / soft_delete
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Models
+' ─────────────────────────────────────────────────────────────
+package "app.modules.conversations.models" <<Frame>> {
+  class ChannelAccount <<entity>> {
+    +channel_type: str
+    +name: str
+    +external_identifier: str
+    +secret_name: str?
+    +webhook_verify_token: str?
+    +bot_configuration_id: str? <<FK>>
+    +default_campaign_id: str? <<FK>>
+  }
+
+  class Conversation <<entity>> {
+    +channel_account_id: str <<FK>>
+    +person_id: str? <<FK>>
+    +status: str  ' open / closed
+    +assignee_type: str  ' bot / advisor / unassigned
+    +assignee_user_id: str? <<FK>>
+    +bot_configuration_id: str? <<FK>>
+    +opened_at: datetime
+    +closed_at: datetime?
+    +last_message_at: datetime?
+    +last_message_preview: str?
+    +unread_count: int = 0
+    --
+    ' UNIQUE PARTIAL (person_id, channel_account_id)
+    '   WHERE status='open' AND deleted_at IS NULL
+  }
+
+  class Message <<entity, immutable>> {
+    +conversation_id: str <<FK>>
+    +direction: str
+    +sender_type: str
+    +sender_user_id: str? <<FK>>
+    +bot_configuration_id: str? <<FK>>
+    +content_type: str
+    +content: str?
+    +external_id: str?
+    +external_status: str?
+    +sent_at: datetime
+    +delivered_at: datetime?
+    +read_at: datetime?
+    +failed_at: datetime?
+    +failure_reason: str?
+    +provider_payload: JSON?
+    --
+    ' UNIQUE PARTIAL (conversation_id, external_id)
+    '   WHERE external_id IS NOT NULL
+    ' SIN SoftDeleteMixin
+  }
+
+  class MessageAttachment <<entity, immutable>> {
+    +message_id: str <<FK>>
+    +attachment_type: str
+    +url: str?
+    +mime_type: str?
+    +size_bytes: int?
+    +duration_sec: int?
+    +latitude: Decimal?
+    +longitude: Decimal?
+    +address_label: str?
+    +original_filename: str?
+    +external_media_id: str?
+    +metadata: JSON?
+    --
+    ' SIN SoftDeleteMixin
+  }
+
+  class ConversationAssignmentLog <<entity, immutable>> {
+    +conversation_id: str <<FK>>
+    +from_assignee_type: str?
+    +from_assignee_user_id: str? <<FK>>
+    +to_assignee_type: str
+    +to_assignee_user_id: str? <<FK>>
+    +started_at: datetime
+    +ended_at: datetime?
+    +by_actor_user_id: str? <<FK>>
+    +reason: str?
+    --
+    ' SIN SoftDeleteMixin
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Enums (en código)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.conversations.enums" <<Frame>> {
+  enum ChannelType <<enum>> {
+    whatsapp
+    telegram
+    web
+    instagram
+    facebook
+    phone
+    email
+  }
+  enum ConversationStatus <<enum>> {
+    open
+    closed
+  }
+  enum AssigneeType <<enum>> {
+    bot
+    advisor
+    unassigned
+  }
+  enum MessageDirection <<enum>> {
+    inbound
+    outbound
+  }
+  enum SenderType <<enum>> {
+    contact
+    bot
+    advisor
+    system
+  }
+  enum ContentType <<enum>> {
+    text
+    image
+    audio
+    video
+    document
+    location
+    sticker
+    contact_card
+    system_notification
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Repositories
+' ─────────────────────────────────────────────────────────────
+package "app.modules.conversations.repositories" <<Frame>> {
+  class ChannelAccountRepository {
+    +ALLOWED_FIELDS
+    --
+    +get_by_external(db, channel_type, external_identifier): ChannelAccount?
+    +list_active(db): list
+  }
+  class ConversationRepository {
+    +ALLOWED_FIELDS
+    --
+    +get_open(db, person_id, channel_account_id): Conversation?
+    +get_full(db, conversation_id): Conversation?
+    +list_inbox(db, query, assignee_user_id?): tuple<list, int>
+  }
+  class MessageRepository {
+    +ALLOWED_FIELDS
+    --
+    +list_for_conversation(db, conversation_id, query): tuple<list, int>
+    +get_by_external_id(db, conversation_id, external_id): Message?
+    +append(db, message, attachments): Message
+  }
+  class MessageAttachmentRepository {
+    +list_for_message(db, message_id): list
+  }
+  class ConversationAssignmentLogRepository {
+    +list_for_conversation(db, conversation_id): list
+    +close_current(db, conversation_id, ended_at): None
+    +open_new(db, payload): ConversationAssignmentLog
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services
+' ─────────────────────────────────────────────────────────────
+package "app.modules.conversations.services" <<Frame>> {
+  class "channel_account.py" as ca_svc <<module>> {
+    +get_by_id / list_paginated / create / update / soft_delete
+    +get_credentials(channel_account): dict  ' lee Secret Manager
+  }
+  class "conversation.py" as conv_svc <<module>> {
+    +find_or_create_open(person_id, channel_account_id, default_bot?)
+    +get_by_id / list_inbox / get_my_inbox
+    +take(conversation_id, user_id, reason?)
+    +release(conversation_id, to_type, to_bot?, actor_id, reason?)
+    +close(conversation_id, actor_id)
+    +reopen(conversation_id, actor_id)
+    +mark_read(conversation_id, actor_id)
+  }
+  class "message.py" as msg_svc <<module>> {
+    +list(conversation_id, query)
+    +persist_inbound(conversation, payload, attachments)
+    +send_outbound(conversation_id, payload, actor_id)
+    --
+    ' persist_inbound emite LeadActivity vía crm si aplica
+    ' send_outbound emite LeadActivity(MESSAGE_SENT) vía crm
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Webhook processors (sub-paquete de services)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.conversations.services.webhook_processor" <<Frame>> {
+  class "whatsapp.py" as wpw <<module>> {
+    +process_inbound(payload, channel_account, db): list<Message>
+    +process_status(payload, channel_account, db): None
+    +verify_signature(headers, body, app_secret): bool
+  }
+  class "telegram.py" as wpt <<module>> {
+    +process_inbound(payload, channel_account, db): list<Message>
+    +verify_secret_token(headers, expected_token): bool
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Top-level webhook routers (FUERA de modules/)
+' ─────────────────────────────────────────────────────────────
+package "app.routers" <<Frame, External>> #lightyellow {
+  class "webhooks.py" as wh_router <<module>> {
+    +GET  /api/v1/webhooks/whatsapp/{channel_account_id}
+    +POST /api/v1/webhooks/whatsapp/{channel_account_id}
+    +POST /api/v1/webhooks/telegram/{channel_account_id}
+    --
+    ' Sin JWT, validación por firma del provider.
+    ' Delega al webhook_processor del canal.
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' External
+' ─────────────────────────────────────────────────────────────
+class "Person" as Person <<entity,external>> #lightgrey
+class "User" as User <<entity,external>> #lightgrey
+class "BotConfiguration" as BotConfiguration <<entity,external>> #lightgrey
+class "Campaign" as Campaign <<entity,external>> #lightgrey
+
+' ─────────────────────────────────────────────────────────────
+' Herencia mixins
+' ─────────────────────────────────────────────────────────────
+PrimaryKeyMixin <|-- ChannelAccount
+ActiveMixin     <|-- ChannelAccount
+SoftDeleteMixin <|-- ChannelAccount
+TimestampMixin  <|-- ChannelAccount
+
+PrimaryKeyMixin <|-- Conversation
+ActiveMixin     <|-- Conversation
+SoftDeleteMixin <|-- Conversation
+TimestampMixin  <|-- Conversation
+
+PrimaryKeyMixin <|-- Message
+PrimaryKeyMixin <|-- MessageAttachment
+PrimaryKeyMixin <|-- ConversationAssignmentLog
+
+note bottom of TimestampMixin
+  **Mixins por entidad**:
+  ""ChannelAccount"", ""Conversation"":
+  los 4 mixins (con SoftDelete).
+
+  ""Message"", ""MessageAttachment"",
+  ""ConversationAssignmentLog"":
+  PrimaryKey + Active + Timestamp.
+  SIN SoftDelete — audit trail inmutable.
+end note
+
+' Repos extienden BaseRepository
+BaseRepository <|-- ChannelAccountRepository            : "<ChannelAccount>"
+BaseRepository <|-- ConversationRepository              : "<Conversation>"
+BaseRepository <|-- MessageRepository                   : "<Message>"
+BaseRepository <|-- MessageAttachmentRepository         : "<MessageAttachment>"
+BaseRepository <|-- ConversationAssignmentLogRepository : "<ConversationAssignmentLog>"
+
+' Relaciones de dominio
+ChannelAccount "1" -- "0..*" Conversation : "abre"
+Conversation "1" -- "0..*" Message
+Message "1" -- "0..*" MessageAttachment
+Conversation "1" -- "0..*" ConversationAssignmentLog
+
+ChannelAccount "*" -- "0..1" BotConfiguration : "default"
+ChannelAccount "*" -- "0..1" Campaign         : "attribution"
+
+Conversation "*" -- "0..1" Person : "person_id"
+Conversation "*" -- "0..1" User   : "advisor (assignee)"
+Conversation "*" -- "0..1" BotConfiguration : "bot efectivo"
+
+Message "*" -- "0..1" User             : "sender (si advisor)"
+Message "*" -- "0..1" BotConfiguration : "sender (si bot)"
+
+ConversationAssignmentLog "*" -- "0..1" User : "from/to/by"
+
+' Webhook router delega a processors
+wh_router ..> wpw : delega
+wh_router ..> wpt : delega
+
+' Processors usan services internos
+wpw ..> conv_svc
+wpw ..> msg_svc
+wpw ..> ca_svc
+wpt ..> conv_svc
+wpt ..> msg_svc
+wpt ..> ca_svc
+
+' Services usan repos
+ca_svc   ..> ChannelAccountRepository
+conv_svc ..> ConversationRepository
+conv_svc ..> ConversationAssignmentLogRepository
+msg_svc  ..> MessageRepository
+msg_svc  ..> MessageAttachmentRepository
+
+' Notas
+note right of ChannelAccount
+  **Multi-cuenta por canal**
+  Mismo ""channel_type"" puede tener
+  varias filas con distintos
+  ""external_identifier"".
+  Credencial en GCP Secret Manager,
+  referenciada por ""secret_name"".
+end note
+
+note right of Conversation
+  **Una activa por (person, channel)**
+  UNIQUE PARTIAL via status='open'.
+  Múltiples cerradas viven como
+  historial.
+end note
+
+note bottom of msg_svc
+  **persist_inbound** y **send_outbound**
+  emiten ""LeadActivity"" en crm
+  (MESSAGE_SENT, CONVERSATION_TAKEN,
+  etc.) — patrón polimórfico del
+  módulo crm.
+end note
+
+note bottom of wh_router
+  **Sin JWT.**
+  Validación por firma del provider
+  (HMAC SHA256 con app_secret de
+  GCP Secret Manager).
+  Vive top-level, no en modules/.
+end note
+
+@enduml

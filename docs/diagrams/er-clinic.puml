@@ -1,0 +1,211 @@
+@startuml er-clinic
+' Propósito: modelo relacional del módulo clinic (Branch, Office, horarios y excepciones, M:N con Vertical)
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/clinic/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 80
+skinparam defaultFontSize 13
+hide circle
+hide empty members
+
+title ER — Backend · Clinic module
+
+legend top right
+  | <#FFFFE0> Marker | Significado |
+  | * | NOT NULL |
+  | <<PK>> | Primary Key |
+  | <<FK>> | Foreign Key |
+  | <<unique>> | UNIQUE constraint |
+  | <<nullable>> | NULL permitido |
+  | <<join>> | Tabla de asociación M:N |
+endlegend
+
+' ─────────────────────────────────────────────────────────────
+' Entidades principales
+' ─────────────────────────────────────────────────────────────
+
+entity "branch" as t_br {
+  * id : varchar(36) <<PK>>
+  --
+  * code : varchar(40) <<unique, indexed>>
+  * name : varchar(120)
+  * address_line : varchar(255)
+  district : varchar(120) <<nullable>>
+  * city : varchar(120)
+  region : varchar(120) <<nullable>>
+  * country : varchar(2) = 'PE'
+  postal_code : varchar(20) <<nullable>>
+  latitude : numeric(9,6) <<nullable>>
+  longitude : numeric(9,6) <<nullable>>
+  phone : varchar(40) <<nullable>>
+  email : varchar(255) <<nullable>>
+  * timezone : varchar(60) = 'America/Lima'
+  --
+  ' Mixins
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "office" as t_off {
+  * id : varchar(36) <<PK>>
+  --
+  * branch_id : varchar(36) <<FK→branch>>
+  * code : varchar(40)
+  * name : varchar(120)
+  room_number : varchar(20) <<nullable>>
+  floor : varchar(20) <<nullable>>
+  description : varchar(500) <<nullable>>
+  --
+  ' UNIQUE (branch_id, code)
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "office_operating_hours" as t_oh {
+  * id : varchar(36) <<PK>>
+  --
+  * office_id : varchar(36) <<FK→office>>
+  * day_of_week : smallint
+  * opens_at : time
+  * closes_at : time
+  --
+  ' day_of_week: convención Python (0=Lun, 6=Dom)
+  ' CHECK (closes_at > opens_at)
+  ' Múltiples filas por (office_id, day_of_week) — bloques mañana/tarde
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "office_closure" as t_cl {
+  * id : varchar(36) <<PK>>
+  --
+  * office_id : varchar(36) <<FK→office>>
+  * starts_at : timestamptz
+  * ends_at : timestamptz
+  * is_closed : boolean
+  * reason : varchar(255)
+  --
+  ' CHECK (ends_at > starts_at)
+  ' is_closed=true  → office cerrado en el rango (pisa patrón)
+  ' is_closed=false → office abierto extra en el rango
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Tabla de asociación M:N: Office ↔ Vertical (apta para)
+' ─────────────────────────────────────────────────────────────
+entity "office_vertical" as t_ov <<join>> {
+  * office_id : varchar(36) <<PK, FK→office>>
+  * vertical_id : varchar(36) <<PK, FK→vertical>>
+  --
+  ON DELETE CASCADE
+}
+
+' ─────────────────────────────────────────────────────────────
+' Referencias externas (otros módulos)
+' ─────────────────────────────────────────────────────────────
+
+entity "vertical" as t_vert <<external>> #lightgrey {
+  ' Módulo: catalog
+  * id : varchar(36) <<PK>>
+  * code : varchar(40)
+  ...
+}
+
+entity "doctor_branch" as t_db <<external,join>> #lightgrey {
+  ' Módulo: staff
+  * doctor_id : varchar(36) <<PK, FK→doctor>>
+  * branch_id : varchar(36) <<PK, FK→branch>>
+}
+
+entity "appointment" as t_appt <<external>> #lightgrey {
+  ' Módulo: scheduling
+  * id : varchar(36) <<PK>>
+  * branch_id : varchar(36) <<FK→branch>>
+  * office_id : varchar(36) <<FK→office>>
+  * scheduled_for : timestamptz
+  ...
+}
+
+' ─────────────────────────────────────────────────────────────
+' Relaciones (crow's foot)
+' ─────────────────────────────────────────────────────────────
+
+t_br  ||--o{ t_off : "tiene\nconsultorios"
+t_off ||--o{ t_oh  : "horario\nsemanal"
+t_off ||--o{ t_cl  : "excepciones"
+
+' Office ↔ Vertical (M:N vía office_vertical)
+t_off ||--o{ t_ov
+t_ov  }o--|| t_vert
+
+' Referencias informativas a módulos externos
+t_br  ||--o{ t_db   : "doctores\nasignados (staff)"
+t_br  ||--o{ t_appt : "se agendan citas (scheduling)"
+t_off ||--o{ t_appt : "se agendan citas (scheduling)"
+
+' ─────────────────────────────────────────────────────────────
+' Notas
+' ─────────────────────────────────────────────────────────────
+
+note right of t_br
+  **Sede física**
+  Dirección estructurada para
+  habilitar geo / mapas / bot.
+  ""timezone"" IANA — se usa al
+  resolver horas locales del
+  patrón (""OfficeOperatingHours"")
+  a instantes en UTC.
+end note
+
+note right of t_off
+  **Consultorio**
+  M:N con Vertical: declara
+  qué verticales puede acoger.
+  ""scheduling"" filtra offices
+  aptos por la vertical del
+  producto solicitado.
+end note
+
+note right of t_oh
+  **Patrón semanal**
+  Múltiples filas por día permiten
+  modelar bloques (8-13 + 16-20).
+  ""day_of_week"" sigue convención
+  Python: 0=Lun ... 6=Dom.
+  ""opens_at""/""closes_at"" son ""time""
+  sin TZ — se interpretan en el
+  timezone de la branch.
+end note
+
+note bottom of t_cl
+  **Excepción ad-hoc**
+  is_closed=true → cierre (feriado,
+  mantenimiento). Pisa al patrón.
+  is_closed=false → apertura extra
+  (abrir un domingo por demanda).
+  ""starts_at""/""ends_at"" son timestamptz:
+  UTC en BD, ISO 8601 en JSON.
+end note
+
+@enduml

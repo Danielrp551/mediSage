@@ -1,0 +1,260 @@
+@startuml class-backend-clinic
+' Propósito: jerarquía OO del módulo clinic (Branch, Office, horarios y excepciones) — modelos, repos y services funcionales
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/clinic/ y backend/app/shared/
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 50
+skinparam ranksep 70
+skinparam defaultFontSize 13
+hide empty members
+
+title Class — Backend · Clinic module
+
+' ─────────────────────────────────────────────────────────────
+' Shared layer — mixins y base genérica
+' ─────────────────────────────────────────────────────────────
+package "app.shared" <<Frame>> {
+
+  together {
+    class PrimaryKeyMixin <<mixin>> {
+      +id: str <<UUID>>
+    }
+    class ActiveMixin <<mixin>> {
+      +active: bool
+    }
+    class SoftDeleteMixin <<mixin>> {
+      +deleted_at: datetime?
+    }
+    class TimestampMixin <<mixin>> {
+      +created_on: datetime
+      +created_by: str
+      +updated_on: datetime
+      +updated_by: str
+    }
+  }
+
+  abstract class "BaseRepository<ModelT>" as BaseRepository {
+    +ALLOWED_FIELDS: set<str>
+    +model: type<ModelT>
+    --
+    +get_by_id(db, id, ...): ModelT?
+    +get_paginated(db, query_request, load): tuple<list, int>
+    +create(db, obj): ModelT
+    +update(db, obj, changes): ModelT
+    +soft_delete(db, obj): None
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Domain models — SQLAlchemy ORM
+' ─────────────────────────────────────────────────────────────
+package "app.modules.clinic.models" <<Frame>> {
+
+  together {
+    class Branch <<entity>> {
+      +code: str <<unique>>
+      +name: str
+      +address_line: str
+      +district: str?
+      +city: str
+      +region: str?
+      +country: str = 'PE'
+      +postal_code: str?
+      +latitude: Decimal?
+      +longitude: Decimal?
+      +phone: str?
+      +email: str?
+      +timezone: str = 'America/Lima'
+    }
+
+    class Office <<entity>> {
+      +branch_id: str <<FK>>
+      +code: str
+      +name: str
+      +room_number: str?
+      +floor: str?
+      +description: str?
+      --
+      ' UNIQUE (branch_id, code)
+      +verticals: list<Vertical> <<M:N>>
+    }
+
+    class OfficeOperatingHours <<entity>> {
+      +office_id: str <<FK>>
+      +day_of_week: int  ' 0=Lun ... 6=Dom (Python)
+      +opens_at: time
+      +closes_at: time
+      --
+      ' CHECK (closes_at > opens_at)
+    }
+
+    class OfficeClosure <<entity>> {
+      +office_id: str <<FK>>
+      +starts_at: datetime  ' UTC
+      +ends_at: datetime    ' UTC
+      +is_closed: bool
+      +reason: str
+      --
+      ' CHECK (ends_at > starts_at)
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Repositories — CRUD async tipado
+' ─────────────────────────────────────────────────────────────
+package "app.modules.clinic.repositories" <<Frame>> {
+
+  together {
+    class BranchRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_code(db, code): Branch?
+      +list_options(db, only_active): list<Branch>
+    }
+    class OfficeRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_branch_and_code(db, branch_id, code): Office?
+      +get_full(db, office_id): Office?  ' eager load: branch + verticals
+      +list_options(db, branch_id?, vertical_id?, only_active): list<Office>
+    }
+    class OfficeOperatingHoursRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +list_for_office(db, office_id): list<OfficeOperatingHours>
+      +replace_all_for_office(db, office_id, items): list<OfficeOperatingHours>
+    }
+    class OfficeClosureRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +list_for_office(db, office_id, frm, to): list<OfficeClosure>
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services — módulos funcionales (NO clases)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.clinic.services" <<Frame>> {
+
+  together {
+    class "branch.py" as br_svc <<module>> {
+      +get_by_id(db, branch_id)
+      +list_paginated(db, query)
+      +list_options(db)
+      +create(db, payload, actor_id)
+      +update(db, branch_id, payload, actor_id)
+      +soft_delete(db, branch_id, actor_id)
+    }
+
+    class "office.py" as off_svc <<module>> {
+      +get_by_id(db, office_id)
+      +list_paginated(db, query)
+      +list_options(db, branch_id?, vertical_id?)
+      +create(db, payload, actor_id)
+      +update(db, office_id, payload, actor_id)  ' incluye vertical_ids
+      +soft_delete(db, office_id, actor_id)
+    }
+
+    class "office_hours.py" as oh_svc <<module>> {
+      +list_for_office(db, office_id)
+      +replace_all(db, office_id, items, actor_id)
+    }
+
+    class "office_closure.py" as cl_svc <<module>> {
+      +list_for_office(db, office_id, frm, to)
+      +create(db, office_id, payload, actor_id)
+      +delete(db, office_id, closure_id, actor_id)
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Herencia de mixins → entidades
+' Dibujamos sólo desde Branch para no saturar; las 4 entidades
+' heredan el mismo set.
+' ─────────────────────────────────────────────────────────────
+PrimaryKeyMixin <|-- Branch
+ActiveMixin     <|-- Branch
+SoftDeleteMixin <|-- Branch
+TimestampMixin  <|-- Branch
+
+PrimaryKeyMixin <|-- Office
+PrimaryKeyMixin <|-- OfficeOperatingHours
+PrimaryKeyMixin <|-- OfficeClosure
+
+note bottom of TimestampMixin
+  **Patrón aplicado a las 4 entidades**
+  ""Branch"", ""Office"", ""OfficeOperatingHours"",
+  ""OfficeClosure"" heredan los 4 mixins:
+  ""PrimaryKeyMixin, ActiveMixin,""
+  ""SoftDeleteMixin, TimestampMixin""
+
+  (Sólo se dibujan algunas herencias
+  para no saturar visualmente.)
+end note
+
+' Repositorios extienden el genérico parametrizado
+BaseRepository <|-- BranchRepository                : "<Branch>"
+BaseRepository <|-- OfficeRepository                : "<Office>"
+BaseRepository <|-- OfficeOperatingHoursRepository  : "<OfficeOperatingHours>"
+BaseRepository <|-- OfficeClosureRepository         : "<OfficeClosure>"
+
+' Relaciones de dominio
+Branch "1" -- "0..*" Office                           : "tiene\nconsultorios"
+Office "1" -- "0..*" OfficeOperatingHours             : "patrón\nsemanal"
+Office "1" -- "0..*" OfficeClosure                    : "excepciones"
+
+' M:N con catalog.Vertical (fuera del paquete, mostrado como referencia)
+class "Vertical" as Vertical <<entity,external>> #lightgrey
+Office "0..*" -- "0..*" Vertical                      : "office_vertical\n(apta para)"
+
+' Repositorios manejan su modelo
+BranchRepository                ..> Branch                : manages
+OfficeRepository                ..> Office                : manages
+OfficeOperatingHoursRepository  ..> OfficeOperatingHours  : manages
+OfficeClosureRepository         ..> OfficeClosure         : manages
+
+' Services usan repositorios
+br_svc  ..> BranchRepository
+off_svc ..> OfficeRepository
+off_svc ..> BranchRepository
+oh_svc  ..> OfficeOperatingHoursRepository
+oh_svc  ..> OfficeRepository
+cl_svc  ..> OfficeClosureRepository
+cl_svc  ..> OfficeRepository
+
+' Notas
+note right of Branch
+  **Timezone IANA**
+  ""branch.timezone"" se usa al resolver
+  horas locales del patrón
+  (""OfficeOperatingHours.opens_at"")
+  a instantes UTC.
+  Los timestamptz (""OfficeClosure"",
+  ""Appointment"") viajan en UTC y la
+  UI los convierte con el TZ del browser.
+end note
+
+note right of OfficeOperatingHours
+  **Bulk replace**
+  El endpoint público es
+  ""PUT /offices/{id}/operating-hours""
+  — reemplaza atómicamente el patrón
+  completo. No hay CRUD individual.
+end note
+
+note bottom of OfficeClosure
+  **Dos casos, un modelo**
+  ""is_closed=true"" → cierre
+  ""is_closed=false"" → apertura extra
+  ""scheduling"" combina patrón +
+  closures + citas para calcular
+  slots disponibles on-the-fly.
+end note
+
+@enduml

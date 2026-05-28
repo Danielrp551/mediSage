@@ -1,0 +1,281 @@
+@startuml er-conversations
+' Propósito: modelo relacional del módulo conversations (ChannelAccount + Conversation + Message + MessageAttachment + AssignmentLog)
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/conversations/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 55
+skinparam ranksep 70
+skinparam defaultFontSize 13
+hide circle
+hide empty members
+
+title ER — Backend · Conversations module
+
+legend top right
+  | <#FFFFE0> Marker | Significado |
+  | * | NOT NULL |
+  | <<PK>> | Primary Key |
+  | <<FK>> | Foreign Key |
+  | <<unique>> | UNIQUE constraint |
+  | <<nullable>> | NULL permitido |
+endlegend
+
+' ─────────────────────────────────────────────────────────────
+' Cuenta de canal (config externa)
+' ─────────────────────────────────────────────────────────────
+entity "channel_account" as t_ca {
+  * id : varchar(36) <<PK>>
+  --
+  * channel_type : varchar(40)
+  * name : varchar(120)
+  * external_identifier : varchar(255)
+  secret_name : varchar(255) <<nullable>>
+  webhook_verify_token : varchar(255) <<nullable>>
+  bot_configuration_id : varchar(36) <<nullable, FK→bot_configuration>>
+  default_campaign_id : varchar(36) <<nullable, FK→campaign>>
+  --
+  ' UNIQUE (channel_type, external_identifier) WHERE deleted_at IS NULL
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Conversation (hilo entre Person y ChannelAccount)
+' ─────────────────────────────────────────────────────────────
+entity "conversation" as t_conv {
+  * id : varchar(36) <<PK>>
+  --
+  * channel_account_id : varchar(36) <<FK→channel_account>>
+  person_id : varchar(36) <<nullable, FK→person>>
+  * status : varchar(20)        ' open / closed
+  * assignee_type : varchar(20) ' bot / advisor / unassigned
+  assignee_user_id : varchar(36) <<nullable, FK→user>>
+  bot_configuration_id : varchar(36) <<nullable, FK→bot_configuration>>
+  * opened_at : timestamptz
+  closed_at : timestamptz <<nullable>>
+  last_message_at : timestamptz <<nullable>>
+  last_message_preview : varchar(255) <<nullable>>
+  * unread_count : int = 0
+  --
+  ' UNIQUE PARTIAL (person_id, channel_account_id)
+  '   WHERE status='open' AND deleted_at IS NULL
+  ' Invariantes (validados en service):
+  '   assignee_type='advisor' ⇒ assignee_user_id NOT NULL
+  '   assignee_type='bot'     ⇒ bot_configuration_id NOT NULL
+  '   assignee_type='unassigned' ⇒ ambos NULL
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Mensaje individual
+' ─────────────────────────────────────────────────────────────
+entity "message" as t_msg {
+  * id : varchar(36) <<PK>>
+  --
+  * conversation_id : varchar(36) <<FK→conversation>>
+  * direction : varchar(10)         ' inbound / outbound
+  * sender_type : varchar(20)       ' contact / bot / advisor / system
+  sender_user_id : varchar(36) <<nullable, FK→user>>
+  bot_configuration_id : varchar(36) <<nullable, FK→bot_configuration>>
+  * content_type : varchar(20)      ' text / image / audio / ...
+  content : text <<nullable>>
+  external_id : varchar(255) <<nullable>>
+  external_status : varchar(40) <<nullable>>
+  * sent_at : timestamptz
+  delivered_at : timestamptz <<nullable>>
+  read_at : timestamptz <<nullable>>
+  failed_at : timestamptz <<nullable>>
+  failure_reason : varchar(255) <<nullable>>
+  provider_payload : jsonb <<nullable>>
+  --
+  ' UNIQUE PARTIAL (conversation_id, external_id)
+  '   WHERE external_id IS NOT NULL — idempotencia webhook
+  ' SIN SoftDelete — mensajes inmutables (audit)
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Adjuntos (1:N desde Message)
+' ─────────────────────────────────────────────────────────────
+entity "message_attachment" as t_att {
+  * id : varchar(36) <<PK>>
+  --
+  * message_id : varchar(36) <<FK→message>>
+  * attachment_type : varchar(20)   ' image / audio / video / document / location / sticker / contact_card
+  url : varchar(1000) <<nullable>>
+  mime_type : varchar(100) <<nullable>>
+  size_bytes : int <<nullable>>
+  duration_sec : int <<nullable>>
+  latitude : numeric(9,6) <<nullable>>
+  longitude : numeric(9,6) <<nullable>>
+  address_label : varchar(255) <<nullable>>
+  original_filename : varchar(255) <<nullable>>
+  external_media_id : varchar(255) <<nullable>>
+  metadata : jsonb <<nullable>>
+  --
+  ' SIN SoftDelete — coherente con Message
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Historial de handoff (inmutable)
+' ─────────────────────────────────────────────────────────────
+entity "conversation_assignment_log" as t_log {
+  * id : varchar(36) <<PK>>
+  --
+  * conversation_id : varchar(36) <<FK→conversation>>
+  from_assignee_type : varchar(20) <<nullable>>
+  from_assignee_user_id : varchar(36) <<nullable, FK→user>>
+  * to_assignee_type : varchar(20)
+  to_assignee_user_id : varchar(36) <<nullable, FK→user>>
+  * started_at : timestamptz
+  ended_at : timestamptz <<nullable>>
+  by_actor_user_id : varchar(36) <<nullable, FK→user>>
+  reason : varchar(255) <<nullable>>
+  --
+  ' SIN SoftDelete — audit trail inmutable
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Entidades externas
+' ─────────────────────────────────────────────────────────────
+entity "person" as t_per <<external>> #lightgrey {
+  ' Módulo: crm
+  * id : varchar(36) <<PK>>
+  ...
+}
+entity "user" as t_user <<external>> #lightgrey {
+  ' Módulo: admin
+  * id : varchar(36) <<PK>>
+  ...
+}
+entity "bot_configuration" as t_bot <<external>> #lightgrey {
+  ' Módulo: bots
+  * id : varchar(36) <<PK>>
+  ...
+}
+entity "campaign" as t_camp <<external>> #lightgrey {
+  ' Módulo: marketing
+  * id : varchar(36) <<PK>>
+  ...
+}
+
+' ─────────────────────────────────────────────────────────────
+' Relaciones
+' ─────────────────────────────────────────────────────────────
+
+' ChannelAccount → Conversation
+t_ca ||--o{ t_conv : "abre\nconversaciones"
+
+' Conversation → Person (opcional, casi siempre poblado)
+t_per |o--o{ t_conv : "person_id\n(opcional al inicio)"
+
+' Conversation → User (assignee opcional)
+t_user |o--o{ t_conv : "assignee\n(opcional)"
+
+' Conversation → BotConfiguration (opcional)
+t_bot |o--o{ t_conv : "bot efectivo\n(opcional)"
+
+' ChannelAccount → BotConfiguration (default)
+t_bot |o--o{ t_ca : "bot default\n(opcional)"
+
+' ChannelAccount → Campaign (atribución)
+t_camp |o--o{ t_ca : "campaña\nde origen"
+
+' Conversation → Message
+t_conv ||--o{ t_msg : "mensajes"
+
+' Message → MessageAttachment
+t_msg ||--o{ t_att : "adjuntos"
+
+' Message → User (sender opcional)
+t_user |o--o{ t_msg : "sender\n(si advisor)"
+
+' Message → BotConfiguration (sender opcional)
+t_bot |o--o{ t_msg : "sender bot\n(si bot)"
+
+' Conversation → ConversationAssignmentLog
+t_conv ||--o{ t_log : "historial\nhandoffs"
+
+' Log → User (from/to/by, todos opcionales)
+t_user |o--o{ t_log : "from/to/by\n(opcionales)"
+
+' ─────────────────────────────────────────────────────────────
+' Notas
+' ─────────────────────────────────────────────────────────────
+
+note right of t_ca
+  **Cuenta de canal**
+  Multi-cuenta por canal: una clínica
+  puede tener 2 nros WhatsApp Business
+  (uno por vertical, por ejemplo).
+
+  ""secret_name"" apunta a GCP Secret
+  Manager — el código resuelve el token
+  en runtime, no vive en BD.
+end note
+
+note right of t_conv
+  **Una sola conversation activa
+  por (person, channel_account)**
+  vía UNIQUE PARTIAL sobre status=open.
+  Múltiples conversations cerradas
+  pueden coexistir como historial.
+
+  ""assignee_type"" + ""assignee_user_id"" +
+  ""bot_configuration_id"" determinan
+  quién atiende ahora.
+end note
+
+note bottom of t_msg
+  **Idempotencia webhook**
+  UNIQUE PARTIAL (conversation_id, external_id)
+  WHERE external_id IS NOT NULL.
+  Si Meta reenvía el mismo wa_id,
+  el INSERT falla y se ignora.
+
+  SIN SoftDelete — mensajes son
+  audit trail inmutable.
+end note
+
+note bottom of t_att
+  **Estructurado, no JSONB**
+  Permite reportes ("audios enviados
+  este mes") sin parsear payload.
+  ""url"" apunta a GCS (decidido al
+  implementar storage).
+end note
+
+note right of t_log
+  **Cada handoff cierra el log previo
+  (ended_at = now()) y abre uno nuevo**
+  ""by_actor_user_id"" NULL = automático
+  (bot/sistema).
+  Inmutable: audit trail.
+end note
+
+@enduml

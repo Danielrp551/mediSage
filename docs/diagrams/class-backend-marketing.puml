@@ -1,0 +1,257 @@
+@startuml class-backend-marketing
+' Propósito: jerarquía OO del módulo marketing — modelos, repos y services funcionales
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/marketing/
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 50
+skinparam ranksep 65
+skinparam defaultFontSize 13
+hide empty members
+
+title Class — Backend · Marketing module
+
+' ─────────────────────────────────────────────────────────────
+' Shared
+' ─────────────────────────────────────────────────────────────
+package "app.shared" <<Frame>> {
+  together {
+    class PrimaryKeyMixin <<mixin>>
+    class ActiveMixin    <<mixin>>
+    class SoftDeleteMixin <<mixin>>
+    class TimestampMixin  <<mixin>>
+  }
+  abstract class "BaseRepository<ModelT>" as BaseRepository {
+    +ALLOWED_FIELDS
+    +get_by_id / get_paginated / create / update / soft_delete
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Models
+' ─────────────────────────────────────────────────────────────
+package "app.modules.marketing.models" <<Frame>> {
+  class Campaign <<entity>> {
+    +code: str <<unique>>
+    +name: str
+    +description: str?
+    +start_date: date
+    +end_date: date?
+    +status: str        ' draft/active/paused/ended
+    +target_vertical_id: str? <<FK>>
+    --
+    +promotions: list<Promotion> <<M:N>>
+  }
+
+  class Promotion <<entity>> {
+    +code: str <<unique>>
+    +name: str
+    +description: str?
+    +discount_type: str          ' percentage / fixed_amount
+    +discount_value: Decimal
+    +currency: str = 'PEN'
+    +start_date: date
+    +end_date: date?
+    +max_uses_total: int?
+    +max_uses_per_person: int?
+    +applies_to_all_products: bool = false
+    --
+    +products: list<Product> <<M:N>>
+    +campaigns: list<Campaign> <<M:N>>
+  }
+
+  class PromotionUsage <<entity, immutable>> {
+    +promotion_id: str <<FK>>
+    +person_id: str <<FK>>
+    +appointment_id: str? <<FK>>
+    +campaign_id: str? <<FK>>
+    +applied_at: datetime
+    +applied_by: str? <<FK>>
+    +original_amount: Decimal
+    +discount_amount: Decimal
+    +final_amount: Decimal
+    +currency: str
+    +notes: str?
+    --
+    ' SIN SoftDelete
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Enums
+' ─────────────────────────────────────────────────────────────
+package "app.modules.marketing.enums" <<Frame>> {
+  enum CampaignStatus <<enum>> {
+    draft
+    active
+    paused
+    ended
+  }
+  enum DiscountType <<enum>> {
+    percentage
+    fixed_amount
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Repositories
+' ─────────────────────────────────────────────────────────────
+package "app.modules.marketing.repositories" <<Frame>> {
+  class CampaignRepository {
+    +ALLOWED_FIELDS
+    +get_by_code(db, code): Campaign?
+    +get_full(db, id): Campaign?  ' eager: promotions
+    +list_options(db, status?): list
+  }
+  class PromotionRepository {
+    +ALLOWED_FIELDS
+    +get_by_code(db, code): Promotion?
+    +get_full(db, id): Promotion?  ' eager: products, campaigns
+    +list_active_for(db, product_id, now): list  ' candidate promos
+    +list_options(db, active_only): list
+    +select_for_update_with_count(db, promotion_id): tuple<Promotion, int>
+  }
+  class PromotionUsageRepository {
+    +list_for_promotion(db, promotion_id, query): tuple<list, int>
+    +list_for_person(db, person_id, promotion_id?): list
+    +list_for_appointment(db, appointment_id): list
+    +count_for_promotion(db, promotion_id): int
+    +count_for_person_promotion(db, person_id, promotion_id): int
+    +append(db, usage): PromotionUsage
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services
+' ─────────────────────────────────────────────────────────────
+package "app.modules.marketing.services" <<Frame>> {
+  class "campaign.py" as camp_svc <<module>> {
+    +get_by_id / list_paginated / create / update / soft_delete
+    +transition_status(db, campaign_id, to_status, actor_id)
+    +replace_promotions(db, campaign_id, promotion_ids, actor_id)
+  }
+  class "promotion.py" as prom_svc <<module>> {
+    +get_by_id / list_paginated / create / update / soft_delete
+    +replace_products(db, promotion_id, product_ids, actor_id)
+    +list_eligible_for(db, product_id, person_id, now): list<EligibilityResult>
+    +validate(db, promotion_id, product_id, person_id, now): EligibilityResult
+    +compute_price(db, product_id, person_id, promotion_id?, now): PriceResult
+  }
+  class "promotion_usage.py" as pu_svc <<module>> {
+    +list_for_promotion(db, promotion_id, query)
+    +list_for_person(db, person_id)
+    +apply(db, promotion_id, person_id, appointment_id, campaign_id?, actor_id?): PromotionUsage
+    --
+    ' SELECT FOR UPDATE sobre promotion + recount
+    ' Valida no-stacking, max_uses, fechas, eligibility
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Externos
+' ─────────────────────────────────────────────────────────────
+class "Vertical" as Vertical <<entity,external>> #lightgrey
+class "Product" as Product <<entity,external>> #lightgrey
+class "Person" as Person <<entity,external>> #lightgrey
+class "Appointment" as Appointment <<entity,external>> #lightgrey
+class "User" as User <<entity,external>> #lightgrey
+
+' ─────────────────────────────────────────────────────────────
+' Herencia mixins
+' ─────────────────────────────────────────────────────────────
+PrimaryKeyMixin <|-- Campaign
+ActiveMixin     <|-- Campaign
+SoftDeleteMixin <|-- Campaign
+TimestampMixin  <|-- Campaign
+
+PrimaryKeyMixin <|-- Promotion
+ActiveMixin     <|-- Promotion
+SoftDeleteMixin <|-- Promotion
+TimestampMixin  <|-- Promotion
+
+PrimaryKeyMixin <|-- PromotionUsage
+
+note bottom of TimestampMixin
+  **Mixins por entidad**:
+  ""Campaign"" y ""Promotion"":
+  los 4 mixins (con SoftDelete).
+
+  ""PromotionUsage"":
+  PrimaryKey + Active + Timestamp.
+  SIN SoftDelete — audit trail.
+end note
+
+' Repos extienden BaseRepository
+BaseRepository <|-- CampaignRepository      : "<Campaign>"
+BaseRepository <|-- PromotionRepository     : "<Promotion>"
+BaseRepository <|-- PromotionUsageRepository : "<PromotionUsage>"
+
+' Relaciones dominio
+Campaign  "*" -- "*" Promotion : "campaign_promotion"
+Promotion "*" -- "*" Product   : "promotion_product"
+
+Campaign  "0..1" -- "0..*" Vertical : "target"
+
+Promotion "1" -- "0..*" PromotionUsage
+
+PromotionUsage "*" -- "1" Person
+PromotionUsage "*" -- "0..1" Appointment
+PromotionUsage "*" -- "0..1" Campaign
+PromotionUsage "*" -- "0..1" User : "applied_by"
+
+' Repos manejan modelos
+CampaignRepository       ..> Campaign
+PromotionRepository      ..> Promotion
+PromotionUsageRepository ..> PromotionUsage
+
+' Services usan repos
+camp_svc ..> CampaignRepository
+camp_svc ..> PromotionRepository
+prom_svc ..> PromotionRepository
+prom_svc ..> PromotionUsageRepository
+pu_svc   ..> PromotionUsageRepository
+pu_svc   ..> PromotionRepository
+
+' Notas
+note right of Campaign
+  **Atribución de leads**
+  Sin UTM/budget en MVP.
+  Status workflow validado en service.
+end note
+
+note right of Promotion
+  **Descuento discriminado**
+  ""discount_type"" + ""discount_value""
+  con validación cruzada.
+  ""applies_to_all_products=true""
+  ignora la M:N.
+end note
+
+note bottom of PromotionUsage
+  **Audit + reporte**
+  Snapshot del precio al momento.
+  No stacking: invariante en service
+  (si ya hay fila para appointment_id,
+  rechaza con PROMOTION_ALREADY_APPLIED).
+end note
+
+note bottom of pu_svc
+  **Concurrencia**
+  ""apply"" usa SELECT FOR UPDATE
+  sobre promotion + recount, para
+  evitar race en max_uses_total.
+  Lanza ""PROMOTION_LIMIT_REACHED""
+  si excede post-lock.
+end note
+
+note right of prom_svc
+  **compute_price** es el punto
+  de validación común para
+  scheduling y para tools del bot.
+  Devuelve PriceResult con
+  original / discount / final.
+end note
+
+@enduml

@@ -1,0 +1,234 @@
+@startuml er-staff
+' Propósito: modelo relacional del módulo staff (Doctor 1:1 con User, M:N con Branch y Vertical, patrón y overrides de disponibilidad)
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/staff/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 80
+skinparam defaultFontSize 13
+hide circle
+hide empty members
+
+title ER — Backend · Staff module
+
+legend top right
+  | <#FFFFE0> Marker | Significado |
+  | * | NOT NULL |
+  | <<PK>> | Primary Key |
+  | <<FK>> | Foreign Key |
+  | <<unique>> | UNIQUE constraint |
+  | <<nullable>> | NULL permitido |
+  | <<join>> | Tabla de asociación M:N |
+endlegend
+
+' ─────────────────────────────────────────────────────────────
+' Entidades principales del módulo
+' ─────────────────────────────────────────────────────────────
+
+entity "doctor" as t_doc {
+  * id : varchar(36) <<PK>>
+  --
+  * user_id : varchar(36) <<unique, FK→user>>
+  cmp_code : varchar(40) <<nullable, indexed>>
+  bio : text <<nullable>>
+  photo_url : varchar(500) <<nullable>>
+  signature_url : varchar(500) <<nullable>>
+  * slot_duration_min : int = 30
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "doctor_availability_pattern" as t_pat {
+  * id : varchar(36) <<PK>>
+  --
+  * doctor_id : varchar(36) <<FK→doctor>>
+  * branch_id : varchar(36) <<FK→branch>>
+  * office_id : varchar(36) <<FK→office>>
+  * day_of_week : smallint
+  * opens_at : time
+  * closes_at : time
+  --
+  ' day_of_week: convención Python (0=Lun, 6=Dom)
+  ' CHECK (closes_at > opens_at)
+  ' Invariantes validados en service (no constraint):
+  '   1) office_id pertenece a branch_id
+  '   2) doctor está asignado a branch (doctor_branch)
+  '   3) no superposición por (doctor, day, office) ni (doctor, day, branch)
+  '   4) bloque cabe dentro del OfficeOperatingHours del office
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "doctor_availability_override" as t_ov {
+  * id : varchar(36) <<PK>>
+  --
+  * doctor_id : varchar(36) <<FK→doctor>>
+  branch_id : varchar(36) <<nullable, FK→branch>>
+  office_id : varchar(36) <<nullable, FK→office>>
+  * starts_at : timestamptz
+  * ends_at : timestamptz
+  * is_available : boolean
+  * reason : varchar(255)
+  --
+  ' CHECK (ends_at > starts_at)
+  ' Regla branch/office según is_available (validada en service):
+  '   is_available=false + branch=NULL + office=NULL → global (vacaciones)
+  '   is_available=false + branch + office=NULL → solo esa sede
+  '   is_available=false + branch + office → solo ese consultorio
+  '   is_available=true → branch y office REQUERIDOS
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Tablas de asociación M:N
+' ─────────────────────────────────────────────────────────────
+
+entity "doctor_branch" as t_db <<join>> {
+  * doctor_id : varchar(36) <<PK, FK→doctor>>
+  * branch_id : varchar(36) <<PK, FK→branch>>
+  --
+  ON DELETE CASCADE
+}
+
+entity "doctor_vertical" as t_dv <<join>> {
+  * doctor_id : varchar(36) <<PK, FK→doctor>>
+  * vertical_id : varchar(36) <<PK, FK→vertical>>
+  --
+  ON DELETE CASCADE
+}
+
+' ─────────────────────────────────────────────────────────────
+' Entidades externas (sólo referencia)
+' ─────────────────────────────────────────────────────────────
+
+entity "user" as t_user <<external>> #lightgrey {
+  ' Módulo: admin
+  * id : varchar(36) <<PK>>
+  * email : varchar(255) <<unique>>
+  ...
+}
+
+entity "branch" as t_br <<external>> #lightgrey {
+  ' Módulo: clinic
+  * id : varchar(36) <<PK>>
+  * timezone : varchar(60)
+  ...
+}
+
+entity "office" as t_off <<external>> #lightgrey {
+  ' Módulo: clinic
+  * id : varchar(36) <<PK>>
+  * branch_id : varchar(36) <<FK>>
+  ...
+}
+
+entity "vertical" as t_vert <<external>> #lightgrey {
+  ' Módulo: catalog
+  * id : varchar(36) <<PK>>
+  ...
+}
+
+entity "appointment" as t_appt <<external>> #lightgrey {
+  ' Módulo: scheduling
+  * id : varchar(36) <<PK>>
+  * doctor_id : varchar(36) <<FK→doctor>>
+  ...
+}
+
+' ─────────────────────────────────────────────────────────────
+' Relaciones (crow's foot)
+' ─────────────────────────────────────────────────────────────
+
+' Doctor ↔ User (1:1)
+t_user ||--|| t_doc : "user_id\n(UNIQUE)"
+
+' Patterns y overrides (1:N desde Doctor)
+t_doc ||--o{ t_pat : "patrón\nsemanal"
+t_doc ||--o{ t_ov  : "excepciones"
+
+' Pattern → Branch/Office (1:N)
+t_br  ||--o{ t_pat
+t_off ||--o{ t_pat
+
+' Override → Branch/Office (FKs nullable)
+t_br  |o--o{ t_ov
+t_off |o--o{ t_ov
+
+' M:N Doctor ↔ Branch
+t_doc ||--o{ t_db
+t_db  }o--|| t_br
+
+' M:N Doctor ↔ Vertical
+t_doc ||--o{ t_dv
+t_dv  }o--|| t_vert
+
+' Referencias informativas
+t_doc ||--o{ t_appt : "atiende citas (scheduling)"
+
+' ─────────────────────────────────────────────────────────────
+' Notas
+' ─────────────────────────────────────────────────────────────
+
+note right of t_doc
+  **1:1 con User**
+  Ver ADR-002.
+  Asesor/Admin son User+Role
+  sin tabla propia.
+
+  ""slot_duration_min"" define
+  el grano del calendario:
+  scheduling reserva 1+ slots
+  contiguos según ""product.duration_min"".
+end note
+
+note right of t_pat
+  **Pattern semanal**
+  Granularidad confirmada:
+  (doctor, branch, office, día).
+  El doctor reserva consultorio.
+  Bulk PUT atómico — mismo
+  patrón que OfficeOperatingHours.
+end note
+
+note bottom of t_ov
+  **Override ad-hoc**
+  is_available=false → vacaciones,
+   licencia, no disponible.
+  is_available=true → disponibilidad
+   extra (debe declarar dónde).
+  Reglas branch/office validadas
+  en service, no constraint.
+end note
+
+note bottom of t_db
+  **Sedes donde atiende**
+  Doctor puede declarar pattern
+  solo en sedes donde está
+  asignado (validado en service).
+end note
+
+note bottom of t_dv
+  **Verticales que cubre**
+  Cruza con office_vertical
+  (clinic) al agendar: el office
+  debe ser apto para la vertical
+  del producto.
+end note
+
+@enduml

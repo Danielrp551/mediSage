@@ -39,6 +39,8 @@ docs/diagrams/
 
 ## Índice
 
+### Template (`admin` y cross-cutting)
+
 | Archivo | Cubre | Estado |
 |---|---|---|
 | [`class-backend-admin.puml`](class-backend-admin.puml) | `User/Role/Permission` + mixins + `BaseRepository` + services | ✅ |
@@ -48,6 +50,23 @@ docs/diagrams/
 | `sequence-auth-refresh.puml` | Rotación de refresh + revocación por `family` | _pendiente_ |
 | `activity-permission-check.puml` | `RequirePermission()` → claims → 403 | _pendiente_ |
 | `component-system.puml` | Browser ↔ Next.js ↔ FastAPI ↔ Postgres | _pendiente_ |
+
+### Medisage — módulos de dominio
+
+Cada módulo tiene su ER (relacional) y su Class (modelos + repos + services). Las fichas markdown viven en [`docs/modules/`](../modules/) y los ADRs en [`docs/decisions/`](../decisions/).
+
+| Módulo | ER | Class | Ficha | ADR |
+|---|---|---|---|---|
+| `catalog` (Vertical → Service → Product) | [er-catalog.puml](er-catalog.puml) ✅ | [class-backend-catalog.puml](class-backend-catalog.puml) ✅ | [catalog/](../modules/catalog/README.md) (overview + [backend](../modules/catalog/backend.md) + [ui](../modules/catalog/ui.md) + [frontend](../modules/catalog/frontend.md)) | — |
+| `clinic` (Branch / Office / horarios) | [er-clinic.puml](er-clinic.puml) ✅ | [class-backend-clinic.puml](class-backend-clinic.puml) ✅ | [clinic.md](../modules/clinic.md) | — |
+| `staff` (Doctor 1:1 User + disponibilidad) | [er-staff.puml](er-staff.puml) ✅ | [class-backend-staff.puml](class-backend-staff.puml) ✅ | [staff.md](../modules/staff.md) | [ADR-002](../decisions/ADR-002-doctor-entity-extends-user.md) |
+| `crm` (Person + estados separados) | [er-crm.puml](er-crm.puml) ✅ | [class-backend-crm.puml](class-backend-crm.puml) ✅ | [crm.md](../modules/crm.md) | [ADR-003](../decisions/ADR-003-person-with-separated-lifecycle-statuses.md) |
+| `conversations` (ChannelAccount + multicanal) | [er-conversations.puml](er-conversations.puml) ✅ | [class-backend-conversations.puml](class-backend-conversations.puml) ✅ | [conversations.md](../modules/conversations.md) | [ADR-004](../decisions/ADR-004-conversation-channel-account.md) |
+| `bots` (motor agnóstico) | [er-bots.puml](er-bots.puml) ✅ | [class-backend-bots.puml](class-backend-bots.puml) ✅ | [bots.md](../modules/bots.md) | [ADR-005](../decisions/ADR-005-agnostic-bot-engine.md) |
+| `scheduling` (Appointment + slots híbridos) | [er-scheduling.puml](er-scheduling.puml) ✅ | [class-backend-scheduling.puml](class-backend-scheduling.puml) ✅ | [scheduling.md](../modules/scheduling.md) | [ADR-006](../decisions/ADR-006-hybrid-calendar-slots.md) |
+| `marketing` (Campaign + Promotion + Usage) | [er-marketing.puml](er-marketing.puml) ✅ | [class-backend-marketing.puml](class-backend-marketing.puml) ✅ | [marketing.md](../modules/marketing.md) | — |
+
+Doc consolidado: [`docs/modules/_seed-and-roles.md`](../modules/_seed-and-roles.md) — 117 permisos + 4 roles seed + patches a `seed.py`.
 
 ## Cómo renderizar
 

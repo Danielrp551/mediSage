@@ -1,0 +1,403 @@
+@startuml class-backend-crm
+' Propósito: jerarquía OO del módulo crm — Person + estados separados + identifiers multicanal + assignment + activity polimórfica
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/crm/ y backend/app/shared/
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 50
+skinparam ranksep 65
+skinparam defaultFontSize 13
+hide empty members
+
+title Class — Backend · CRM module
+
+' ─────────────────────────────────────────────────────────────
+' Shared layer
+' ─────────────────────────────────────────────────────────────
+package "app.shared" <<Frame>> {
+  together {
+    class PrimaryKeyMixin <<mixin>>
+    class ActiveMixin    <<mixin>>
+    class SoftDeleteMixin <<mixin>>
+    class TimestampMixin  <<mixin>>
+  }
+  abstract class "BaseRepository<ModelT>" as BaseRepository {
+    +ALLOWED_FIELDS: set<str>
+    --
+    +get_by_id(...) / get_paginated(...) / create(...) / update(...) / soft_delete(...)
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Domain models
+' ─────────────────────────────────────────────────────────────
+package "app.modules.crm.models" <<Frame>> {
+
+  class Person <<entity>> {
+    +first_name: str
+    +last_name: str
+    +second_last_name: str?
+    +document_type: str?
+    +document_number: str?
+    +birth_date: date?
+    +gender: str?
+    +address: str?
+    +notes: str?
+    --
+    +identifiers: list<PersonContactIdentifier>
+    +lead_status: PersonLeadStatus?
+    +customer_status: PersonCustomerStatus?
+    +assignment: LeadAssignment?
+  }
+
+  class PersonContactIdentifier <<entity>> {
+    +person_id: str <<FK>>
+    +channel_type: str  ' whatsapp/telegram/web/email/...
+    +identifier: str
+    +is_primary: bool = false
+    +verified: bool = false
+    --
+    ' UNIQUE (channel_type, identifier) WHERE deleted_at IS NULL
+  }
+
+  class LeadStatus <<entity, catalog>> {
+    +code: str <<unique>>
+    +name: str
+    +description: str?
+    +color: str?
+    +is_initial: bool = false
+    +is_final: bool = false
+    +is_won: bool = false
+    +display_order: int = 0
+  }
+
+  class CustomerStatus <<entity, catalog>> {
+    +code: str <<unique>>
+    +name: str
+    +description: str?
+    +color: str?
+    +is_initial: bool = false
+    +is_final: bool = false
+    +display_order: int = 0
+  }
+
+  class PersonLeadStatus <<entity>> {
+    +person_id: str <<unique, FK>>
+    +lead_status_id: str <<FK>>
+    +source_campaign_id: str? <<FK>>
+    +entered_status_at: datetime
+    +last_activity_at: datetime?
+  }
+
+  class PersonCustomerStatus <<entity>> {
+    +person_id: str <<unique, FK>>
+    +customer_status_id: str <<FK>>
+    +became_customer_at: datetime
+    +entered_status_at: datetime
+  }
+
+  class LeadStatusHistory <<entity, immutable>> {
+    +person_id: str <<FK>>
+    +from_lead_status_id: str? <<FK>>
+    +to_lead_status_id: str <<FK>>
+    +source_campaign_id: str? <<FK>>
+    +changed_at: datetime
+    +changed_by: str? <<FK→user>>
+    +reason: str?
+    --
+    ' SIN SoftDeleteMixin
+  }
+
+  class CustomerStatusHistory <<entity, immutable>> {
+    +person_id: str <<FK>>
+    +from_customer_status_id: str? <<FK>>
+    +to_customer_status_id: str <<FK>>
+    +changed_at: datetime
+    +changed_by: str? <<FK→user>>
+    +reason: str?
+    --
+    ' SIN SoftDeleteMixin
+  }
+
+  class LeadAssignment <<entity>> {
+    +person_id: str <<unique, FK>>
+    +advisor_user_id: str <<FK→user>>
+    +assigned_at: datetime
+    +assigned_by: str? <<FK→user>>
+    +reason: str?
+  }
+
+  class LeadActivity <<entity, polymorphic>> {
+    +person_id: str <<FK>>
+    +advisor_user_id: str? <<FK→user>>
+    +activity_type: str  ' enum cerrado
+    +content: str?
+    +scheduled_for: datetime?
+    +completed_at: datetime?
+    +outcome: str?
+    +payload: JSON?
+    +related_appointment_id: str? <<FK>>
+    +related_conversation_id: str? <<FK>>
+    --
+    ' SIN SoftDeleteMixin
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Enums (en código, no en BD)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.crm.enums" <<Frame>> {
+  enum ChannelType <<enum>> {
+    whatsapp
+    telegram
+    web
+    phone
+    email
+    instagram
+    facebook
+    other
+  }
+
+  enum ActivityType <<enum>> {
+    CALL_ATTEMPT
+    NOTE
+    STATUS_CHANGE
+    FOLLOW_UP_SCHEDULED
+    FOLLOW_UP_COMPLETED
+    MESSAGE_SENT
+    CONVERSATION_TAKEN
+    CONVERSATION_RELEASED
+    APPOINTMENT_BOOKED
+    APPOINTMENT_CANCELLED
+    REASSIGNED
+    CAMPAIGN_ATTRIBUTION
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Repositories
+' ─────────────────────────────────────────────────────────────
+package "app.modules.crm.repositories" <<Frame>> {
+  class PersonRepository {
+    +ALLOWED_FIELDS: set
+    --
+    +get_by_identifier(db, channel_type, identifier): Person?
+    +get_full(db, person_id): Person?  ' eager: identifiers + lead_status + customer_status + assignment
+    +search(db, q, channel_type?, identifier?): list<Person>
+  }
+  class PersonContactIdentifierRepository {
+    +list_for_person(db, person_id): list
+    +get_by_identifier(db, channel_type, identifier): PersonContactIdentifier?
+  }
+  class LeadStatusRepository {
+    +get_by_code(db, code): LeadStatus?
+    +get_initial(db): LeadStatus
+    +list_options(db): list<LeadStatus>
+  }
+  class CustomerStatusRepository {
+    +get_by_code(db, code): CustomerStatus?
+    +get_initial(db): CustomerStatus
+    +list_options(db): list<CustomerStatus>
+  }
+  class PersonLeadStatusRepository {
+    +get_for_person(db, person_id): PersonLeadStatus?
+  }
+  class PersonCustomerStatusRepository {
+    +get_for_person(db, person_id): PersonCustomerStatus?
+  }
+  class LeadStatusHistoryRepository {
+    +list_for_person(db, person_id, limit?): list
+    +append(db, entry): LeadStatusHistory
+  }
+  class CustomerStatusHistoryRepository {
+    +list_for_person(db, person_id, limit?): list
+    +append(db, entry): CustomerStatusHistory
+  }
+  class LeadAssignmentRepository {
+    +get_for_person(db, person_id): LeadAssignment?
+    +list_for_advisor(db, advisor_user_id, query): tuple<list, int>
+    +pick_round_robin_advisor(db): User
+  }
+  class LeadActivityRepository {
+    +list_for_person(db, person_id, types?, query): tuple<list, int>
+    +append(db, activity): LeadActivity
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services (módulos funcionales)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.crm.services" <<Frame>> {
+  class "person.py" as person_svc <<module>> {
+    +get_by_id(db, person_id)
+    +create(db, payload, actor_id)
+    +update(db, person_id, payload, actor_id)
+    +search(db, q, channel_type?, identifier?)
+    +find_by_identifier_or_create(db, channel_type, identifier, profile)
+  }
+  class "contact_identifier.py" as ci_svc <<module>> {
+    +list(db, person_id)
+    +add(db, person_id, payload, actor_id)
+    +update(db, person_id, ident_id, payload, actor_id)
+    +remove(db, person_id, ident_id, actor_id)
+  }
+  class "lead_status.py" as ls_svc <<module>> {
+    +list_options(db)
+    +list_paginated(db, query)
+    +create/update/soft_delete(...)
+  }
+  class "customer_status.py" as cs_svc <<module>> {
+    +(análogo a lead_status)
+  }
+  class "person_lead_status.py" as pls_svc <<module>> {
+    +get(db, person_id)
+    +transition(db, person_id, to_status_id, actor_id, reason?)
+    +close(db, person_id, to_status_id, actor_id, reason?)
+    +history(db, person_id)
+  }
+  class "person_customer_status.py" as pcs_svc <<module>> {
+    +(análogo)
+    +promote_from_lead(db, person_id, actor_id)
+  }
+  class "lead_assignment.py" as la_svc <<module>> {
+    +get(db, person_id)
+    +assign_round_robin(db, person_id, actor_id?)
+    +reassign(db, person_id, new_advisor_id, actor_id, reason?)
+    +my_leads(db, advisor_user_id, query)
+  }
+  class "lead_activity.py" as act_svc <<module>> {
+    +list(db, person_id, types?, query)
+    +log(db, person_id, activity_type, payload, actor_id?)
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Externos (informativo)
+' ─────────────────────────────────────────────────────────────
+class "User" as User <<entity,external>> #lightgrey
+class "Campaign" as Campaign <<entity,external>> #lightgrey
+class "Conversation" as Conversation <<entity,external>> #lightgrey
+class "Appointment" as Appointment <<entity,external>> #lightgrey
+
+' ─────────────────────────────────────────────────────────────
+' Herencia mixins (representativa)
+' ─────────────────────────────────────────────────────────────
+PrimaryKeyMixin <|-- Person
+ActiveMixin     <|-- Person
+SoftDeleteMixin <|-- Person
+TimestampMixin  <|-- Person
+
+PrimaryKeyMixin <|-- PersonContactIdentifier
+PrimaryKeyMixin <|-- LeadStatus
+PrimaryKeyMixin <|-- CustomerStatus
+PrimaryKeyMixin <|-- PersonLeadStatus
+PrimaryKeyMixin <|-- PersonCustomerStatus
+PrimaryKeyMixin <|-- LeadStatusHistory
+PrimaryKeyMixin <|-- CustomerStatusHistory
+PrimaryKeyMixin <|-- LeadAssignment
+PrimaryKeyMixin <|-- LeadActivity
+
+note bottom of TimestampMixin
+  **Patrón aplicado a todas las entidades**
+  ""LeadStatusHistory"", ""CustomerStatusHistory""
+  y ""LeadActivity"" NO heredan ""SoftDeleteMixin"" —
+  son tablas inmutables (audit trail).
+
+  El resto hereda los 4 mixins normales.
+end note
+
+' Repos extienden BaseRepository
+BaseRepository <|-- PersonRepository                       : "<Person>"
+BaseRepository <|-- PersonContactIdentifierRepository      : "<PersonContactIdentifier>"
+BaseRepository <|-- LeadStatusRepository                   : "<LeadStatus>"
+BaseRepository <|-- CustomerStatusRepository               : "<CustomerStatus>"
+BaseRepository <|-- PersonLeadStatusRepository             : "<PersonLeadStatus>"
+BaseRepository <|-- PersonCustomerStatusRepository         : "<PersonCustomerStatus>"
+BaseRepository <|-- LeadStatusHistoryRepository            : "<LeadStatusHistory>"
+BaseRepository <|-- CustomerStatusHistoryRepository        : "<CustomerStatusHistory>"
+BaseRepository <|-- LeadAssignmentRepository               : "<LeadAssignment>"
+BaseRepository <|-- LeadActivityRepository                 : "<LeadActivity>"
+
+' Relaciones de dominio
+Person "1" -- "0..*" PersonContactIdentifier   : "identifiers"
+Person "1" -- "0..1" PersonLeadStatus          : "lead actual\n(UNIQUE)"
+Person "1" -- "0..1" PersonCustomerStatus      : "cliente actual\n(UNIQUE)"
+Person "1" -- "0..*" LeadStatusHistory         : "historial"
+Person "1" -- "0..*" CustomerStatusHistory     : "historial"
+Person "1" -- "0..1" LeadAssignment            : "owner\n(UNIQUE)"
+Person "1" -- "0..*" LeadActivity              : "timeline"
+
+LeadStatus     "1" -- "0..*" PersonLeadStatus
+LeadStatus     "1" -- "0..*" LeadStatusHistory
+CustomerStatus "1" -- "0..*" PersonCustomerStatus
+CustomerStatus "1" -- "0..*" CustomerStatusHistory
+
+LeadAssignment "*" -- "1" User                 : "advisor"
+LeadActivity "*" -- "0..1" User                : "actor (opcional)"
+
+PersonLeadStatus   "*" -- "0..1" Campaign      : "source"
+LeadStatusHistory  "*" -- "0..1" Campaign      : "source"
+
+LeadActivity "*" -- "0..1" Appointment         : "related"
+LeadActivity "*" -- "0..1" Conversation        : "related"
+
+' Repos manejan modelos
+PersonRepository                       ..> Person
+PersonContactIdentifierRepository      ..> PersonContactIdentifier
+LeadStatusRepository                   ..> LeadStatus
+CustomerStatusRepository               ..> CustomerStatus
+PersonLeadStatusRepository             ..> PersonLeadStatus
+PersonCustomerStatusRepository         ..> PersonCustomerStatus
+LeadStatusHistoryRepository            ..> LeadStatusHistory
+CustomerStatusHistoryRepository        ..> CustomerStatusHistory
+LeadAssignmentRepository               ..> LeadAssignment
+LeadActivityRepository                 ..> LeadActivity
+
+' Services usan repos (selectivo para legibilidad)
+person_svc ..> PersonRepository
+person_svc ..> PersonContactIdentifierRepository
+ci_svc     ..> PersonContactIdentifierRepository
+ls_svc     ..> LeadStatusRepository
+cs_svc     ..> CustomerStatusRepository
+pls_svc    ..> PersonLeadStatusRepository
+pls_svc    ..> LeadStatusHistoryRepository
+pls_svc    ..> LeadActivityRepository
+pcs_svc    ..> PersonCustomerStatusRepository
+pcs_svc    ..> CustomerStatusHistoryRepository
+pcs_svc    ..> PersonLeadStatusRepository
+la_svc     ..> LeadAssignmentRepository
+la_svc     ..> LeadActivityRepository
+act_svc    ..> LeadActivityRepository
+
+' Notas
+note right of Person
+  **ADR-003**: estados lead y customer
+  separados en tablas hijas.
+  Sin datos médicos en MVP.
+end note
+
+note right of PersonContactIdentifier
+  **Matching multicanal**
+  ""conversations"" llama
+  ""person.get_by_identifier(channel, id)""
+  al recibir mensaje entrante.
+end note
+
+note bottom of LeadActivity
+  **""activity_type"" enum cerrado**
+  Los emiten distintos módulos
+  (conversations, scheduling, crm).
+  ""payload"" JSONB para datos
+  específicos del tipo.
+end note
+
+note bottom of la_svc
+  **Round-robin sin tabla extra**
+  Repo ""pick_round_robin_advisor()""
+  hace SELECT ... FOR UPDATE
+  para evitar race condition.
+end note
+
+@enduml

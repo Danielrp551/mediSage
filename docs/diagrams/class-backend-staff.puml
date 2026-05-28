@@ -1,0 +1,255 @@
+@startuml class-backend-staff
+' Propósito: jerarquía OO del módulo staff (Doctor + disponibilidad) — modelos, repos y services funcionales
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/staff/ y backend/app/shared/
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 50
+skinparam ranksep 70
+skinparam defaultFontSize 13
+hide empty members
+
+title Class — Backend · Staff module
+
+' ─────────────────────────────────────────────────────────────
+' Shared layer — mixins y base genérica
+' ─────────────────────────────────────────────────────────────
+package "app.shared" <<Frame>> {
+  together {
+    class PrimaryKeyMixin <<mixin>> {
+      +id: str <<UUID>>
+    }
+    class ActiveMixin <<mixin>> {
+      +active: bool
+    }
+    class SoftDeleteMixin <<mixin>> {
+      +deleted_at: datetime?
+    }
+    class TimestampMixin <<mixin>> {
+      +created_on: datetime
+      +created_by: str
+      +updated_on: datetime
+      +updated_by: str
+    }
+  }
+
+  abstract class "BaseRepository<ModelT>" as BaseRepository {
+    +ALLOWED_FIELDS: set<str>
+    +model: type<ModelT>
+    --
+    +get_by_id(db, id, ...): ModelT?
+    +get_paginated(db, query_request, load): tuple<list, int>
+    +create(db, obj): ModelT
+    +update(db, obj, changes): ModelT
+    +soft_delete(db, obj): None
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Domain models — SQLAlchemy ORM
+' ─────────────────────────────────────────────────────────────
+package "app.modules.staff.models" <<Frame>> {
+  together {
+    class Doctor <<entity>> {
+      +user_id: str <<unique, FK>>
+      +cmp_code: str?
+      +bio: str?
+      +photo_url: str?
+      +signature_url: str?
+      +slot_duration_min: int = 30
+      --
+      +user: User <<1:1>>
+      +branches: list<Branch> <<M:N>>
+      +verticals: list<Vertical> <<M:N>>
+    }
+
+    class DoctorAvailabilityPattern <<entity>> {
+      +doctor_id: str <<FK>>
+      +branch_id: str <<FK>>
+      +office_id: str <<FK>>
+      +day_of_week: int  ' 0=Lun ... 6=Dom
+      +opens_at: time
+      +closes_at: time
+      --
+      ' CHECK (closes_at > opens_at)
+    }
+
+    class DoctorAvailabilityOverride <<entity>> {
+      +doctor_id: str <<FK>>
+      +branch_id: str?  ' nullable
+      +office_id: str?  ' nullable
+      +starts_at: datetime
+      +ends_at: datetime
+      +is_available: bool
+      +reason: str
+      --
+      ' CHECK (ends_at > starts_at)
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' External (informativo)
+' ─────────────────────────────────────────────────────────────
+class "User" as User <<entity,external>> #lightgrey
+class "Branch" as Branch <<entity,external>> #lightgrey
+class "Office" as Office <<entity,external>> #lightgrey
+class "Vertical" as Vertical <<entity,external>> #lightgrey
+
+' ─────────────────────────────────────────────────────────────
+' Repositories
+' ─────────────────────────────────────────────────────────────
+package "app.modules.staff.repositories" <<Frame>> {
+  together {
+    class DoctorRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_user_id(db, user_id): Doctor?
+      +get_full(db, doctor_id): Doctor?  ' eager: user, branches, verticals
+      +list_options(db, branch_id?, vertical_id?, only_active): list<Doctor>
+    }
+    class DoctorAvailabilityPatternRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +list_for_doctor(db, doctor_id): list<DoctorAvailabilityPattern>
+      +list_for_branch_and_day(db, branch_id, dow): list<DoctorAvailabilityPattern>
+      +replace_all_for_doctor(db, doctor_id, items): list<DoctorAvailabilityPattern>
+    }
+    class DoctorAvailabilityOverrideRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +list_for_doctor(db, doctor_id, frm, to): list<DoctorAvailabilityOverride>
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services — módulos funcionales (NO clases)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.staff.services" <<Frame>> {
+  together {
+    class "doctor.py" as doc_svc <<module>> {
+      +get_by_id(db, doctor_id)
+      +get_me(db, current_user)  ' resuelve doctor desde user_id
+      +list_paginated(db, query)
+      +list_options(db, branch_id?, vertical_id?)
+      +create(db, payload, actor_id)  ' acepta user_id o nested user
+      +update(db, doctor_id, payload, actor_id)  ' incluye branch_ids, vertical_ids
+      +update_me(db, current_user, payload)
+      +soft_delete(db, doctor_id, actor_id)
+    }
+
+    class "availability_pattern.py" as pat_svc <<module>> {
+      +list_for_doctor(db, doctor_id)
+      +replace_all(db, doctor_id, items, actor_id)
+      --
+      ' Valida invariantes #1-4 antes de persistir
+    }
+
+    class "availability_override.py" as ov_svc <<module>> {
+      +list_for_doctor(db, doctor_id, frm, to)
+      +create(db, doctor_id, payload, actor_id)
+      +delete(db, doctor_id, ov_id, actor_id)
+      --
+      ' Valida combinaciones is_available + branch/office
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Herencia de mixins
+' ─────────────────────────────────────────────────────────────
+PrimaryKeyMixin <|-- Doctor
+ActiveMixin     <|-- Doctor
+SoftDeleteMixin <|-- Doctor
+TimestampMixin  <|-- Doctor
+
+PrimaryKeyMixin <|-- DoctorAvailabilityPattern
+PrimaryKeyMixin <|-- DoctorAvailabilityOverride
+
+note bottom of TimestampMixin
+  **Patrón aplicado a las 3 entidades**
+  ""Doctor"", ""DoctorAvailabilityPattern"",
+  ""DoctorAvailabilityOverride"" heredan
+  los 4 mixins:
+  ""PrimaryKeyMixin, ActiveMixin,""
+  ""SoftDeleteMixin, TimestampMixin""
+
+  (Sólo se dibujan algunas herencias.)
+end note
+
+' Repos extienden el genérico
+BaseRepository <|-- DoctorRepository                       : "<Doctor>"
+BaseRepository <|-- DoctorAvailabilityPatternRepository   : "<DoctorAvailabilityPattern>"
+BaseRepository <|-- DoctorAvailabilityOverrideRepository  : "<DoctorAvailabilityOverride>"
+
+' Relaciones de dominio
+Doctor "1" -- "1" User                     : "user_id\n(1:1)"
+Doctor "1" -- "0..*" DoctorAvailabilityPattern   : "patrón"
+Doctor "1" -- "0..*" DoctorAvailabilityOverride  : "overrides"
+
+DoctorAvailabilityPattern "*" -- "1" Branch  : "en sede"
+DoctorAvailabilityPattern "*" -- "1" Office  : "en consultorio"
+DoctorAvailabilityOverride "*" -- "0..1" Branch  : "opcional"
+DoctorAvailabilityOverride "*" -- "0..1" Office  : "opcional"
+
+Doctor "*" -- "*" Branch    : "doctor_branch"
+Doctor "*" -- "*" Vertical  : "doctor_vertical"
+
+' Repos manejan su modelo
+DoctorRepository                       ..> Doctor                       : manages
+DoctorAvailabilityPatternRepository   ..> DoctorAvailabilityPattern   : manages
+DoctorAvailabilityOverrideRepository  ..> DoctorAvailabilityOverride  : manages
+
+' Services usan repos
+doc_svc ..> DoctorRepository
+pat_svc ..> DoctorAvailabilityPatternRepository
+pat_svc ..> DoctorRepository
+ov_svc  ..> DoctorAvailabilityOverrideRepository
+ov_svc  ..> DoctorRepository
+
+' Notas
+note right of Doctor
+  **ADR-002**: 1:1 con User.
+  Vinculado por ""user_id"" UNIQUE.
+
+  ""slot_duration_min"" es el
+  grano del calendario.
+  ""scheduling"" reserva 1+ slots
+  contiguos para cubrir
+  ""product.duration_min"".
+end note
+
+note right of DoctorAvailabilityPattern
+  **Bulk replace**
+  Endpoint público:
+  ""PUT /doctors/{id}/availability/patterns""
+  No hay CRUD individual de filas
+  (igual que OfficeOperatingHours).
+end note
+
+note right of DoctorAvailabilityOverride
+  **Reglas branch/office**
+  is_available=false:
+    branch/office opcionales
+    (vacaciones globales o
+    licencia parcial).
+  is_available=true:
+    branch y office REQUERIDOS.
+end note
+
+note bottom of pat_svc
+  **Invariantes validados aquí**:
+  1) office pertenece a branch
+  2) doctor asignado a branch
+  3) sin superposición
+  4) cabe en OfficeOperatingHours
+
+  Lanza ""BadRequestException""
+  con ""code"" específico
+  (ej. ""OFFICE_OCCUPIED"").
+end note
+
+@enduml

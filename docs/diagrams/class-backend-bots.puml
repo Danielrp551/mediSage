@@ -1,0 +1,384 @@
+@startuml class-backend-bots
+' Propósito: jerarquía OO del módulo bots — modelos, repos, services, BotEngine abstracto con 2 implementaciones
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/bots/
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 50
+skinparam ranksep 65
+skinparam defaultFontSize 13
+hide empty members
+
+title Class — Backend · Bots module
+
+' ─────────────────────────────────────────────────────────────
+' Shared
+' ─────────────────────────────────────────────────────────────
+package "app.shared" <<Frame>> {
+  together {
+    class PrimaryKeyMixin <<mixin>>
+    class ActiveMixin    <<mixin>>
+    class SoftDeleteMixin <<mixin>>
+    class TimestampMixin  <<mixin>>
+  }
+  abstract class "BaseRepository<ModelT>" as BaseRepository {
+    +ALLOWED_FIELDS
+    +get_by_id / get_paginated / create / update / soft_delete
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Models
+' ─────────────────────────────────────────────────────────────
+package "app.modules.bots.models" <<Frame>> {
+  class BotConfiguration <<entity>> {
+    +code: str <<unique>>
+    +name: str
+    +bot_type: str
+    +description: str?
+    +current_version_id: str? <<FK>>
+    --
+    +versions: list<BotConfigurationVersion>
+    +tools: list<BotTool> <<M:N>>
+  }
+
+  class BotConfigurationVersion <<entity>> {
+    +bot_configuration_id: str <<FK>>
+    +version: int
+    +system_prompt: str
+    +provider: str
+    +model_name: str
+    +parameters: JSON
+    +external_webhook_url: str?
+    +external_webhook_secret_name: str?
+    +notes: str?
+    +is_active: bool = true
+    --
+    ' UNIQUE (bot_configuration_id, version)
+  }
+
+  class ConversationBotState <<entity>> {
+    +conversation_id: str <<unique, FK>>
+    +bot_configuration_id: str <<FK>>
+    +bot_configuration_version_id: str <<FK>>
+    +current_intent: str?
+    +collected_slots: JSON
+    +last_node: str?
+    +last_bot_turn_at: datetime?
+    +turn_count: int = 0
+  }
+
+  class BotTool <<entity, catalog>> {
+    +code: str <<unique>>
+    +name: str
+    +description: str
+    +parameters_schema: JSON
+    +target_service: str
+    +requires_confirmation: bool = false
+    +is_active: bool = true
+  }
+
+  class BotToolCall <<entity, immutable>> {
+    +conversation_id: str <<FK>>
+    +bot_event_id: str? <<FK>>
+    +bot_tool_id: str <<FK>>
+    +tool_use_id: str?
+    +arguments: JSON
+    +result: JSON?
+    +status: str
+    +error_message: str?
+    +started_at: datetime
+    +completed_at: datetime?
+    +latency_ms: int?
+    --
+    ' SIN SoftDelete
+  }
+
+  class BotEvent <<entity, immutable>> {
+    +conversation_id: str <<FK>>
+    +bot_configuration_id: str <<FK>>
+    +bot_configuration_version_id: str <<FK>>
+    +turn_number: int
+    +event_type: str
+    +input_message_id: str? <<FK>>
+    +output_message_id: str? <<FK>>
+    +tokens_in: int?
+    +tokens_out: int?
+    +latency_ms: int?
+    +cost_estimated_usd: Decimal?
+    +error: str?
+    +metadata: JSON?
+    --
+    ' UNIQUE (conversation_id, turn_number)
+    ' SIN SoftDelete
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Enums
+' ─────────────────────────────────────────────────────────────
+package "app.modules.bots.enums" <<Frame>> {
+  enum BotType <<enum>> {
+    preventa
+    postventa
+    general
+    custom
+  }
+  enum Provider <<enum>> {
+    claude
+    openai
+    vertex_ai
+    azure_openai
+    langchain
+    external_webhook
+  }
+  enum BotEventType <<enum>> {
+    turn_started
+    turn_completed
+    turn_failed
+    tool_dispatched
+    handoff_triggered
+  }
+  enum ToolCallStatus <<enum>> {
+    pending
+    success
+    error
+    timeout
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Repositories
+' ─────────────────────────────────────────────────────────────
+package "app.modules.bots.repositories" <<Frame>> {
+  class BotConfigurationRepository {
+    +ALLOWED_FIELDS
+    +get_by_code(db, code): BotConfiguration?
+    +get_full(db, id): BotConfiguration?  ' eager: current_version + tools
+    +get_by_type(db, bot_type): list
+  }
+  class BotConfigurationVersionRepository {
+    +list_for_configuration(db, config_id): list
+    +get_next_version(db, config_id): int
+  }
+  class ConversationBotStateRepository {
+    +get_for_conversation(db, conversation_id): ConversationBotState?
+  }
+  class BotToolRepository {
+    +ALLOWED_FIELDS
+    +get_by_code(db, code): BotTool?
+    +list_for_configuration(db, config_id): list
+  }
+  class BotToolCallRepository {
+    +list_for_conversation(db, conversation_id): list
+    +list_for_event(db, event_id): list
+  }
+  class BotEventRepository {
+    +list_for_conversation(db, conversation_id): list
+    +list_paginated(db, query, config_id?): tuple<list, int>
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services (CRUD)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.bots.services" <<Frame>> {
+  class "configuration.py" as cfg_svc <<module>> {
+    +get_by_id / list_paginated / create / update / soft_delete
+    +replace_tools(db, config_id, tool_ids, actor_id)
+  }
+  class "configuration_version.py" as ver_svc <<module>> {
+    +list_for_configuration(db, config_id)
+    +create(db, config_id, payload, actor_id)
+    +activate(db, config_id, version_id, actor_id)
+  }
+  class "tool.py" as tool_svc <<module>> {
+    +get_by_id / list_paginated / create / update / soft_delete
+  }
+  class "state.py" as state_svc <<module>> {
+    +get(db, conversation_id)
+    +ensure_for_conversation(db, conversation_id, bot_config_id)
+    +reset(db, conversation_id, actor_id)
+    +update_slots(db, conversation_id, patch)
+  }
+  class "event.py" as event_svc <<module>> {
+    +list(db, conversation_id)
+    +list_paginated(db, query, config_id?)
+    +log(db, payload): BotEvent
+  }
+  class "tool_call.py" as tc_svc <<module>> {
+    +list(db, conversation_id)
+    +start(db, payload): BotToolCall
+    +complete(db, tool_call_id, result, status, latency_ms)
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Engine — interfaz + 2 implementaciones
+' ─────────────────────────────────────────────────────────────
+package "app.modules.bots.services.engine" <<Frame>> {
+  abstract class BotEngine {
+    +{abstract} dispatch_turn(conversation, message, db): None
+    +choose_bot_for_conversation(person, db): BotConfiguration
+    --
+    ' Common: persiste BotEvent, lee/escribe ConversationBotState,
+    ' invoca conversations.message.send_outbound al final.
+  }
+
+  class EmbeddedBotEngine {
+    +provider_client: ProviderClient  ' Anthropic/OpenAI/...
+    +dispatch_turn(conversation, message, db): None
+    --
+    ' Construye prompt + tools, llama LLM in-process,
+    ' loop tool_use/tool_result hasta respuesta final.
+  }
+
+  class ExternalBotEngine {
+    +http_client: AsyncClient
+    +dispatch_turn(conversation, message, db): None
+    +on_external_callback(payload): None
+    +on_tool_result(payload): None
+    --
+    ' POST al external_webhook_url con HMAC.
+    ' Recibe callback en /engine/external/*.
+  }
+
+  class TOOL_REGISTRY <<module-level dict>> {
+    +"book_appointment" → scheduling.appointment.create_from_bot
+    +"check_availability" → scheduling.availability.check
+    +"list_products_by_vertical" → catalog.product.list_for_vertical
+    +"register_lead_note" → crm.lead_activity.log_note
+    +"update_lead_status" → crm.person_lead_status.transition
+    +"cancel_appointment" → scheduling.appointment.cancel_from_bot
+    +...
+  }
+
+  class BotInvocationContext <<dataclass>> {
+    +conversation_id: str
+    +person_id: str?
+    +bot_configuration_id: str
+    +bot_configuration_version_id: str
+    +bot_tool_call_id: str
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Externos
+' ─────────────────────────────────────────────────────────────
+class "Conversation" as Conversation <<entity,external>> #lightgrey
+class "Message" as Message <<entity,external>> #lightgrey
+class "Person" as Person <<entity,external>> #lightgrey
+
+' ─────────────────────────────────────────────────────────────
+' Herencia mixins
+' ─────────────────────────────────────────────────────────────
+PrimaryKeyMixin <|-- BotConfiguration
+ActiveMixin     <|-- BotConfiguration
+SoftDeleteMixin <|-- BotConfiguration
+TimestampMixin  <|-- BotConfiguration
+
+PrimaryKeyMixin <|-- BotConfigurationVersion
+PrimaryKeyMixin <|-- ConversationBotState
+PrimaryKeyMixin <|-- BotTool
+PrimaryKeyMixin <|-- BotToolCall
+PrimaryKeyMixin <|-- BotEvent
+
+note bottom of TimestampMixin
+  **Mixins por entidad**:
+  ""BotConfiguration"", ""BotConfigurationVersion"",
+  ""ConversationBotState"", ""BotTool"":
+  los 4 mixins (con SoftDelete).
+
+  ""BotToolCall"", ""BotEvent"":
+  PrimaryKey + Active + Timestamp.
+  SIN SoftDelete — traza inmutable.
+end note
+
+' Repos extienden BaseRepository
+BaseRepository <|-- BotConfigurationRepository        : "<BotConfiguration>"
+BaseRepository <|-- BotConfigurationVersionRepository : "<BotConfigurationVersion>"
+BaseRepository <|-- ConversationBotStateRepository    : "<ConversationBotState>"
+BaseRepository <|-- BotToolRepository                 : "<BotTool>"
+BaseRepository <|-- BotToolCallRepository             : "<BotToolCall>"
+BaseRepository <|-- BotEventRepository                : "<BotEvent>"
+
+' Relaciones dominio
+BotConfiguration "1" -- "0..*" BotConfigurationVersion : "versions"
+BotConfiguration "0..1" -- "0..1" BotConfigurationVersion : "current_version_id\n(FK)"
+
+BotConfiguration "*" -- "*" BotTool : "bot_configuration_tool"
+
+Conversation "1" -- "0..1" ConversationBotState
+ConversationBotState "*" -- "1" BotConfiguration
+ConversationBotState "*" -- "1" BotConfigurationVersion
+
+Conversation "1" -- "0..*" BotToolCall
+Conversation "1" -- "0..*" BotEvent
+BotTool "1" -- "0..*" BotToolCall
+BotEvent "1" -- "0..*" BotToolCall
+
+BotEvent "*" -- "0..1" Message : "input/output"
+
+' Engine relationships
+BotEngine <|-- EmbeddedBotEngine
+BotEngine <|-- ExternalBotEngine
+
+BotEngine ..> ConversationBotStateRepository
+BotEngine ..> BotEventRepository
+BotEngine ..> BotToolCallRepository
+BotEngine ..> TOOL_REGISTRY
+BotEngine ..> Conversation
+BotEngine ..> Message
+BotEngine ..> Person
+
+EmbeddedBotEngine ..> "Anthropic/OpenAI SDK" : in-process
+ExternalBotEngine ..> "external_webhook_url" : HTTP POST
+
+' Services usan repos
+cfg_svc   ..> BotConfigurationRepository
+cfg_svc   ..> BotToolRepository
+ver_svc   ..> BotConfigurationVersionRepository
+ver_svc   ..> BotConfigurationRepository
+tool_svc  ..> BotToolRepository
+state_svc ..> ConversationBotStateRepository
+event_svc ..> BotEventRepository
+tc_svc    ..> BotToolCallRepository
+
+' Engine usa services para escribir state/events/tool_calls
+EmbeddedBotEngine ..> state_svc
+EmbeddedBotEngine ..> event_svc
+EmbeddedBotEngine ..> tc_svc
+ExternalBotEngine ..> state_svc
+ExternalBotEngine ..> event_svc
+ExternalBotEngine ..> tc_svc
+
+' Notas
+note right of BotEngine
+  **ADR-005**: motor agnóstico.
+  Interfaz abstracta. La selección
+  entre Embedded / External se
+  resuelve por
+  ""BotConfigurationVersion.provider""
+  en runtime.
+end note
+
+note bottom of TOOL_REGISTRY
+  **Registry de funciones**
+  Map del code (BotTool.code)
+  a la función Python real.
+  El dispatcher resuelve el
+  ""target_service"" string contra
+  este dict.
+end note
+
+note bottom of BotInvocationContext
+  **Audit-context para tools**
+  Inyectado en cada tool service.
+  Permite a la tool registrar
+  audit, validar permisos de
+  sistema, etc.
+end note
+
+@enduml

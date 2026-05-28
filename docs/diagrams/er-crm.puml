@@ -1,0 +1,361 @@
+@startuml er-crm
+' Propósito: modelo relacional del módulo crm (Person + ciclo lead/customer separado + identifiers multicanal + assignment + activity)
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/crm/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 55
+skinparam ranksep 70
+skinparam defaultFontSize 13
+hide circle
+hide empty members
+
+title ER — Backend · CRM module
+
+legend top right
+  | <#FFFFE0> Marker | Significado |
+  | * | NOT NULL |
+  | <<PK>> | Primary Key |
+  | <<FK>> | Foreign Key |
+  | <<unique>> | UNIQUE constraint |
+  | <<nullable>> | NULL permitido |
+  | <<join>> | Tabla de asociación M:N |
+endlegend
+
+' ─────────────────────────────────────────────────────────────
+' Entidad raíz
+' ─────────────────────────────────────────────────────────────
+entity "person" as t_per {
+  * id : varchar(36) <<PK>>
+  --
+  * first_name : varchar(80)
+  * last_name : varchar(80)
+  second_last_name : varchar(80) <<nullable>>
+  document_type : varchar(20) <<nullable>>
+  document_number : varchar(40) <<nullable, indexed>>
+  birth_date : date <<nullable>>
+  gender : varchar(20) <<nullable>>
+  address : varchar(255) <<nullable>>
+  notes : text <<nullable>>
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Identifiers multicanal
+' ─────────────────────────────────────────────────────────────
+entity "person_contact_identifier" as t_pci {
+  * id : varchar(36) <<PK>>
+  --
+  * person_id : varchar(36) <<FK→person>>
+  * channel_type : varchar(40)
+  * identifier : varchar(255)
+  * is_primary : boolean = false
+  * verified : boolean = false
+  --
+  ' UNIQUE (channel_type, identifier) WHERE deleted_at IS NULL
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Catálogos configurables
+' ─────────────────────────────────────────────────────────────
+entity "lead_status" as t_ls {
+  * id : varchar(36) <<PK>>
+  --
+  * code : varchar(40) <<unique>>
+  * name : varchar(120)
+  description : varchar(500) <<nullable>>
+  color : varchar(20) <<nullable>>
+  * is_initial : boolean = false
+  * is_final : boolean = false
+  * is_won : boolean = false
+  * display_order : int = 0
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "customer_status" as t_cs {
+  * id : varchar(36) <<PK>>
+  --
+  * code : varchar(40) <<unique>>
+  * name : varchar(120)
+  description : varchar(500) <<nullable>>
+  color : varchar(20) <<nullable>>
+  * is_initial : boolean = false
+  * is_final : boolean = false
+  * display_order : int = 0
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Estado actual (uno solo por Person)
+' ─────────────────────────────────────────────────────────────
+entity "person_lead_status" as t_pls {
+  * id : varchar(36) <<PK>>
+  --
+  * person_id : varchar(36) <<unique, FK→person>>
+  * lead_status_id : varchar(36) <<FK→lead_status>>
+  source_campaign_id : varchar(36) <<nullable, FK→campaign>>
+  * entered_status_at : timestamptz
+  last_activity_at : timestamptz <<nullable>>
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "person_customer_status" as t_pcs {
+  * id : varchar(36) <<PK>>
+  --
+  * person_id : varchar(36) <<unique, FK→person>>
+  * customer_status_id : varchar(36) <<FK→customer_status>>
+  * became_customer_at : timestamptz
+  * entered_status_at : timestamptz
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Historial inmutable
+' ─────────────────────────────────────────────────────────────
+entity "lead_status_history" as t_lsh {
+  * id : varchar(36) <<PK>>
+  --
+  * person_id : varchar(36) <<FK→person>>
+  from_lead_status_id : varchar(36) <<nullable, FK→lead_status>>
+  * to_lead_status_id : varchar(36) <<FK→lead_status>>
+  source_campaign_id : varchar(36) <<nullable, FK→campaign>>
+  * changed_at : timestamptz
+  changed_by : varchar(36) <<nullable, FK→user>>
+  reason : varchar(255) <<nullable>>
+  --
+  ' SIN SoftDelete — historial es inmutable
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "customer_status_history" as t_csh {
+  * id : varchar(36) <<PK>>
+  --
+  * person_id : varchar(36) <<FK→person>>
+  from_customer_status_id : varchar(36) <<nullable, FK→customer_status>>
+  * to_customer_status_id : varchar(36) <<FK→customer_status>>
+  * changed_at : timestamptz
+  changed_by : varchar(36) <<nullable, FK→user>>
+  reason : varchar(255) <<nullable>>
+  --
+  ' SIN SoftDelete
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Asignación de owner
+' ─────────────────────────────────────────────────────────────
+entity "lead_assignment" as t_la {
+  * id : varchar(36) <<PK>>
+  --
+  * person_id : varchar(36) <<unique, FK→person>>
+  * advisor_user_id : varchar(36) <<FK→user>>
+  * assigned_at : timestamptz
+  assigned_by : varchar(36) <<nullable, FK→user>>
+  reason : varchar(255) <<nullable>>
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Timeline polimórfico
+' ─────────────────────────────────────────────────────────────
+entity "lead_activity" as t_act {
+  * id : varchar(36) <<PK>>
+  --
+  * person_id : varchar(36) <<FK→person>>
+  advisor_user_id : varchar(36) <<nullable, FK→user>>
+  * activity_type : varchar(40)
+  content : text <<nullable>>
+  scheduled_for : timestamptz <<nullable>>
+  completed_at : timestamptz <<nullable>>
+  outcome : varchar(40) <<nullable>>
+  payload : jsonb <<nullable>>
+  related_appointment_id : varchar(36) <<nullable, FK→appointment>>
+  related_conversation_id : varchar(36) <<nullable, FK→conversation>>
+  --
+  ' SIN SoftDelete — activities no se borran
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Entidades externas (referencia)
+' ─────────────────────────────────────────────────────────────
+entity "user" as t_user <<external>> #lightgrey {
+  ' Módulo: admin
+  * id : varchar(36) <<PK>>
+  ...
+}
+entity "campaign" as t_camp <<external>> #lightgrey {
+  ' Módulo: marketing
+  * id : varchar(36) <<PK>>
+  ...
+}
+entity "conversation" as t_conv <<external>> #lightgrey {
+  ' Módulo: conversations
+  * id : varchar(36) <<PK>>
+  person_id : varchar(36) <<FK→person>>
+  ...
+}
+entity "appointment" as t_appt <<external>> #lightgrey {
+  ' Módulo: scheduling
+  * id : varchar(36) <<PK>>
+  person_id : varchar(36) <<FK→person>>
+  ...
+}
+
+' ─────────────────────────────────────────────────────────────
+' Relaciones
+' ─────────────────────────────────────────────────────────────
+
+' Person como hub
+t_per ||--o{ t_pci  : "identifiers\nmulticanal"
+t_per ||--o| t_pls  : "lead actual\n(UNIQUE)"
+t_per ||--o| t_pcs  : "cliente actual\n(UNIQUE)"
+t_per ||--o| t_la   : "owner\n(UNIQUE)"
+t_per ||--o{ t_lsh  : "historial lead"
+t_per ||--o{ t_csh  : "historial customer"
+t_per ||--o{ t_act  : "timeline\nactivity"
+
+' Estado actual → catálogo
+t_ls ||--o{ t_pls
+t_cs ||--o{ t_pcs
+
+' Historiales → catálogos
+t_ls ||--o{ t_lsh : "to / from"
+t_cs ||--o{ t_csh : "to / from"
+
+' Campaign (referencia externa)
+t_camp ||--o{ t_pls  : "source"
+t_camp ||--o{ t_lsh  : "source"
+
+' Owner → User
+t_user ||--o{ t_la  : "advisor"
+
+' Activity → User (actor)
+t_user ||--o{ t_act : "actor (opcional)"
+
+' Activity → FKs externos opcionales
+t_appt ||--o{ t_act : "related (opcional)"
+t_conv ||--o{ t_act : "related (opcional)"
+
+' Conversation y Appointment apuntan a Person
+t_per ||--o{ t_conv : "conversaciones\n(scheduling)"
+t_per ||--o{ t_appt : "citas\n(scheduling)"
+
+' ─────────────────────────────────────────────────────────────
+' Notas
+' ─────────────────────────────────────────────────────────────
+
+note right of t_per
+  **Sin datos médicos en MVP**
+  Identidad + contacto.
+  Si crece la necesidad médica
+  se agregará tabla
+  ""medical_record"" (1:1 con Person).
+end note
+
+note right of t_pci
+  **Multicanal ready**
+  ""(channel_type, identifier)"" UNIQUE
+  (partial: WHERE deleted_at IS NULL).
+  Base del matching que hace
+  ""conversations"" al recibir mensaje.
+end note
+
+note bottom of t_pls
+  **Un único lead activo por Person**
+  Al cerrar lead (estado is_final),
+  la fila se elimina; el historial
+  queda en ""lead_status_history"".
+  Si la persona vuelve a ser lead,
+  se crea una nueva fila.
+end note
+
+note right of t_ls
+  **Catálogo configurable**
+  Admin puede agregar/editar.
+  Flags ""is_initial / is_final / is_won""
+  permiten al código no hardcodear
+  códigos específicos.
+end note
+
+note bottom of t_la
+  **Round-robin sin tabla extra**
+  Service consulta:
+  ""advisors ORDER BY""
+  ""COUNT(active_leads) ASC,""
+  ""MAX(assigned_at) ASC LIMIT 1""
+  + ""FOR UPDATE"" para evitar race.
+end note
+
+note right of t_act
+  **Timeline polimórfico**
+  ""activity_type"" enum cerrado en código
+  (los emiten módulos específicos).
+  ""payload jsonb"" guarda lo específico
+  de cada tipo.
+  ""SIN SoftDelete"" — auditoría honesta.
+end note
+
+note bottom of t_lsh
+  **Inmutable**
+  No SoftDelete. Cada transición
+  agrega fila; ""changed_by"" puede ser
+  NULL si fue automática (bot/sistema).
+end note
+
+@enduml

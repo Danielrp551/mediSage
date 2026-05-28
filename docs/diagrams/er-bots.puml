@@ -1,0 +1,274 @@
+@startuml er-bots
+' Propósito: modelo relacional del módulo bots (BotConfiguration + Version + State + Tools + Events)
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/bots/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 55
+skinparam ranksep 70
+skinparam defaultFontSize 13
+hide circle
+hide empty members
+
+title ER — Backend · Bots module
+
+legend top right
+  | <#FFFFE0> Marker | Significado |
+  | * | NOT NULL |
+  | <<PK>> | Primary Key |
+  | <<FK>> | Foreign Key |
+  | <<unique>> | UNIQUE constraint |
+  | <<nullable>> | NULL permitido |
+  | <<join>> | Tabla de asociación M:N |
+endlegend
+
+' ─────────────────────────────────────────────────────────────
+' Configuration + Versions
+' ─────────────────────────────────────────────────────────────
+entity "bot_configuration" as t_bc {
+  * id : varchar(36) <<PK>>
+  --
+  * code : varchar(40) <<unique>>
+  * name : varchar(120)
+  * bot_type : varchar(20)   ' preventa / postventa / general / custom
+  description : text <<nullable>>
+  current_version_id : varchar(36) <<nullable, FK→bot_configuration_version>>
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "bot_configuration_version" as t_bcv {
+  * id : varchar(36) <<PK>>
+  --
+  * bot_configuration_id : varchar(36) <<FK→bot_configuration>>
+  * version : int
+  * system_prompt : text
+  * provider : varchar(40)
+  * model_name : varchar(120)
+  * parameters : jsonb
+  external_webhook_url : varchar(500) <<nullable>>
+  external_webhook_secret_name : varchar(255) <<nullable>>
+  notes : text <<nullable>>
+  * is_active : boolean = true
+  --
+  ' UNIQUE (bot_configuration_id, version)
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' State por Conversation
+' ─────────────────────────────────────────────────────────────
+entity "conversation_bot_state" as t_cbs {
+  * id : varchar(36) <<PK>>
+  --
+  * conversation_id : varchar(36) <<unique, FK→conversation>>
+  * bot_configuration_id : varchar(36) <<FK→bot_configuration>>
+  * bot_configuration_version_id : varchar(36) <<FK→bot_configuration_version>>
+  current_intent : varchar(80) <<nullable>>
+  * collected_slots : jsonb = '{}'
+  last_node : varchar(120) <<nullable>>
+  last_bot_turn_at : timestamptz <<nullable>>
+  * turn_count : int = 0
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Tools (catálogo) + M:N + invocaciones
+' ─────────────────────────────────────────────────────────────
+entity "bot_tool" as t_bt {
+  * id : varchar(36) <<PK>>
+  --
+  * code : varchar(60) <<unique>>
+  * name : varchar(120)
+  * description : text
+  * parameters_schema : jsonb
+  * target_service : varchar(120)
+  * requires_confirmation : boolean = false
+  * is_active : boolean = true
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "bot_configuration_tool" as t_bct <<join>> {
+  * bot_configuration_id : varchar(36) <<PK, FK→bot_configuration>>
+  * bot_tool_id : varchar(36) <<PK, FK→bot_tool>>
+  --
+  ON DELETE CASCADE
+}
+
+entity "bot_tool_call" as t_btc {
+  * id : varchar(36) <<PK>>
+  --
+  * conversation_id : varchar(36) <<FK→conversation>>
+  bot_event_id : varchar(36) <<nullable, FK→bot_event>>
+  * bot_tool_id : varchar(36) <<FK→bot_tool>>
+  tool_use_id : varchar(255) <<nullable>>
+  * arguments : jsonb
+  result : jsonb <<nullable>>
+  * status : varchar(20)         ' pending / success / error / timeout
+  error_message : text <<nullable>>
+  * started_at : timestamptz
+  completed_at : timestamptz <<nullable>>
+  latency_ms : int <<nullable>>
+  --
+  ' SIN SoftDelete — traza inmutable
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Eventos por turno (observabilidad)
+' ─────────────────────────────────────────────────────────────
+entity "bot_event" as t_be {
+  * id : varchar(36) <<PK>>
+  --
+  * conversation_id : varchar(36) <<FK→conversation>>
+  * bot_configuration_id : varchar(36) <<FK→bot_configuration>>
+  * bot_configuration_version_id : varchar(36) <<FK→bot_configuration_version>>
+  * turn_number : int
+  * event_type : varchar(40)
+  input_message_id : varchar(36) <<nullable, FK→message>>
+  output_message_id : varchar(36) <<nullable, FK→message>>
+  tokens_in : int <<nullable>>
+  tokens_out : int <<nullable>>
+  latency_ms : int <<nullable>>
+  cost_estimated_usd : numeric(10,6) <<nullable>>
+  error : text <<nullable>>
+  metadata : jsonb <<nullable>>
+  --
+  ' UNIQUE (conversation_id, turn_number)
+  ' SIN SoftDelete — traza
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Externas (referencia)
+' ─────────────────────────────────────────────────────────────
+entity "conversation" as t_conv <<external>> #lightgrey {
+  ' Módulo: conversations
+  * id : varchar(36) <<PK>>
+  ...
+}
+entity "message" as t_msg <<external>> #lightgrey {
+  ' Módulo: conversations
+  * id : varchar(36) <<PK>>
+  ...
+}
+
+' ─────────────────────────────────────────────────────────────
+' Relaciones
+' ─────────────────────────────────────────────────────────────
+
+' Configuration → Versions (1:N) + apunta a la actual (FK)
+t_bc ||--o{ t_bcv : "tiene versiones"
+t_bcv |o--o| t_bc : "current_version_id\n(FK opcional)"
+
+' Configuration ↔ Tools (M:N)
+t_bc ||--o{ t_bct
+t_bct }o--|| t_bt
+
+' Conversation → State (1:1) + Configuration + Version
+t_conv ||--o| t_cbs : "estado bot\n(UNIQUE)"
+t_bc   ||--o{ t_cbs
+t_bcv  ||--o{ t_cbs
+
+' Conversation → ToolCalls + Events (1:N)
+t_conv ||--o{ t_btc
+t_conv ||--o{ t_be
+
+' Tool → ToolCall
+t_bt ||--o{ t_btc
+
+' Event → Messages (input/output, opcionales)
+t_msg |o--o{ t_be : "input/output"
+t_be  |o--o{ t_btc : "evento del turno"
+
+' Configuration + Version → Event
+t_bc  ||--o{ t_be
+t_bcv ||--o{ t_be
+
+' ─────────────────────────────────────────────────────────────
+' Notas
+' ─────────────────────────────────────────────────────────────
+
+note right of t_bc
+  **Bot lógico**
+  Apunta a su versión vigente
+  (""current_version_id"" FK).
+  Tipos en MVP: preventa, postventa.
+end note
+
+note right of t_bcv
+  **Versión inmutable del prompt**
+  Cambiar prompt = crear nueva versión.
+  Promoción: ""POST /activate-version/{id}""
+  actualiza ""bot_configuration.current_version_id"".
+
+  Si ""provider='external_webhook'"" usa
+  ""external_webhook_url"" + secret.
+end note
+
+note right of t_cbs
+  **Estado por conversación**
+  ""bot_configuration_version_id"" queda
+  fijo al iniciar — la conversación NO
+  migra de versión a media charla.
+  Para forzar: ""POST /state/reset"".
+
+  ""collected_slots"" jsonb libre por bot.
+end note
+
+note bottom of t_bt
+  **Catálogo de herramientas**
+  ""target_service"" apunta a función
+  Python por string. Dispatcher resuelve
+  vía TOOL_REGISTRY.
+  ""parameters_schema"" es JSON Schema
+  compatible con OpenAI / Claude tools.
+end note
+
+note bottom of t_btc
+  **Traza de invocación**
+  Inmutable. ""tool_use_id"" matchea
+  con el ID que asigna el LLM.
+  ""bot_event_id"" referencia al turno.
+end note
+
+note right of t_be
+  **Observabilidad por turno**
+  UNIQUE (conversation_id, turn_number).
+  Inmutable.
+  Indexes: (bot_configuration_id, created_on),
+  (event_type, created_on).
+end note
+
+@enduml

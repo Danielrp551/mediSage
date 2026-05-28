@@ -1,0 +1,269 @@
+@startuml er-scheduling
+' Propósito: modelo relacional del módulo scheduling (Appointment + AppointmentStatus + History + ChangeLog)
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/scheduling/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 55
+skinparam ranksep 70
+skinparam defaultFontSize 13
+hide circle
+hide empty members
+
+title ER — Backend · Scheduling module
+
+legend top right
+  | <#FFFFE0> Marker | Significado |
+  | * | NOT NULL |
+  | <<PK>> | Primary Key |
+  | <<FK>> | Foreign Key |
+  | <<unique>> | UNIQUE constraint |
+  | <<nullable>> | NULL permitido |
+endlegend
+
+' ─────────────────────────────────────────────────────────────
+' Catálogo configurable
+' ─────────────────────────────────────────────────────────────
+entity "appointment_status" as t_as {
+  * id : varchar(36) <<PK>>
+  --
+  * code : varchar(40) <<unique>>
+  * name : varchar(120)
+  description : text <<nullable>>
+  color : varchar(20) <<nullable>>
+  * is_initial : boolean = false
+  * is_final : boolean = false
+  * is_active_attention : boolean = false
+  * display_order : int = 0
+  --
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Cita
+' ─────────────────────────────────────────────────────────────
+entity "appointment" as t_appt {
+  * id : varchar(36) <<PK>>
+  --
+  * person_id : varchar(36) <<FK→person>>
+  * doctor_id : varchar(36) <<FK→doctor>>
+  * office_id : varchar(36) <<FK→office>>
+  * branch_id : varchar(36) <<FK→branch>>      ' denormalizado de office.branch_id
+  * product_id : varchar(36) <<FK→product>>
+  * scheduled_for : timestamptz                ' UTC
+  * duration_min : int                          ' copiado de product.duration_min
+  * status_id : varchar(36) <<FK→appointment_status>>
+  * source : varchar(20)                        ' bot / advisor / admin / import / api
+  previous_appointment_id : varchar(36) <<nullable, FK→appointment>>
+  notes : text <<nullable>>
+  cancellation_reason : varchar(255) <<nullable>>
+  cancelled_at : timestamptz <<nullable>>
+  cancelled_by : varchar(36) <<nullable, FK→user>>
+  confirmed_at : timestamptz <<nullable>>
+  attended_at : timestamptz <<nullable>>
+  --
+  ' Índices:
+  '   (doctor_id, scheduled_for)
+  '   (office_id, scheduled_for)
+  '   (person_id, scheduled_for)
+  '   (branch_id, scheduled_for, status_id)
+  ' Invariantes en service (no constraint):
+  '   1) office.branch_id == branch_id
+  '   2) office.verticals ∋ product.service.vertical_id
+  '   3) doctor.branches ∋ branch_id
+  '   4) doctor.verticals ∋ product.service.vertical_id
+  '   5) No conflict de tiempo del doctor (rangos no solapan en estados activos)
+  '   6) No conflict de tiempo del office
+  '   7) Cabe en DoctorAvailabilityPattern y no bloqueado por Override(false)
+  '   8) Cabe en OfficeOperatingHours y no bloqueado por Closure(true)
+  '   9) Si product.min_hours_to_cancel set, validar al cancelar
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Historial inmutable (estados)
+' ─────────────────────────────────────────────────────────────
+entity "appointment_status_history" as t_ash {
+  * id : varchar(36) <<PK>>
+  --
+  * appointment_id : varchar(36) <<FK→appointment>>
+  from_status_id : varchar(36) <<nullable, FK→appointment_status>>
+  * to_status_id : varchar(36) <<FK→appointment_status>>
+  * changed_at : timestamptz
+  changed_by : varchar(36) <<nullable, FK→user>>
+  reason : varchar(255) <<nullable>>
+  --
+  ' SIN SoftDelete
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Traza genérica de cambios (no estados)
+' ─────────────────────────────────────────────────────────────
+entity "appointment_change_log" as t_acl {
+  * id : varchar(36) <<PK>>
+  --
+  * appointment_id : varchar(36) <<FK→appointment>>
+  * field_name : varchar(60)            ' doctor_id / office_id / scheduled_for / notes / ...
+  previous_value : text <<nullable>>
+  new_value : text <<nullable>>
+  * changed_at : timestamptz
+  changed_by : varchar(36) <<nullable, FK→user>>
+  reason : varchar(255) <<nullable>>
+  --
+  ' SIN SoftDelete
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Externas (referencia)
+' ─────────────────────────────────────────────────────────────
+entity "person" as t_per <<external>> #lightgrey {
+  ' Módulo: crm
+  * id : varchar(36) <<PK>>
+  ...
+}
+entity "doctor" as t_doc <<external>> #lightgrey {
+  ' Módulo: staff
+  * id : varchar(36) <<PK>>
+  * slot_duration_min : int
+  ...
+}
+entity "office" as t_off <<external>> #lightgrey {
+  ' Módulo: clinic
+  * id : varchar(36) <<PK>>
+  * branch_id : varchar(36)
+  ...
+}
+entity "branch" as t_br <<external>> #lightgrey {
+  ' Módulo: clinic
+  * id : varchar(36) <<PK>>
+  * timezone : varchar(60)
+  ...
+}
+entity "product" as t_prod <<external>> #lightgrey {
+  ' Módulo: catalog
+  * id : varchar(36) <<PK>>
+  * duration_min : int <<nullable>>
+  min_hours_to_cancel : int <<nullable>>
+  ...
+}
+entity "user" as t_user <<external>> #lightgrey {
+  ' Módulo: admin
+  * id : varchar(36) <<PK>>
+  ...
+}
+entity "lead_activity" as t_la <<external>> #lightgrey {
+  ' Módulo: crm
+  * id : varchar(36) <<PK>>
+  related_appointment_id : varchar(36) <<FK>>
+  ...
+}
+
+' ─────────────────────────────────────────────────────────────
+' Relaciones
+' ─────────────────────────────────────────────────────────────
+
+' Catálogo → Appointment + History
+t_as ||--o{ t_appt : "status"
+t_as ||--o{ t_ash  : "from / to"
+
+' Appointment → Person / Doctor / Office / Branch / Product
+t_per  ||--o{ t_appt
+t_doc  ||--o{ t_appt
+t_off  ||--o{ t_appt
+t_br   ||--o{ t_appt
+t_prod ||--o{ t_appt
+
+' Self-ref: reagendamiento
+t_appt |o--o{ t_appt : "previous_appointment_id"
+
+' Audit / cancellation
+t_user |o--o{ t_appt : "cancelled_by"
+
+' Appointment → History + ChangeLog
+t_appt ||--o{ t_ash
+t_appt ||--o{ t_acl
+
+' History / ChangeLog → User (actor, opcional)
+t_user |o--o{ t_ash : "changed_by"
+t_user |o--o{ t_acl : "changed_by"
+
+' LeadActivity (crm) referencia a Appointment
+t_appt ||--o{ t_la : "APPOINTMENT_*\n(emitido en crm)"
+
+' ─────────────────────────────────────────────────────────────
+' Notas
+' ─────────────────────────────────────────────────────────────
+
+note right of t_appt
+  **Unidad persistida del calendario**
+  No hay tabla de slots — la
+  disponibilidad se calcula on-the-fly.
+  Ver ADR-006.
+
+  ""duration_min"" se copia del product
+  al agendar (estable ante edits del product).
+
+  ""branch_id"" denormalizado de
+  office.branch_id para queries por sede.
+end note
+
+note right of t_appt
+  **Reagendamiento**
+  Crea NUEVA appointment con
+  ""previous_appointment_id"" FK
+  a la anterior; la vieja queda en
+  estado RESCHEDULED (final).
+  Cadena visible en queries hacia adelante.
+end note
+
+note bottom of t_ash
+  **Inmutable**
+  Cada transición de status agrega
+  una fila. ""changed_by NULL"" = sistema/bot.
+end note
+
+note bottom of t_acl
+  **Inmutable**
+  Traza de cambios in-place
+  (doctor, office, notes).
+  Cambios de ""status_id"" van a
+  appointment_status_history,
+  no acá.
+  ""scheduled_for"" no se edita
+  in-place — eso usa /reschedule.
+end note
+
+note right of t_as
+  **Estados seed (8)**:
+  SCHEDULED (initial)
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS (active_attention=true)
+  ATTENDED (final)
+  NO_SHOW (final)
+  CANCELLED (final)
+  RESCHEDULED (final)
+end note
+
+@enduml

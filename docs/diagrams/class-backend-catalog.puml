@@ -1,0 +1,229 @@
+@startuml class-backend-catalog
+' Propósito: jerarquía OO del módulo catalog (Vertical → Service → Product) — modelos, repos y services funcionales
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/catalog/ y backend/app/shared/
+
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 50
+skinparam ranksep 70
+skinparam defaultFontSize 13
+hide empty members
+
+title Class — Backend · Catalog module
+
+' ─────────────────────────────────────────────────────────────
+' Shared layer — mixins y base genérica (sólo referencia)
+' ─────────────────────────────────────────────────────────────
+package "app.shared" <<Frame>> {
+
+  together {
+    class PrimaryKeyMixin <<mixin>> {
+      +id: str <<UUID>>
+    }
+    class ActiveMixin <<mixin>> {
+      +active: bool
+    }
+    class SoftDeleteMixin <<mixin>> {
+      +deleted_at: datetime?
+    }
+    class TimestampMixin <<mixin>> {
+      +created_on: datetime
+      +created_by: str
+      +updated_on: datetime
+      +updated_by: str
+    }
+  }
+
+  abstract class "BaseRepository<ModelT>" as BaseRepository {
+    +ALLOWED_FIELDS: set<str>
+    +model: type<ModelT>
+    --
+    +get_by_id(db, id, ...): ModelT?
+    +get_paginated(db, query_request, load): tuple<list, int>
+    +create(db, obj): ModelT
+    +update(db, obj, changes): ModelT
+    +soft_delete(db, obj): None
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Domain models — SQLAlchemy ORM
+' ─────────────────────────────────────────────────────────────
+package "app.modules.catalog.models" <<Frame>> {
+
+  together {
+    class Vertical <<entity>> {
+      +code: str <<unique>>
+      +name: str
+      +description: str?
+      +color: str?
+      +icon: str?
+      +display_order: int
+    }
+
+    class Service <<entity>> {
+      +vertical_id: str <<FK>>
+      +code: str
+      +name: str
+      +description: str?
+      +display_order: int
+      --
+      ' UNIQUE (vertical_id, code)
+    }
+
+    class Product <<entity>> {
+      +service_id: str <<FK>>
+      +code: str
+      +name: str
+      +description: str?
+      +base_price: Decimal
+      +currency: str = 'PEN'
+      +duration_min: int?
+      +requires_appointment: bool = true
+      +is_package: bool = false
+      +min_hours_to_cancel: int?
+      --
+      ' UNIQUE (service_id, code)
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Repositories — CRUD async tipado
+' ─────────────────────────────────────────────────────────────
+package "app.modules.catalog.repositories" <<Frame>> {
+
+  together {
+    class VerticalRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_code(db, code): Vertical?
+      +list_options(db, only_active): list<Vertical>
+    }
+    class ServiceRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_vertical_and_code(db, vertical_id, code): Service?
+      +list_options(db, vertical_id?, only_active): list<Service>
+    }
+    class ProductRepository {
+      +ALLOWED_FIELDS: set
+      --
+      +get_by_service_and_code(db, service_id, code): Product?
+      +list_options(db, service_id?, only_active): list<Product>
+      +get_full(db, product_id): Product?
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services — módulos funcionales (NO clases)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.catalog.services" <<Frame>> {
+
+  together {
+    class "vertical.py" as vert_svc <<module>> {
+      +get_by_id(db, vertical_id)
+      +list_paginated(db, query)
+      +list_options(db)
+      +create(db, payload, actor_id)
+      +update(db, vertical_id, payload, actor_id)
+      +soft_delete(db, vertical_id, actor_id)
+    }
+
+    class "service.py" as svc_svc <<module>> {
+      +get_by_id(...)
+      +list_paginated(...)
+      +list_options(db, vertical_id?)
+      +create(...) / update(...) / soft_delete(...)
+    }
+
+    class "product.py" as prod_svc <<module>> {
+      +get_by_id(...)
+      +list_paginated(...)
+      +list_options(db, service_id?)
+      +create(...) / update(...) / soft_delete(...)
+    }
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Herencia de mixins → entidades
+' Aplica a las 3 entidades (PrimaryKey + Active + SoftDelete + Timestamp)
+' Dibujamos solo desde Vertical para no saturar.
+' ─────────────────────────────────────────────────────────────
+PrimaryKeyMixin <|-- Vertical
+ActiveMixin     <|-- Vertical
+SoftDeleteMixin <|-- Vertical
+TimestampMixin  <|-- Vertical
+
+PrimaryKeyMixin <|-- Service
+TimestampMixin  <|-- Service
+
+PrimaryKeyMixin <|-- Product
+TimestampMixin  <|-- Product
+
+note bottom of TimestampMixin
+  **Patrón aplicado a las 3 entidades**
+  ""Vertical"", ""Service"" y ""Product""
+  heredan los 4 mixins:
+  ""PrimaryKeyMixin, ActiveMixin,""
+  ""SoftDeleteMixin, TimestampMixin""
+
+  (Sólo se dibujan algunas herencias
+  para no saturar visualmente.)
+end note
+
+' Repositorios extienden el genérico parametrizado
+BaseRepository <|-- VerticalRepository : "<Vertical>"
+BaseRepository <|-- ServiceRepository  : "<Service>"
+BaseRepository <|-- ProductRepository  : "<Product>"
+
+' Relaciones de dominio (jerarquía 1:N)
+Vertical "1" -- "0..*" Service  : "tiene\nservicios"
+Service  "1" -- "0..*" Product  : "tiene\nproductos"
+
+' Repositorios manejan su modelo
+VerticalRepository ..> Vertical : manages
+ServiceRepository  ..> Service  : manages
+ProductRepository  ..> Product  : manages
+
+' Services usan repositorios
+vert_svc ..> VerticalRepository
+svc_svc  ..> ServiceRepository
+svc_svc  ..> VerticalRepository
+prod_svc ..> ProductRepository
+prod_svc ..> ServiceRepository
+
+' Notas
+note right of Vertical
+  **Área comercial macro**
+  ""code"" es slug estable
+  que usan los bots para
+  clasificar leads.
+end note
+
+note right of Product
+  **Unidad agendable**
+  ""scheduling.Appointment"" tiene FK
+  ""product_id"" hacia aquí.
+  ""duration_min"" determina cuántos
+  slots ocupa la cita.
+
+  ""marketing.Promotion"" aplica
+  descuento sobre ""base_price""
+  vía ""promotion_product"" (M:N).
+end note
+
+note bottom of prod_svc
+  Patrón del template:
+  services son módulos de
+  funciones, **no clases**.
+  Cada función recibe
+  ""AsyncSession"" + actor_id
+  explícito.
+end note
+
+@enduml

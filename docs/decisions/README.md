@@ -45,13 +45,18 @@ PROPOSED → ACCEPTED → (SUPERSEDED | DEPRECATED)
 | #    | Título                                       | Status | Fecha |
 |------|----------------------------------------------|--------|-------|
 | [ADR-001](ADR-001-multi-env-branching.md) | Multi-environment deployment via branch-driven workflows | Accepted | 2026-05-27 |
-| _(pendiente)_ 002 | JWT en cookie httpOnly (no localStorage)     | —      | —     |
-| _(pendiente)_ 003 | Permisos viajan en el access token           | —      | —     |
-| _(pendiente)_ 004 | Arquitectura backend en 5 capas              | —      | —     |
-| _(pendiente)_ 005 | Refresh token con rotación por familia       | —      | —     |
-| _(pendiente)_ 006 | RBAC dual: permisos directos + por rol       | —      | —     |
-| _(pendiente)_ 007 | Server Actions vs cliente HTTP en frontend   | —      | —     |
-| _(pendiente)_ 008 | URL state con nuqs para listados             | —      | —     |
+| [ADR-002](ADR-002-doctor-entity-extends-user.md) | Doctor como entidad 1:1 con User, no columnas en User | Accepted | 2026-05-28 |
+| [ADR-003](ADR-003-person-with-separated-lifecycle-statuses.md) | Person + estados lead/customer separados en tablas hijas | Accepted | 2026-05-28 |
+| [ADR-004](ADR-004-conversation-channel-account.md) | Conversation + ChannelAccount como par central de mensajería multicanal | Accepted | 2026-05-28 |
+| [ADR-005](ADR-005-agnostic-bot-engine.md) | Motor del bot agnóstico — entidades separadas de la implementación del engine | Accepted | 2026-05-28 |
+| [ADR-006](ADR-006-hybrid-calendar-slots.md) | Slots de calendario híbridos — solo Appointment persiste; disponibilidad on-the-fly | Accepted | 2026-05-28 |
+| _(pendiente)_ 007 | JWT en cookie httpOnly (no localStorage)     | —      | —     |
+| _(pendiente)_ 004 | Permisos viajan en el access token           | —      | —     |
+| _(pendiente)_ 005 | Arquitectura backend en 5 capas              | —      | —     |
+| _(pendiente)_ 006 | Refresh token con rotación por familia       | —      | —     |
+| _(pendiente)_ 007 | RBAC dual: permisos directos + por rol       | —      | —     |
+| _(pendiente)_ 008 | Server Actions vs cliente HTTP en frontend   | —      | —     |
+| _(pendiente)_ 009 | URL state con nuqs para listados             | —      | —     |
 
 ## Referencias
 

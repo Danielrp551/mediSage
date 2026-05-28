@@ -1,0 +1,160 @@
+@startuml er-catalog
+' Propósito: modelo relacional del módulo catalog (Vertical → Service → Product)
+' Última actualización: 2026-05-28
+' Código de referencia: backend/app/modules/catalog/models/
+
+!theme plain
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 80
+skinparam defaultFontSize 13
+hide circle
+hide empty members
+
+title ER — Backend · Catalog module
+
+legend top right
+  | <#FFFFE0> Marker | Significado |
+  | * | NOT NULL |
+  | <<PK>> | Primary Key |
+  | <<FK>> | Foreign Key |
+  | <<unique>> | UNIQUE constraint |
+  | <<nullable>> | NULL permitido |
+endlegend
+
+' ─────────────────────────────────────────────────────────────
+' Entidades principales (jerarquía 3 niveles)
+' ─────────────────────────────────────────────────────────────
+
+entity "vertical" as t_vert {
+  * id : varchar(36) <<PK>>
+  --
+  * code : varchar(40) <<unique, indexed>>
+  * name : varchar(120)
+  description : varchar(500) <<nullable>>
+  color : varchar(20) <<nullable>>
+  icon : varchar(60) <<nullable>>
+  * display_order : int = 0
+  --
+  ' Mixins
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "service" as t_svc {
+  * id : varchar(36) <<PK>>
+  --
+  * vertical_id : varchar(36) <<FK→vertical>>
+  * code : varchar(60)
+  * name : varchar(120)
+  description : varchar(500) <<nullable>>
+  * display_order : int = 0
+  --
+  ' UNIQUE (vertical_id, code)
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+entity "product" as t_prod {
+  * id : varchar(36) <<PK>>
+  --
+  * service_id : varchar(36) <<FK→service>>
+  * code : varchar(60)
+  * name : varchar(160)
+  description : varchar(1000) <<nullable>>
+  * base_price : numeric(10,2)
+  * currency : varchar(3) = 'PEN'
+  duration_min : int <<nullable>>
+  * requires_appointment : boolean = true
+  * is_package : boolean = false
+  min_hours_to_cancel : int <<nullable>>
+  --
+  ' UNIQUE (service_id, code)
+  * active : boolean
+  deleted_at : timestamptz <<nullable>>
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Relaciones (crow's foot)
+'   ||   = exactly one
+'   }o   = zero or many
+' ─────────────────────────────────────────────────────────────
+
+t_vert ||--o{ t_svc  : "tiene\nservicios"
+t_svc  ||--o{ t_prod : "tiene\nproductos"
+
+' ─────────────────────────────────────────────────────────────
+' Referencias externas (informativas — definidas en otros módulos)
+' ─────────────────────────────────────────────────────────────
+
+entity "doctor_vertical" as t_dv <<external,join>> #lightgrey {
+  ' Módulo: staff
+  * doctor_id : varchar(36) <<PK, FK→doctor>>
+  * vertical_id : varchar(36) <<PK, FK→vertical>>
+}
+
+entity "appointment" as t_appt <<external>> #lightgrey {
+  ' Módulo: scheduling
+  * id : varchar(36) <<PK>>
+  * product_id : varchar(36) <<FK→product>>
+  ...
+}
+
+entity "promotion_product" as t_pp <<external,join>> #lightgrey {
+  ' Módulo: marketing
+  * promotion_id : varchar(36) <<PK, FK→promotion>>
+  * product_id : varchar(36) <<PK, FK→product>>
+}
+
+t_vert ||--o{ t_dv   : "doctores\nasignados (staff)"
+t_prod ||--o{ t_appt : "se agenda en (scheduling)"
+t_prod ||--o{ t_pp   : "tiene\npromos (marketing)"
+
+' ─────────────────────────────────────────────────────────────
+' Notas
+' ─────────────────────────────────────────────────────────────
+
+note right of t_vert
+  **Área comercial macro**
+  ""code"" es slug estable que usan
+  los bots para clasificar leads.
+  Multi-vertical: una clínica puede
+  combinar dermat + estética + dental.
+end note
+
+note right of t_svc
+  **Categoría intermedia**
+  Agrupa productos similares dentro
+  de una vertical para reporting y UX.
+  ""(vertical_id, code)"" único.
+end note
+
+note right of t_prod
+  **Unidad vendible y agendable**
+  Una cita siempre se reserva contra
+  un Product.
+  Promotions aplican descuento sobre
+  ""base_price"".
+  ""duration_min"" lo lee scheduling
+  para calcular cuántos slots ocupa.
+end note
+
+note bottom of t_dv
+  **Externa — módulo staff**
+  M:N doctor ↔ vertical: qué
+  verticales puede atender cada doctor.
+end note
+
+@enduml
