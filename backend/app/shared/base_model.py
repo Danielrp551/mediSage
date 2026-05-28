@@ -5,7 +5,7 @@ Mixins shared by all domain tables: UUID PK, soft delete, audit columns.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,7 +17,7 @@ def _uuid() -> str:
 
 def _utc_now() -> datetime:
     """Timezone-aware UTC. Stored via `DateTime(timezone=True)` (timestamptz)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PrimaryKeyMixin:

@@ -67,7 +67,9 @@ def _to_detail(user: User, audit_users: dict[str, User]) -> UserDetail:
     return UserDetail(
         **_to_item(user, audit_users).model_dump(),
         roles=[RoleOption.model_validate(r, from_attributes=True) for r in user.roles],
-        permissions=[PermissionOption.model_validate(p, from_attributes=True) for p in user.permissions],
+        permissions=[
+            PermissionOption.model_validate(p, from_attributes=True) for p in user.permissions
+        ],
     )
 
 
@@ -103,17 +105,18 @@ async def _resolve_permissions(db: AsyncSession, permission_ids: list[str]):
 
 # ── Reads ─────────────────────────────────────────
 
+
 async def get_by_id(db: AsyncSession, user_id: str) -> SingleResponse[UserDetail]:
     user = await user_repository.get_full(db, user_id)
     if user is None:
         raise NotFoundException("User not found")
-    audit_users = await user_repository.get_audit_info_map(
-        db, {user.created_by, user.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {user.created_by, user.updated_by})
     return SingleResponse(data=_to_detail(user, audit_users))
 
 
-async def list_paginated(db: AsyncSession, query_request: QueryRequest) -> PaginatedResponse[UserItem]:
+async def list_paginated(
+    db: AsyncSession, query_request: QueryRequest
+) -> PaginatedResponse[UserItem]:
     items, total = await user_repository.get_paginated(
         db,
         query_request,
@@ -131,6 +134,7 @@ async def list_paginated(db: AsyncSession, query_request: QueryRequest) -> Pagin
 
 
 # ── Writes ────────────────────────────────────────
+
 
 async def create(
     db: AsyncSession,
@@ -167,9 +171,7 @@ async def create(
     )
     await user_repository.create(db, user)
 
-    audit_users = await user_repository.get_audit_info_map(
-        db, {user.created_by, user.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {user.created_by, user.updated_by})
     return UserCreatedResponse(
         data=_to_detail(user, audit_users),
         generated_password=plain if payload.password is None else None,
@@ -205,9 +207,7 @@ async def update(
     changes["updated_on"] = utc_now()
     await user_repository.update(db, user, changes)
 
-    audit_users = await user_repository.get_audit_info_map(
-        db, {user.created_by, user.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {user.created_by, user.updated_by})
     return SingleResponse(data=_to_detail(user, audit_users))
 
 

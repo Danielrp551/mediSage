@@ -17,16 +17,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+# Side-effect: registers all ORM models.
+from app import modules as _modules  # noqa: F401
 from app.core.config import get_settings
 from app.core.database import engine
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
-from app.middleware.request_context import RequestContextMiddleware
-
-# Side-effect: registers all ORM models.
-from app import modules as _modules  # noqa: F401
-
 from app.core.rate_limit import limiter
+from app.middleware.request_context import RequestContextMiddleware
 from app.modules.admin.routers import router as admin_router
 
 settings = get_settings()

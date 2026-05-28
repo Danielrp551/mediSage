@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
-
 PREFIX = "/api/v1/admin/auth"
 
 

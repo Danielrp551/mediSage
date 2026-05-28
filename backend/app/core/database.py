@@ -27,7 +27,7 @@ engine = create_async_engine(
     pool_size=5,
     max_overflow=5,
     pool_timeout=10,
-    pool_recycle=300,        # < VPC 10-min idle timeout
+    pool_recycle=300,  # < VPC 10-min idle timeout
     pool_pre_ping=True,
 )
 
@@ -40,7 +40,9 @@ def _log_pool_pressure(dbapi_conn, conn_record, conn_proxy):  # noqa: ANN001
     if overflow > 0:
         logger.warning(
             "pool.pressure checkedout=%d overflow=%d size=%d",
-            pool.checkedout(), overflow, pool.size(),
+            pool.checkedout(),
+            overflow,
+            pool.size(),
         )
 
 

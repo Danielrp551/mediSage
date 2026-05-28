@@ -101,7 +101,7 @@ async def get_auth(
 CurrentAuth = Annotated[AuthContext, Depends(get_auth)]
 
 
-def RequirePermission(*codes: str):
+def RequirePermission(*codes: str):  # noqa: N802 — class-like factory used as `Depends(RequirePermission(...))`
     """
     Dependency factory: enforce that the caller's token carries ALL of `codes`.
 

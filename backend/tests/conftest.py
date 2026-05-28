@@ -28,7 +28,6 @@ from app.core.database import Base, get_db
 from app.core.seed import seed
 from app.main import app
 
-
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 

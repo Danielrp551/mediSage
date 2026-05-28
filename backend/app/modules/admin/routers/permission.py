@@ -45,9 +45,7 @@ async def get_permission(
     response_model=PaginatedResponse[PermissionItem],
     dependencies=[Depends(RequirePermission("PERMISSIONS_VIEW"))],
 )
-async def list_permissions(
-    query: QueryRequest, db: DBSession
-) -> PaginatedResponse[PermissionItem]:
+async def list_permissions(query: QueryRequest, db: DBSession) -> PaginatedResponse[PermissionItem]:
     return await permission_service.list_paginated(db, query)
 
 

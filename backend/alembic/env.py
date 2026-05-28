@@ -8,13 +8,13 @@ from __future__ import annotations
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from alembic import context
+from app import modules as _modules  # noqa: F401  — register models
 from app.core.config import get_settings
 from app.core.database import Base
-from app import modules as _modules  # noqa: F401  — register models
 
 config = context.config
 

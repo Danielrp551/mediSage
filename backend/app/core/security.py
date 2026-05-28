@@ -12,7 +12,7 @@ reuse (mismatching `jti` → entire family revoked).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import jwt
@@ -30,6 +30,7 @@ _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ── Passwords ──────────────────────────────────────
 
+
 def hash_password(plain: str) -> str:
     return _pwd_context.hash(plain)
 
@@ -40,6 +41,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 # ── JWT tokens ─────────────────────────────────────
 
+
 def create_access_token(
     subject: str,
     *,
@@ -48,7 +50,7 @@ def create_access_token(
     extra_claims: dict[str, Any] | None = None,
 ) -> str:
     """Short-lived bearer token with embedded RBAC claims."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": subject,
         "type": "access",
@@ -76,7 +78,7 @@ def create_refresh_token(
     that presents a `jti` that doesn't match — that's how token reuse after
     rotation is detected.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     family = family_id or str(uuid.uuid4())
     jti = str(uuid.uuid4())
     payload = {

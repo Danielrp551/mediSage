@@ -40,9 +40,7 @@ class UserRepository(BaseRepository[User]):
             load=(selectinload(User.roles), selectinload(User.permissions)),
         )
 
-    async def get_audit_info_map(
-        self, db: AsyncSession, user_ids: set[str]
-    ) -> dict[str, User]:
+    async def get_audit_info_map(self, db: AsyncSession, user_ids: set[str]) -> dict[str, User]:
         """Batch-resolve actor IDs to User rows for `created_by`/`updated_by`.
 
         Used by every entity service to hydrate audit columns into a

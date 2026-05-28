@@ -9,7 +9,7 @@ Soft-delete aware: every read filters `deleted_at IS NULL` automatically;
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Generic, TypeVar
 
 from sqlalchemy import select
@@ -29,7 +29,7 @@ ModelT = TypeVar("ModelT", bound=Base)
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class BaseRepository(Generic[ModelT]):

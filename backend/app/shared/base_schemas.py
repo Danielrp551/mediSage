@@ -8,11 +8,10 @@ aligned when adding new operators.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field
-
 
 # Datetimes round-trip naturally:
 #   • DB columns are `timestamptz` → SQLAlchemy returns tz-aware datetimes.
@@ -51,12 +50,13 @@ class PaginatedResponse(BaseModel, Generic[DataT]):
 
 # ── Dynamic query request ─────────────────────────
 
-class SortOrder(str, Enum):
+
+class SortOrder(StrEnum):
     ASC = "asc"
     DESC = "desc"
 
 
-class FilterOperator(str, Enum):
+class FilterOperator(StrEnum):
     EQ = "eq"
     NEQ = "neq"
     CONTAINS = "contains"
@@ -67,7 +67,7 @@ class FilterOperator(str, Enum):
     LTE = "lte"
 
 
-class GroupOperator(str, Enum):
+class GroupOperator(StrEnum):
     AND = "AND"
     OR = "OR"
 

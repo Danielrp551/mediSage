@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     # Defense against silent misconfiguration. Both run after env parsing.
 
     @model_validator(mode="after")
-    def _enforce_secret_key(self) -> "Settings":
+    def _enforce_secret_key(self) -> Settings:
         """Outside `dev`, refuse to boot with the default or an obviously short key."""
         if self.ENV_NAME == "dev":
             return self
@@ -116,7 +116,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _forbid_cors_wildcard_with_credentials(self) -> "Settings":
+    def _forbid_cors_wildcard_with_credentials(self) -> Settings:
         """`CORS_ORIGINS='*'` + `allow_credentials=True` is rejected by Starlette at runtime,
         which manifests as a confusing CORS error. Catch it at boot."""
         origins = self.cors_origins_list

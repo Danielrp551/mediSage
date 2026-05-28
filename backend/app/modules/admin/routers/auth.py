@@ -27,17 +27,13 @@ async def login(request: Request, payload: LoginRequest, db: DBSession) -> Login
 
 @router.post("/refresh", response_model=LoginResponse)
 @limiter.limit(settings.AUTH_BURST_RATE_LIMIT)
-async def refresh(
-    request: Request, payload: RefreshRequest, db: DBSession
-) -> LoginResponse:
+async def refresh(request: Request, payload: RefreshRequest, db: DBSession) -> LoginResponse:
     return await auth_service.refresh(db, refresh_token=payload.refresh_token)
 
 
 @router.post("/logout", response_model=MessageResponse)
 @limiter.limit(settings.AUTH_BURST_RATE_LIMIT)
-async def logout(
-    request: Request, payload: RefreshRequest, db: DBSession
-) -> MessageResponse:
+async def logout(request: Request, payload: RefreshRequest, db: DBSession) -> MessageResponse:
     await auth_service.logout(db, refresh_token=payload.refresh_token)
     return MessageResponse(detail="Logged out")
 

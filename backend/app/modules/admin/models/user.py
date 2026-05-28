@@ -38,10 +38,10 @@ class User(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Base):
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # ── RBAC ──
-    roles: Mapped[list["Role"]] = relationship(
+    roles: Mapped[list[Role]] = relationship(
         secondary=user_role, back_populates="users", lazy="selectin"
     )
-    permissions: Mapped[list["Permission"]] = relationship(
+    permissions: Mapped[list[Permission]] = relationship(
         secondary=user_permission, back_populates="users", lazy="selectin"
     )
 

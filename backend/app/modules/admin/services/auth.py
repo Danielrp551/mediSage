@@ -14,7 +14,7 @@ Rotation contract (also documented in `models/token_family.py`):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from jwt import InvalidTokenError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,7 +61,7 @@ def _issue_tokens(user: User, *, family_id: str | None = None) -> tuple[TokenPai
     access = create_access_token(user.id, roles=roles, permissions=perms)
     refresh, family, jti = create_refresh_token(user.id, family_id=family_id)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     pair = TokenPair(
         access_token=access,
         refresh_token=refresh,
@@ -73,6 +73,7 @@ def _issue_tokens(user: User, *, family_id: str | None = None) -> tuple[TokenPai
 
 # ── Login ─────────────────────────────────────────
 
+
 async def login(db: AsyncSession, *, email: str, password: str) -> LoginResponse:
     user = await user_repository.get_by_email(db, email)
     if user is None or not verify_password(password, user.password_hash):
@@ -82,13 +83,12 @@ async def login(db: AsyncSession, *, email: str, password: str) -> LoginResponse
         raise UnauthorizedException("User is disabled")
 
     pair, family_id, jti = _issue_tokens(user)
-    await token_family_repo.create_family(
-        db, family_id=family_id, user_id=user.id, initial_jti=jti
-    )
+    await token_family_repo.create_family(db, family_id=family_id, user_id=user.id, initial_jti=jti)
     return LoginResponse(tokens=pair, user=_serialize_user(user))
 
 
 # ── Refresh ───────────────────────────────────────
+
 
 async def refresh(db: AsyncSession, *, refresh_token: str) -> LoginResponse:
     try:
@@ -115,7 +115,9 @@ async def refresh(db: AsyncSession, *, refresh_token: str) -> LoginResponse:
     if family.revoked_at is not None:
         logger.warning(
             "auth.refresh.revoked family_id=%s user_id=%s reason=%s",
-            family_id, user_id, family.reason,
+            family_id,
+            user_id,
+            family.reason,
         )
         raise UnauthorizedException("Session revoked, please log in again")
 
@@ -125,7 +127,10 @@ async def refresh(db: AsyncSession, *, refresh_token: str) -> LoginResponse:
         await token_family_repo.revoke(db, family, reason="refresh_reuse_detected")
         logger.warning(
             "auth.refresh.reuse_detected family_id=%s user_id=%s presented=%s current=%s",
-            family_id, user_id, jti, family.current_jti,
+            family_id,
+            user_id,
+            jti,
+            family.current_jti,
         )
         raise UnauthorizedException("Token reuse detected, session terminated")
 
@@ -140,6 +145,7 @@ async def refresh(db: AsyncSession, *, refresh_token: str) -> LoginResponse:
 
 
 # ── Logout ────────────────────────────────────────
+
 
 async def logout(db: AsyncSession, *, refresh_token: str) -> None:
     """Revoke the refresh-token family. Safe to call with expired tokens."""

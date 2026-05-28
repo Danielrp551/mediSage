@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
-class AppException(Exception):
+class AppException(Exception):  # noqa: N818 — root of a domain exception hierarchy, subclasses carry the `Error`/`Exception` suffix semantics
     """Root for all domain exceptions."""
 
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -44,7 +44,10 @@ class BadRequestException(AppException):
 
 # ── Handlers ───────────────────────────────────────
 
-def _error_response(status_code: int, detail: str, code: str | None = None, errors: list | None = None) -> JSONResponse:
+
+def _error_response(
+    status_code: int, detail: str, code: str | None = None, errors: list | None = None
+) -> JSONResponse:
     body: dict = {"success": False, "detail": detail}
     if code is not None:
         body["code"] = code

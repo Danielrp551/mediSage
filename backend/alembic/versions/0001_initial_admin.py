@@ -5,11 +5,13 @@ Revises:
 Create Date: 2026-05-26 00:00:00
 
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "0001_initial_admin"
@@ -73,18 +75,48 @@ def upgrade() -> None:
 
     op.create_table(
         "user_role",
-        sa.Column("user_id", sa.String(length=36), sa.ForeignKey("user.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("role_id", sa.String(length=36), sa.ForeignKey("role.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "user_id",
+            sa.String(length=36),
+            sa.ForeignKey("user.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+        sa.Column(
+            "role_id",
+            sa.String(length=36),
+            sa.ForeignKey("role.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
     )
     op.create_table(
         "role_permission",
-        sa.Column("role_id", sa.String(length=36), sa.ForeignKey("role.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("permission_id", sa.String(length=36), sa.ForeignKey("permission.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "role_id",
+            sa.String(length=36),
+            sa.ForeignKey("role.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+        sa.Column(
+            "permission_id",
+            sa.String(length=36),
+            sa.ForeignKey("permission.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
     )
     op.create_table(
         "user_permission",
-        sa.Column("user_id", sa.String(length=36), sa.ForeignKey("user.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("permission_id", sa.String(length=36), sa.ForeignKey("permission.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "user_id",
+            sa.String(length=36),
+            sa.ForeignKey("user.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+        sa.Column(
+            "permission_id",
+            sa.String(length=36),
+            sa.ForeignKey("permission.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
     )
 
     op.create_table(

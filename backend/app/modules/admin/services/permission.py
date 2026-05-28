@@ -55,20 +55,23 @@ def _collect_actor_ids(rows: list[Permission]) -> set[str]:
 
 
 async def list_active(db: AsyncSession) -> list[PermissionOption]:
-    return [PermissionOption.model_validate(p, from_attributes=True) for p in await permission_repository.list_active(db)]
+    return [
+        PermissionOption.model_validate(p, from_attributes=True)
+        for p in await permission_repository.list_active(db)
+    ]
 
 
 async def get_by_id(db: AsyncSession, permission_id: str) -> SingleResponse[PermissionItem]:
     perm = await permission_repository.get_by_id(db, permission_id)
     if perm is None:
         raise NotFoundException("Permission not found")
-    audit_users = await user_repository.get_audit_info_map(
-        db, {perm.created_by, perm.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {perm.created_by, perm.updated_by})
     return SingleResponse(data=_to_item(perm, audit_users))
 
 
-async def list_paginated(db: AsyncSession, query_request: QueryRequest) -> PaginatedResponse[PermissionItem]:
+async def list_paginated(
+    db: AsyncSession, query_request: QueryRequest
+) -> PaginatedResponse[PermissionItem]:
     items, total = await permission_repository.get_paginated(db, query_request)
     audit_users = await user_repository.get_audit_info_map(db, _collect_actor_ids(items))
     return PaginatedResponse(
@@ -105,9 +108,7 @@ async def create(
         updated_on=now,
     )
     await permission_repository.create(db, perm)
-    audit_users = await user_repository.get_audit_info_map(
-        db, {perm.created_by, perm.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {perm.created_by, perm.updated_by})
     return SingleResponse(data=_to_item(perm, audit_users))
 
 
@@ -132,7 +133,5 @@ async def update(
     changes["updated_by"] = actor_id
     changes["updated_on"] = utc_now()
     await permission_repository.update(db, perm, changes)
-    audit_users = await user_repository.get_audit_info_map(
-        db, {perm.created_by, perm.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {perm.created_by, perm.updated_by})
     return SingleResponse(data=_to_item(perm, audit_users))

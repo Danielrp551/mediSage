@@ -22,9 +22,9 @@ class Permission(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, 
     description: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     module: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
 
-    roles: Mapped[list["Role"]] = relationship(
+    roles: Mapped[list[Role]] = relationship(
         secondary=role_permission, back_populates="permissions", lazy="raise"
     )
-    users: Mapped[list["User"]] = relationship(
+    users: Mapped[list[User]] = relationship(
         secondary=user_permission, back_populates="permissions", lazy="raise"
     )

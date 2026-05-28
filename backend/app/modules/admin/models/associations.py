@@ -20,12 +20,22 @@ role_permission = Table(
     "role_permission",
     Base.metadata,
     Column("role_id", String(36), ForeignKey("role.id", ondelete="CASCADE"), primary_key=True),
-    Column("permission_id", String(36), ForeignKey("permission.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "permission_id",
+        String(36),
+        ForeignKey("permission.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 user_permission = Table(
     "user_permission",
     Base.metadata,
     Column("user_id", String(36), ForeignKey("user.id", ondelete="CASCADE"), primary_key=True),
-    Column("permission_id", String(36), ForeignKey("permission.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "permission_id",
+        String(36),
+        ForeignKey("permission.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )

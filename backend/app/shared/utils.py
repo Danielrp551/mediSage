@@ -7,7 +7,7 @@ from __future__ import annotations
 import secrets
 import string
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def generate_uuid() -> str:
@@ -16,7 +16,7 @@ def generate_uuid() -> str:
 
 def utc_now() -> datetime:
     """Timezone-aware UTC datetime. Stored via `timestamptz` in Postgres."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def generate_password(length: int = 14) -> str:

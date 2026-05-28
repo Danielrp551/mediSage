@@ -15,11 +15,7 @@ class RoleRepository(BaseRepository[Role]):
         super().__init__(Role)
 
     async def list_active(self, db: AsyncSession) -> list[Role]:
-        q = (
-            select(Role)
-            .where(Role.active.is_(True), Role.deleted_at.is_(None))
-            .order_by(Role.name)
-        )
+        q = select(Role).where(Role.active.is_(True), Role.deleted_at.is_(None)).order_by(Role.name)
         return list((await db.execute(q)).scalars().all())
 
     async def get_by_ids(self, db: AsyncSession, ids: list[str]) -> list[Role]:

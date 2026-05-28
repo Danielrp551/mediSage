@@ -52,7 +52,9 @@ def _to_item(role: Role, audit_users: dict[str, User]) -> RoleItem:
 def _to_detail(role: Role, audit_users: dict[str, User]) -> RoleDetail:
     return RoleDetail(
         **_to_item(role, audit_users).model_dump(),
-        permissions=[PermissionOption.model_validate(p, from_attributes=True) for p in role.permissions],
+        permissions=[
+            PermissionOption.model_validate(p, from_attributes=True) for p in role.permissions
+        ],
     )
 
 
@@ -79,21 +81,26 @@ async def _resolve_permissions(db: AsyncSession, permission_ids: list[str]):
 
 
 async def list_active(db: AsyncSession) -> list[RoleOption]:
-    return [RoleOption.model_validate(r, from_attributes=True) for r in await role_repository.list_active(db)]
+    return [
+        RoleOption.model_validate(r, from_attributes=True)
+        for r in await role_repository.list_active(db)
+    ]
 
 
 async def get_by_id(db: AsyncSession, role_id: str) -> SingleResponse[RoleDetail]:
     role = await role_repository.get_by_id(db, role_id, load=(selectinload(Role.permissions),))
     if role is None:
         raise NotFoundException("Role not found")
-    audit_users = await user_repository.get_audit_info_map(
-        db, {role.created_by, role.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {role.created_by, role.updated_by})
     return SingleResponse(data=_to_detail(role, audit_users))
 
 
-async def list_paginated(db: AsyncSession, query_request: QueryRequest) -> PaginatedResponse[RoleItem]:
-    items, total = await role_repository.get_paginated(db, query_request, load=(selectinload(Role.permissions),))
+async def list_paginated(
+    db: AsyncSession, query_request: QueryRequest
+) -> PaginatedResponse[RoleItem]:
+    items, total = await role_repository.get_paginated(
+        db, query_request, load=(selectinload(Role.permissions),)
+    )
     audit_users = await user_repository.get_audit_info_map(db, _collect_actor_ids(items))
     return PaginatedResponse(
         data=PaginatedData(
@@ -105,7 +112,9 @@ async def list_paginated(db: AsyncSession, query_request: QueryRequest) -> Pagin
     )
 
 
-async def create(db: AsyncSession, payload: RoleCreate, *, actor_id: str) -> SingleResponse[RoleDetail]:
+async def create(
+    db: AsyncSession, payload: RoleCreate, *, actor_id: str
+) -> SingleResponse[RoleDetail]:
     if await role_repository.get_by_name(db, payload.name):
         raise AlreadyExistsException(f"Role '{payload.name}' already exists")
 
@@ -124,9 +133,7 @@ async def create(db: AsyncSession, payload: RoleCreate, *, actor_id: str) -> Sin
         permissions=permissions,
     )
     await role_repository.create(db, role)
-    audit_users = await user_repository.get_audit_info_map(
-        db, {role.created_by, role.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {role.created_by, role.updated_by})
     return SingleResponse(data=_to_detail(role, audit_users))
 
 
@@ -155,7 +162,5 @@ async def update(
     changes["updated_by"] = actor_id
     changes["updated_on"] = utc_now()
     await role_repository.update(db, role, changes)
-    audit_users = await user_repository.get_audit_info_map(
-        db, {role.created_by, role.updated_by}
-    )
+    audit_users = await user_repository.get_audit_info_map(db, {role.created_by, role.updated_by})
     return SingleResponse(data=_to_detail(role, audit_users))

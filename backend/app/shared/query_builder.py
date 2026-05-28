@@ -8,7 +8,7 @@ can't reach arbitrary columns (e.g. `password_hash`).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import DateTime, Select, and_, asc, desc, func, or_, select
@@ -50,7 +50,7 @@ def _coerce(column: InspectionAttr, value: Any) -> Any:
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
+                parsed = parsed.replace(tzinfo=UTC)
             return parsed
         except (TypeError, ValueError):
             logger.warning("query.cast.failed value=%r", value)
@@ -60,14 +60,22 @@ def _coerce(column: InspectionAttr, value: Any) -> Any:
 def _condition(column: InspectionAttr, c: FilterCondition) -> Any:
     v = _coerce(column, c.value)
     match c.operator:
-        case FilterOperator.EQ: return column == v
-        case FilterOperator.NEQ: return column != v
-        case FilterOperator.CONTAINS: return column.ilike(f"%{v}%")
-        case FilterOperator.STARTS_WITH: return column.ilike(f"{v}%")
-        case FilterOperator.GT: return column > v
-        case FilterOperator.GTE: return column >= v
-        case FilterOperator.LT: return column < v
-        case FilterOperator.LTE: return column <= v
+        case FilterOperator.EQ:
+            return column == v
+        case FilterOperator.NEQ:
+            return column != v
+        case FilterOperator.CONTAINS:
+            return column.ilike(f"%{v}%")
+        case FilterOperator.STARTS_WITH:
+            return column.ilike(f"{v}%")
+        case FilterOperator.GT:
+            return column > v
+        case FilterOperator.GTE:
+            return column >= v
+        case FilterOperator.LT:
+            return column < v
+        case FilterOperator.LTE:
+            return column <= v
 
 
 def _where_clauses(model: type[Base], params: FilterParams | None, allowed: set[str]) -> list[Any]:
@@ -82,14 +90,18 @@ def _where_clauses(model: type[Base], params: FilterParams | None, allowed: set[
     return groups
 
 
-def apply_filters(query: Select, model: type[Base], params: FilterParams | None, allowed: set[str]) -> Select:
+def apply_filters(
+    query: Select, model: type[Base], params: FilterParams | None, allowed: set[str]
+) -> Select:
     groups = _where_clauses(model, params, allowed)
     if groups:
         query = query.where(and_(*groups))
     return query
 
 
-def apply_sorting(query: Select, model: type[Base], sorting: SortingParams | None, allowed: set[str]) -> Select:
+def apply_sorting(
+    query: Select, model: type[Base], sorting: SortingParams | None, allowed: set[str]
+) -> Select:
     if not sorting:
         return query.order_by(asc(model.id))
     col = _column(model, sorting.sort_by, allowed)
