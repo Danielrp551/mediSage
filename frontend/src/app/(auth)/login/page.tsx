@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { getAccessToken } from "@/lib/auth/session";
 import { LoginForm } from "./_components/LoginForm";
 
-export const metadata = { title: "Sign in" };
+export const metadata = { title: "Iniciar sesión" };
 
 export default async function LoginPage({
   searchParams,

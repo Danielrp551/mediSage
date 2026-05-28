@@ -73,13 +73,13 @@ export function UsersClient({ initialData, roles, permissions }: Props) {
     () => [
       {
         key: "view",
-        label: "View",
+        label: "Ver",
         icon: <EyeRegular />,
         onSelect: (u) => setDrawer({ mode: "view", userId: u.id }),
       },
       {
         key: "edit",
-        label: "Edit",
+        label: "Editar",
         icon: <EditRegular />,
         permissions: ["USERS_UPDATE"],
         onSelect: (u) => setDrawer({ mode: "edit", userId: u.id }),
@@ -95,16 +95,16 @@ export function UsersClient({ initialData, roles, permissions }: Props) {
   return (
     <div className={styles.root}>
       <header className={styles.header}>
-        <h1 className={styles.title}>Users</h1>
+        <h1 className={styles.title}>Usuarios</h1>
         <p className={styles.subtitle}>
-          Manage who has access to the console and what they can do.
+          Gestiona quién tiene acceso a la consola y qué puede hacer.
         </p>
       </header>
 
       <div className={styles.toolbar}>
         <Input
           className={styles.search}
-          placeholder="Search by name or email…"
+          placeholder="Buscar por nombre o correo…"
           value={table.search}
           onChange={(_, data) => table.setSearch(data.value)}
           contentBefore={<SearchRegular />}
@@ -115,7 +115,7 @@ export function UsersClient({ initialData, roles, permissions }: Props) {
             icon={<AddRegular />}
             onClick={() => setDrawer({ mode: "create", userId: null })}
           >
-            New user
+            Nuevo usuario
           </Button>
         </PermissionGuard>
       </div>
@@ -126,8 +126,8 @@ export function UsersClient({ initialData, roles, permissions }: Props) {
         isLoading={table.query.isPending}
         isFetching={table.query.isFetching && !table.query.isPending}
         isFiltered={table.search.length > 0}
-        emptyTitle="No users yet"
-        emptyMessage="Invite your team by creating the first user."
+        emptyTitle="Aún no hay usuarios"
+        emptyMessage="Invita a tu equipo creando el primer usuario."
         sortField={table.sortField}
         sortOrder={table.sortOrder}
         onSort={(field, descending) => table.setSort(field, descending ? "desc" : "asc")}
@@ -142,7 +142,7 @@ export function UsersClient({ initialData, roles, permissions }: Props) {
           },
           {
             key: "full_name",
-            name: "Name",
+            name: "Nombre",
             fieldName: "full_name",
             isSortable: true,
             truncate: true,
@@ -150,7 +150,7 @@ export function UsersClient({ initialData, roles, permissions }: Props) {
           },
           {
             key: "email",
-            name: "Email",
+            name: "Correo",
             fieldName: "email",
             isSortable: true,
             truncate: true,
@@ -158,12 +158,12 @@ export function UsersClient({ initialData, roles, permissions }: Props) {
           },
           {
             key: "active",
-            name: "Status",
+            name: "Estado",
             align: "center",
             minWidth: 110,
             onRender: (u) => (
               <Badge appearance="filled" color={u.active ? "success" : "informative"}>
-                {u.active ? "Active" : "Disabled"}
+                {u.active ? "Activo" : "Deshabilitado"}
               </Badge>
             ),
           },
@@ -176,7 +176,7 @@ export function UsersClient({ initialData, roles, permissions }: Props) {
           },
           {
             key: "updated_on",
-            name: "Last updated",
+            name: "Última actualización",
             isSortable: true,
             minWidth: 160,
             onRender: (u) => formatDate(u.updated_on),

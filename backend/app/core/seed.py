@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +42,20 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "PERMISSIONS_VIEW", "name": "View permissions", "module": "ADMIN"},
     {"code": "PERMISSIONS_CREATE", "name": "Create permissions", "module": "ADMIN"},
     {"code": "PERMISSIONS_UPDATE", "name": "Update permissions", "module": "ADMIN"},
+    # ── Module: catalog ─────────────────────────────────────────────────
+    {"code": "MENU-CATALOG", "name": "Menu Catalog", "module": "CATALOG"},
+    {"code": "VERTICALS_READ", "name": "Read verticals", "module": "CATALOG"},
+    {"code": "VERTICALS_CREATE", "name": "Create verticals", "module": "CATALOG"},
+    {"code": "VERTICALS_UPDATE", "name": "Update verticals", "module": "CATALOG"},
+    {"code": "VERTICALS_DELETE", "name": "Delete verticals", "module": "CATALOG"},
+    {"code": "SERVICES_READ", "name": "Read services", "module": "CATALOG"},
+    {"code": "SERVICES_CREATE", "name": "Create services", "module": "CATALOG"},
+    {"code": "SERVICES_UPDATE", "name": "Update services", "module": "CATALOG"},
+    {"code": "SERVICES_DELETE", "name": "Delete services", "module": "CATALOG"},
+    {"code": "PRODUCTS_READ", "name": "Read products", "module": "CATALOG"},
+    {"code": "PRODUCTS_CREATE", "name": "Create products", "module": "CATALOG"},
+    {"code": "PRODUCTS_UPDATE", "name": "Update products", "module": "CATALOG"},
+    {"code": "PRODUCTS_DELETE", "name": "Delete products", "module": "CATALOG"},
 ]
 
 
@@ -49,7 +63,7 @@ async def _seed_permissions(db: AsyncSession, actor_id: str) -> list[Permission]
     existing = (await db.execute(select(Permission))).scalars().all()
     by_code = {p.code: p for p in existing}
     out: list[Permission] = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for spec in SEED_PERMISSIONS:
         if spec["code"] in by_code:
             out.append(by_code[spec["code"]])
@@ -72,16 +86,12 @@ async def _seed_permissions(db: AsyncSession, actor_id: str) -> list[Permission]
     return out
 
 
-async def _seed_admin_role(
-    db: AsyncSession, actor_id: str, permissions: list[Permission]
-) -> Role:
-    existing = (
-        await db.execute(select(Role).where(Role.name == "ADMIN"))
-    ).scalars().first()
+async def _seed_admin_role(db: AsyncSession, actor_id: str, permissions: list[Permission]) -> Role:
+    existing = (await db.execute(select(Role).where(Role.name == "ADMIN"))).scalars().first()
     if existing is not None:
         existing.permissions = permissions
         return existing
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     role = Role(
         id=str(uuid.uuid4()),
         name="ADMIN",
@@ -100,12 +110,14 @@ async def _seed_admin_role(
 
 async def _seed_admin_user(db: AsyncSession, role: Role, actor_id: str) -> User:
     existing = (
-        await db.execute(select(User).where(User.email == settings.SEED_ADMIN_EMAIL))
-    ).scalars().first()
+        (await db.execute(select(User).where(User.email == settings.SEED_ADMIN_EMAIL)))
+        .scalars()
+        .first()
+    )
     if existing is not None:
         existing.roles = [role]
         return existing
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     user = User(
         id=actor_id,
         email=settings.SEED_ADMIN_EMAIL,

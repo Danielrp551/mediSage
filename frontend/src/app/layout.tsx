@@ -31,7 +31,7 @@ const fontMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: { default: "Medisage", template: "%s · Medisage" },
-  description: "Medisage admin console — Next.js + FastAPI",
+  description: "Consola admin de Medisage — Next.js + FastAPI",
 };
 
 async function loadCurrentUser(): Promise<AuthenticatedUser | null> {
@@ -47,7 +47,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const user = await loadCurrentUser();
   return (
     <html
-      lang="en"
+      lang="es"
       suppressHydrationWarning
       className={`${fontBody.variable} ${fontMono.variable}`}
     >

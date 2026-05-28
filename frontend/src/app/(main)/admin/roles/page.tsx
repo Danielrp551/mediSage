@@ -3,7 +3,7 @@ import { listActivePermissions } from "@/actions/permission.actions";
 import { requirePermission } from "@/lib/auth/session";
 import { RolesClient } from "./_components/RolesClient";
 
-export const metadata = { title: "Roles" };
+export const metadata = { title: "Roles" }; // identifier and label coincide en español
 
 export default async function RolesPage() {
   await requirePermission("MENU-ADMIN-ROLES");

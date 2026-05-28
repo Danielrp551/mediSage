@@ -1,6 +1,9 @@
 /**
  * Single source of truth for the sidebar AND for client-side route
  * permission checks. Codes must match `seed.py` / the `permission` table.
+ *
+ * Convención: `key`, `icon`, `url` y `permissions` son identificadores de
+ * código (inglés). `label` es texto visible al usuario (español).
  */
 
 export interface NavItem {
@@ -15,19 +18,47 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   {
     key: "home",
-    label: "Home",
+    label: "Inicio",
     icon: "HomeRegular",
     url: "/dashboard",
     permissions: ["MENU-HOME"],
   },
   {
+    key: "catalog",
+    label: "Catálogo",
+    icon: "AppsListRegular",
+    children: [
+      {
+        key: "verticals",
+        label: "Verticales",
+        icon: "TagRegular",
+        url: "/catalog/verticals",
+        permissions: ["MENU-CATALOG"],
+      },
+      {
+        key: "services",
+        label: "Servicios",
+        icon: "BriefcaseRegular",
+        url: "/catalog/services",
+        permissions: ["MENU-CATALOG"],
+      },
+      {
+        key: "products",
+        label: "Productos",
+        icon: "BoxRegular",
+        url: "/catalog/products",
+        permissions: ["MENU-CATALOG"],
+      },
+    ],
+  },
+  {
     key: "admin",
-    label: "Administration",
+    label: "Administración",
     icon: "SettingsRegular",
     children: [
       {
         key: "users",
-        label: "Users",
+        label: "Usuarios",
         icon: "PeopleRegular",
         url: "/admin/users",
         permissions: ["MENU-ADMIN-USERS"],
@@ -41,7 +72,7 @@ export const NAV_ITEMS: NavItem[] = [
       },
       {
         key: "permissions",
-        label: "Permissions",
+        label: "Permisos",
         icon: "LockClosedRegular",
         url: "/admin/permissions",
         permissions: ["MENU-ADMIN-PERMISSIONS"],

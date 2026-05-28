@@ -42,7 +42,7 @@ export function PermissionDrawer({ mode, permission, onClose }: Props) {
         ? await updatePermission(permission.id, values)
         : await createPermission(values);
       if (!result.ok) {
-        setServerError(result.error ?? "Validation failed");
+        setServerError(result.error ?? "Falló la validación");
         return;
       }
       onClose();
@@ -53,14 +53,14 @@ export function PermissionDrawer({ mode, permission, onClose }: Props) {
     <Drawer
       open
       onClose={onClose}
-      title={mode === "create" ? "New permission" : "Edit permission"}
+      title={mode === "create" ? "Nuevo permiso" : "Editar permiso"}
       footer={
         <>
           <Button appearance="secondary" onClick={onClose}>
-            Cancel
+            Cancelar
           </Button>
           <Button appearance="primary" disabled={pending} onClick={() => void onSubmit()}>
-            {pending ? "Saving…" : "Save"}
+            {pending ? "Guardando…" : "Guardar"}
           </Button>
         </>
       }
@@ -71,7 +71,12 @@ export function PermissionDrawer({ mode, permission, onClose }: Props) {
         </MessageBar>
       ) : null}
 
-      <FormField label="Code" required error={form.formState.errors.code?.message} hint="Uppercase / digits / `_` / `-`">
+      <FormField
+        label="Código"
+        required
+        error={form.formState.errors.code?.message}
+        hint="Mayúsculas / dígitos / `_` / `-`"
+      >
         <Controller
           control={form.control}
           name="code"
@@ -79,7 +84,7 @@ export function PermissionDrawer({ mode, permission, onClose }: Props) {
         />
       </FormField>
 
-      <FormField label="Module" required error={form.formState.errors.module?.message}>
+      <FormField label="Módulo" required error={form.formState.errors.module?.message}>
         <Controller
           control={form.control}
           name="module"
@@ -87,7 +92,7 @@ export function PermissionDrawer({ mode, permission, onClose }: Props) {
         />
       </FormField>
 
-      <FormField label="Name" required error={form.formState.errors.name?.message}>
+      <FormField label="Nombre" required error={form.formState.errors.name?.message}>
         <Controller
           control={form.control}
           name="name"
@@ -95,7 +100,7 @@ export function PermissionDrawer({ mode, permission, onClose }: Props) {
         />
       </FormField>
 
-      <FormField label="Description">
+      <FormField label="Descripción">
         <Controller
           control={form.control}
           name="description"
@@ -104,7 +109,7 @@ export function PermissionDrawer({ mode, permission, onClose }: Props) {
       </FormField>
 
       {mode === "edit" ? (
-        <FormField label="Active">
+        <FormField label="Activo">
           <Controller
             control={form.control}
             name="active"

@@ -2,12 +2,16 @@
 
 import { makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import {
-  HomeRegular,
-  SettingsRegular,
-  PeopleRegular,
-  ShieldRegular,
-  LockClosedRegular,
+  AppsListRegular,
+  BoxRegular,
+  BriefcaseRegular,
   ChevronRightRegular,
+  HomeRegular,
+  LockClosedRegular,
+  PeopleRegular,
+  SettingsRegular,
+  ShieldRegular,
+  TagRegular,
 } from "@fluentui/react-icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -24,6 +28,11 @@ const ICONS: Record<string, ReactElement> = {
   PeopleRegular: <PeopleRegular />,
   ShieldRegular: <ShieldRegular />,
   LockClosedRegular: <LockClosedRegular />,
+  // Catalog module
+  AppsListRegular: <AppsListRegular />,
+  TagRegular: <TagRegular />,
+  BriefcaseRegular: <BriefcaseRegular />,
+  BoxRegular: <BoxRegular />,
 };
 
 const useStyles = makeStyles({
@@ -159,14 +168,14 @@ export function Sidebar() {
   return (
     <aside
       className={mergeClasses(styles.root, isSidebarCollapsed && styles.rootCollapsed)}
-      aria-label="Primary navigation"
+      aria-label="Navegación principal"
     >
       <div className={styles.brand}>
         <span className={styles.brandTitle}>Medisage</span>
-        <span className={styles.brandSubtitle}>Admin console</span>
+        <span className={styles.brandSubtitle}>Consola admin</span>
       </div>
 
-      <nav className={styles.nav}>
+      <nav className={styles.nav} aria-label="Navegación principal">
         {items.map((item) =>
           item.children && item.children.length > 0 ? (
             <NavGroup key={item.key} item={item} pathname={pathname} styles={styles} />

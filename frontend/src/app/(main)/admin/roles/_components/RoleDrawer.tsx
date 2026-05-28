@@ -146,7 +146,7 @@ export function RoleDrawer({ mode, roleId, permissions, onClose }: Props) {
     startTransition(async () => {
       const result = roleId ? await updateRole(roleId, values) : await createRole(values);
       if (!result.ok) {
-        setServerError(result.error ?? "Validation failed");
+        setServerError(result.error ?? "Falló la validación");
         return;
       }
       onClose();
@@ -159,18 +159,20 @@ export function RoleDrawer({ mode, roleId, permissions, onClose }: Props) {
     <Drawer
       open
       onClose={onClose}
-      title={mode === "create" ? "New role" : mode === "edit" ? "Edit role" : "Role detail"}
+      title={
+        mode === "create" ? "Nuevo rol" : mode === "edit" ? "Editar rol" : "Detalle de rol"
+      }
       size="medium"
       footer={
         readOnly ? (
-          <Button onClick={onClose}>Close</Button>
+          <Button onClick={onClose}>Cerrar</Button>
         ) : (
           <>
             <Button appearance="secondary" onClick={onClose} disabled={pending}>
-              Cancel
+              Cancelar
             </Button>
             <Button appearance="primary" disabled={pending} onClick={() => void onSubmit()}>
-              {pending ? "Saving…" : mode === "create" ? "Create role" : "Save changes"}
+              {pending ? "Guardando…" : mode === "create" ? "Crear rol" : "Guardar cambios"}
             </Button>
           </>
         )
@@ -182,17 +184,17 @@ export function RoleDrawer({ mode, roleId, permissions, onClose }: Props) {
         </MessageBar>
       ) : null}
 
-      <FormField label="Name" required error={form.formState.errors.name?.message}>
+      <FormField label="Nombre" required error={form.formState.errors.name?.message}>
         <Controller
           control={form.control}
           name="name"
           render={({ field }) => (
-            <Input {...field} disabled={readOnly} placeholder="e.g. EDITOR" />
+            <Input {...field} disabled={readOnly} placeholder="ej. EDITOR" />
           )}
         />
       </FormField>
 
-      <FormField label="Description" required error={form.formState.errors.description?.message}>
+      <FormField label="Descripción" required error={form.formState.errors.description?.message}>
         <Controller
           control={form.control}
           name="description"
@@ -201,7 +203,7 @@ export function RoleDrawer({ mode, roleId, permissions, onClose }: Props) {
               {...field}
               disabled={readOnly}
               rows={2}
-              placeholder="What this role grants…"
+              placeholder="Qué otorga este rol…"
             />
           )}
         />
@@ -209,14 +211,14 @@ export function RoleDrawer({ mode, roleId, permissions, onClose }: Props) {
 
       <div>
         <div className={styles.summary}>
-          Permissions: <strong>{selectedIds.length}</strong> of {permissions.length} selected
+          Permisos: <strong>{selectedIds.length}</strong> de {permissions.length} seleccionados
         </div>
         <div className={styles.searchRow}>
           <Input
             className={styles.searchInput}
             value={query}
             onChange={(_, d) => setQuery(d.value)}
-            placeholder="Search by code, name or module…"
+            placeholder="Buscar por código, nombre o módulo…"
             contentBefore={<SearchRegular />}
             size="medium"
           />
@@ -228,7 +230,11 @@ export function RoleDrawer({ mode, roleId, permissions, onClose }: Props) {
           render={({ field }) => {
             const moduleEntries = Object.entries(filteredGroups);
             if (moduleEntries.length === 0) {
-              return <div className={styles.emptyState}>No permissions match your search.</div>;
+              return (
+                <div className={styles.emptyState}>
+                  Ningún permiso coincide con la búsqueda.
+                </div>
+              );
             }
             return (
               <Accordion
@@ -261,7 +267,11 @@ export function RoleDrawer({ mode, roleId, permissions, onClose }: Props) {
                                   field.onChange(next);
                                 }}
                               >
-                                {allSelected ? "Clear" : someSelected ? "Select all" : "Select all"}
+                                {allSelected
+                                  ? "Quitar todos"
+                                  : someSelected
+                                    ? "Seleccionar todos"
+                                    : "Seleccionar todos"}
                               </Button>
                             </div>
                           ) : null}

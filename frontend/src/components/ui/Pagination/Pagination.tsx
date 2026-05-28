@@ -89,9 +89,9 @@ export function Pagination(props: PaginationProps) {
   const options = props.pageSizeOptions ?? DEFAULT_OPTIONS;
 
   return (
-    <nav className={styles.root} aria-label="Pagination">
+    <nav className={styles.root} aria-label="Paginación">
       <div className={styles.leftGroup}>
-        <span className={styles.label}>Rows per page:</span>
+        <span className={styles.label}>Filas por página:</span>
         <Dropdown
           className={styles.pageSizeDropdown}
           value={String(props.pageSize)}
@@ -100,7 +100,7 @@ export function Pagination(props: PaginationProps) {
             props.onPageSizeChange(Number(data.optionValue))
           }
           size="small"
-          aria-label="Rows per page"
+          aria-label="Filas por página"
         >
           {options.map((n) => (
             <Option key={n} value={String(n)}>
@@ -112,14 +112,15 @@ export function Pagination(props: PaginationProps) {
 
       <div className={styles.rightGroup}>
         <span className={styles.range}>
-          {from.toLocaleString()}–{to.toLocaleString()} of {props.totalItems.toLocaleString()}
+          {from.toLocaleString("es-PE")}–{to.toLocaleString("es-PE")} de{" "}
+          {props.totalItems.toLocaleString("es-PE")}
         </span>
 
         <Button
           className={styles.navButton}
           appearance="subtle"
           icon={<ChevronDoubleLeftRegular />}
-          aria-label="First page"
+          aria-label="Primera página"
           disabled={isFirst}
           onClick={() => props.onPageChange(1)}
         />
@@ -127,20 +128,20 @@ export function Pagination(props: PaginationProps) {
           className={styles.navButton}
           appearance="subtle"
           icon={<ChevronLeftRegular />}
-          aria-label="Previous page"
+          aria-label="Página anterior"
           disabled={isFirst}
           onClick={() => props.onPageChange(props.currentPage - 1)}
         />
 
         <span className={styles.pageIndicator} aria-live="polite">
-          Page {props.currentPage} / {totalPages}
+          Página {props.currentPage} / {totalPages}
         </span>
 
         <Button
           className={styles.navButton}
           appearance="subtle"
           icon={<ChevronRightRegular />}
-          aria-label="Next page"
+          aria-label="Página siguiente"
           disabled={isLast}
           onClick={() => props.onPageChange(props.currentPage + 1)}
         />
@@ -148,7 +149,7 @@ export function Pagination(props: PaginationProps) {
           className={styles.navButton}
           appearance="subtle"
           icon={<ChevronDoubleRightRegular />}
-          aria-label="Last page"
+          aria-label="Última página"
           disabled={isLast}
           onClick={() => props.onPageChange(totalPages)}
         />

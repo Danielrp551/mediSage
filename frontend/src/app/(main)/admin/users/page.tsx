@@ -4,7 +4,7 @@ import { listUsers } from "@/actions/user.actions";
 import { requirePermission } from "@/lib/auth/session";
 import { UsersClient } from "./_components/UsersClient";
 
-export const metadata = { title: "Users" };
+export const metadata = { title: "Usuarios" };
 
 export default async function UsersPage() {
   await requirePermission("MENU-ADMIN-USERS");

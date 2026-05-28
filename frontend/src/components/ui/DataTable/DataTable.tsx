@@ -270,7 +270,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
         {/* Background refetch indicator — keeps data visible. */}
         {isFetching && !isLoading && items.length > 0 ? (
           <div className={styles.refetchOverlay}>
-            <Spinner size="extra-small" aria-label="Refreshing" />
+            <Spinner size="extra-small" aria-label="Actualizando" />
           </div>
         ) : null}
 
@@ -325,15 +325,15 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     {isFiltered ? (
                       <EmptyState
                         icon={<SearchRegular className={styles.stateIcon} />}
-                        title="No results match your filters"
-                        message="Try removing some criteria or check for typos in the search term."
+                        title="No hay resultados con los filtros actuales"
+                        message="Prueba quitar algún criterio o revisa la ortografía del término de búsqueda."
                         styles={styles}
                       />
                     ) : (
                       <EmptyState
                         icon={<DocumentDismissRegular className={styles.stateIcon} />}
-                        title={emptyTitle ?? "Nothing here yet"}
-                        message={emptyMessage ?? "Items you create will show up in this list."}
+                        title={emptyTitle ?? "Aún no hay elementos"}
+                        message={emptyMessage ?? "Los elementos que crees aparecerán en esta lista."}
                         styles={styles}
                       />
                     )}

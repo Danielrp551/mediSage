@@ -72,8 +72,10 @@ export function LoginForm({ redirectTo }: Props) {
   return (
     <div className={styles.root}>
       <header className={styles.header}>
-        <h1 className={styles.title}>Welcome back</h1>
-        <p className={styles.subtitle}>Sign in to continue to the admin console.</p>
+        <h1 className={styles.title}>Bienvenido de vuelta</h1>
+        <p className={styles.subtitle}>
+          Inicia sesión para continuar a la consola admin.
+        </p>
       </header>
 
       {state?.error ? (
@@ -85,23 +87,23 @@ export function LoginForm({ redirectTo }: Props) {
       <form action={formAction} className={styles.form}>
         <input type="hidden" name="redirect" value={redirectTo} />
 
-        <FormField label="Email" required error={state?.fieldErrors?.email?.[0]}>
+        <FormField label="Correo" required error={state?.fieldErrors?.email?.[0]}>
           <Input
             name="email"
             type="email"
             autoComplete="email"
-            placeholder="you@example.com"
+            placeholder="tu@ejemplo.com"
             required
             disabled={pending}
           />
         </FormField>
 
-        <FormField label="Password" required error={state?.fieldErrors?.password?.[0]}>
+        <FormField label="Contraseña" required error={state?.fieldErrors?.password?.[0]}>
           <Input
             name="password"
             type={showPassword ? "text" : "password"}
             autoComplete="current-password"
-            placeholder="Your password"
+            placeholder="Tu contraseña"
             required
             disabled={pending}
             contentAfter={
@@ -111,7 +113,7 @@ export function LoginForm({ redirectTo }: Props) {
                 className={styles.visibilityBtn}
                 icon={showPassword ? <EyeOffRegular /> : <EyeRegular />}
                 onClick={() => setShowPassword((v) => !v)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
                 tabIndex={-1}
               />
             }
@@ -126,12 +128,12 @@ export function LoginForm({ redirectTo }: Props) {
           className={styles.submit}
           icon={pending ? <Spinner size="tiny" /> : undefined}
         >
-          {pending ? "Signing in…" : "Sign in"}
+          {pending ? "Iniciando sesión…" : "Iniciar sesión"}
         </Button>
       </form>
 
       <p className={styles.footnote}>
-        Forgot your password? Contact your administrator.
+        ¿Olvidaste tu contraseña? Contacta a tu administrador.
       </p>
     </div>
   );

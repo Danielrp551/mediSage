@@ -67,13 +67,13 @@ export function RolesClient({ initialData, permissions }: Props) {
     () => [
       {
         key: "view",
-        label: "View",
+        label: "Ver",
         icon: <EyeRegular />,
         onSelect: (r) => setDrawer({ mode: "view", roleId: r.id }),
       },
       {
         key: "edit",
-        label: "Edit",
+        label: "Editar",
         icon: <EditRegular />,
         permissions: ["ROLES_UPDATE"],
         onSelect: (r) => setDrawer({ mode: "edit", roleId: r.id }),
@@ -89,14 +89,14 @@ export function RolesClient({ initialData, permissions }: Props) {
       <header className={styles.header}>
         <h1 className={styles.title}>Roles</h1>
         <p className={styles.subtitle}>
-          Group permissions into reusable bundles you can assign to users.
+          Agrupa permisos en paquetes reutilizables que puedes asignar a usuarios.
         </p>
       </header>
 
       <div className={styles.toolbar}>
         <Input
           className={styles.search}
-          placeholder="Search by name or description…"
+          placeholder="Buscar por nombre o descripción…"
           value={table.search}
           onChange={(_, d) => table.setSearch(d.value)}
           contentBefore={<SearchRegular />}
@@ -107,7 +107,7 @@ export function RolesClient({ initialData, permissions }: Props) {
             icon={<AddRegular />}
             onClick={() => setDrawer({ mode: "create", roleId: null })}
           >
-            New role
+            Nuevo rol
           </Button>
         </PermissionGuard>
       </div>
@@ -118,8 +118,8 @@ export function RolesClient({ initialData, permissions }: Props) {
         isLoading={table.query.isPending}
         isFetching={table.query.isFetching && !table.query.isPending}
         isFiltered={table.search.length > 0}
-        emptyTitle="No roles yet"
-        emptyMessage="Create your first role to start grouping permissions."
+        emptyTitle="Aún no hay roles"
+        emptyMessage="Crea tu primer rol para empezar a agrupar permisos."
         sortField={table.sortField}
         sortOrder={table.sortOrder}
         onSort={(field, descending) => table.setSort(field, descending ? "desc" : "asc")}
@@ -134,7 +134,7 @@ export function RolesClient({ initialData, permissions }: Props) {
           },
           {
             key: "name",
-            name: "Name",
+            name: "Nombre",
             fieldName: "name",
             isSortable: true,
             truncate: true,
@@ -142,32 +142,32 @@ export function RolesClient({ initialData, permissions }: Props) {
           },
           {
             key: "description",
-            name: "Description",
+            name: "Descripción",
             fieldName: "description",
             truncate: true,
             minWidth: 280,
           },
           {
             key: "active",
-            name: "Status",
+            name: "Estado",
             align: "center",
             minWidth: 110,
             onRender: (r) => (
               <Badge appearance="filled" color={r.active ? "success" : "informative"}>
-                {r.active ? "Active" : "Disabled"}
+                {r.active ? "Activo" : "Deshabilitado"}
               </Badge>
             ),
           },
           {
             key: "permissions_count",
-            name: "Perms",
+            name: "Permisos",
             fieldName: "permissions_count",
             numeric: true,
             minWidth: 80,
           },
           {
             key: "updated_on",
-            name: "Last updated",
+            name: "Última actualización",
             isSortable: true,
             minWidth: 160,
             onRender: (r) => formatDate(r.updated_on),

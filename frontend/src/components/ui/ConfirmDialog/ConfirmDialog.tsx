@@ -30,10 +30,10 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
           <DialogContent>{props.description}</DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={props.onCancel}>
-              {props.cancelText ?? "Cancel"}
+              {props.cancelText ?? "Cancelar"}
             </Button>
             <Button appearance={props.destructive ? "primary" : "primary"} onClick={props.onConfirm}>
-              {props.confirmText ?? "Confirm"}
+              {props.confirmText ?? "Confirmar"}
             </Button>
           </DialogActions>
         </DialogBody>

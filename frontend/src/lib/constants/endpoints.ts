@@ -3,6 +3,7 @@
  */
 
 const ADMIN = "/api/v1/admin";
+const CATALOG = "/api/v1/catalog";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -31,5 +32,30 @@ export const ENDPOINTS = {
     GET: (id: string) => `${ADMIN}/permissions/${id}`,
     CREATE: `${ADMIN}/permissions`,
     UPDATE: (id: string) => `${ADMIN}/permissions/${id}`,
+  },
+  // ── Catalog module ───────────────────────────────────────
+  VERTICALS: {
+    LIST: `${CATALOG}/verticals/list`,
+    ACTIVE: `${CATALOG}/verticals/active`,
+    GET: (id: string) => `${CATALOG}/verticals/${id}`,
+    CREATE: `${CATALOG}/verticals`,
+    UPDATE: (id: string) => `${CATALOG}/verticals/${id}`,
+    DELETE: (id: string) => `${CATALOG}/verticals/${id}`,
+  },
+  SERVICES: {
+    LIST: `${CATALOG}/services/list`,
+    ACTIVE: `${CATALOG}/services/active`,
+    GET: (id: string) => `${CATALOG}/services/${id}`,
+    CREATE: `${CATALOG}/services`,
+    UPDATE: (id: string) => `${CATALOG}/services/${id}`,
+    DELETE: (id: string) => `${CATALOG}/services/${id}`,
+  },
+  PRODUCTS: {
+    LIST: `${CATALOG}/products/list`,
+    ACTIVE: `${CATALOG}/products/active`,
+    GET: (id: string) => `${CATALOG}/products/${id}`,
+    CREATE: `${CATALOG}/products`,
+    UPDATE: (id: string) => `${CATALOG}/products/${id}`,
+    DELETE: (id: string) => `${CATALOG}/products/${id}`,
   },
 } as const;

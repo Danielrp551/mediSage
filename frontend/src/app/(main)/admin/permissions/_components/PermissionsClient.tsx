@@ -60,7 +60,7 @@ export function PermissionsClient({ initialData }: Props) {
     () => [
       {
         key: "edit",
-        label: "Edit",
+        label: "Editar",
         icon: <EditRegular />,
         permissions: ["PERMISSIONS_UPDATE"],
         onSelect: (p) => setDrawer({ mode: "edit", perm: p }),
@@ -74,16 +74,16 @@ export function PermissionsClient({ initialData }: Props) {
   return (
     <div className={styles.root}>
       <header className={styles.header}>
-        <h1 className={styles.title}>Permissions</h1>
+        <h1 className={styles.title}>Permisos</h1>
         <p className={styles.subtitle}>
-          The atomic capabilities you can group into roles or assign directly.
+          Las capacidades atómicas que puedes agrupar en roles o asignar directamente.
         </p>
       </header>
 
       <div className={styles.toolbar}>
         <Input
           className={styles.search}
-          placeholder="Search by code, name or module…"
+          placeholder="Buscar por código, nombre o módulo…"
           value={table.search}
           onChange={(_, d) => table.setSearch(d.value)}
           contentBefore={<SearchRegular />}
@@ -94,7 +94,7 @@ export function PermissionsClient({ initialData }: Props) {
             icon={<AddRegular />}
             onClick={() => setDrawer({ mode: "create", perm: null })}
           >
-            New permission
+            Nuevo permiso
           </Button>
         </PermissionGuard>
       </div>
@@ -105,8 +105,8 @@ export function PermissionsClient({ initialData }: Props) {
         isLoading={table.query.isPending}
         isFetching={table.query.isFetching && !table.query.isPending}
         isFiltered={table.search.length > 0}
-        emptyTitle="No permissions yet"
-        emptyMessage="Create your first permission to control access in the app."
+        emptyTitle="Aún no hay permisos"
+        emptyMessage="Crea tu primer permiso para controlar el acceso en la app."
         sortField={table.sortField}
         sortOrder={table.sortOrder}
         onSort={(field, descending) => table.setSort(field, descending ? "desc" : "asc")}
@@ -121,33 +121,33 @@ export function PermissionsClient({ initialData }: Props) {
           },
           {
             key: "code",
-            name: "Code",
+            name: "Código",
             isSortable: true,
             minWidth: 220,
             onRender: (p) => <span className={styles.code}>{p.code}</span>,
           },
           {
             key: "name",
-            name: "Name",
+            name: "Nombre",
             fieldName: "name",
             truncate: true,
             minWidth: 220,
           },
           {
             key: "module",
-            name: "Module",
+            name: "Módulo",
             fieldName: "module",
             isSortable: true,
             minWidth: 140,
           },
           {
             key: "active",
-            name: "Status",
+            name: "Estado",
             align: "center",
             minWidth: 110,
             onRender: (p) => (
               <Badge appearance="filled" color={p.active ? "success" : "informative"}>
-                {p.active ? "Active" : "Disabled"}
+                {p.active ? "Activo" : "Deshabilitado"}
               </Badge>
             ),
           },

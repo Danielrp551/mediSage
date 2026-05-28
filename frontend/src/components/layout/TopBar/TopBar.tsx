@@ -91,14 +91,14 @@ export function TopBar() {
     <header className={styles.root}>
       <div className={styles.leftCluster}>
         <Tooltip
-          content={isSidebarCollapsed ? "Show navigation" : "Hide navigation"}
+          content={isSidebarCollapsed ? "Mostrar navegación" : "Ocultar navegación"}
           relationship="label"
         >
           <Button
             appearance="subtle"
             icon={<NavigationRegular />}
             onClick={toggleSidebar}
-            aria-label={isSidebarCollapsed ? "Show navigation" : "Hide navigation"}
+            aria-label={isSidebarCollapsed ? "Mostrar navegación" : "Ocultar navegación"}
             aria-expanded={!isSidebarCollapsed}
           />
         </Tooltip>
@@ -112,7 +112,7 @@ export function TopBar() {
           <Button
             appearance="subtle"
             className={styles.avatarTrigger}
-            aria-label="Open user menu"
+            aria-label="Abrir menú de usuario"
           >
             <Avatar
               name={user?.full_name}
@@ -130,14 +130,14 @@ export function TopBar() {
           <Divider />
           <MenuList>
             <MenuItem icon={<PersonRegular />} disabled>
-              My profile
+              Mi perfil
             </MenuItem>
             <MenuItem
               icon={<SignOutRegular />}
               disabled={isSigningOut}
               onClick={() => startSignOut(() => logoutAction())}
             >
-              {isSigningOut ? "Signing out…" : "Sign out"}
+              {isSigningOut ? "Cerrando sesión…" : "Cerrar sesión"}
             </MenuItem>
           </MenuList>
         </MenuPopover>

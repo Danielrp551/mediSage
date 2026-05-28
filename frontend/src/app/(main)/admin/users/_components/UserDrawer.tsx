@@ -187,7 +187,7 @@ export function UserDrawer({ mode, userId, roles, permissions, onClose }: Props)
       const action = userId ? updateUser(userId, values) : createUser(values);
       const result = await action;
       if (!result.ok) {
-        setServerError(result.error ?? "Validation failed");
+        setServerError(result.error ?? "Falló la validación");
         return;
       }
       if (mode === "create" && result.data && "generated_password" in result.data) {
@@ -205,23 +205,33 @@ export function UserDrawer({ mode, userId, roles, permissions, onClose }: Props)
     <Drawer
       open
       onClose={onClose}
-      title={mode === "create" ? "New user" : mode === "edit" ? "Edit user" : "User detail"}
+      title={
+        mode === "create"
+          ? "Nuevo usuario"
+          : mode === "edit"
+            ? "Editar usuario"
+            : "Detalle de usuario"
+      }
       subtitle={user?.email ?? form.watch("email") ?? undefined}
       size="medium"
       footer={
         readOnly ? (
-          <Button onClick={onClose}>Close</Button>
+          <Button onClick={onClose}>Cerrar</Button>
         ) : (
           <>
             <Button appearance="secondary" onClick={onClose} disabled={pending}>
-              Cancel
+              Cancelar
             </Button>
             <Button
               appearance="primary"
               disabled={pending}
               onClick={() => void onSubmit()}
             >
-              {pending ? "Saving…" : mode === "create" ? "Create user" : "Save changes"}
+              {pending
+                ? "Guardando…"
+                : mode === "create"
+                  ? "Crear usuario"
+                  : "Guardar cambios"}
             </Button>
           </>
         )
@@ -236,7 +246,7 @@ export function UserDrawer({ mode, userId, roles, permissions, onClose }: Props)
       {generatedPassword ? (
         <MessageBar intent="info">
           <MessageBarBody>
-            User created. Temporary password (copy now — won&apos;t show again):{" "}
+            Usuario creado. Contraseña temporal (cópiala ahora — no se mostrará otra vez):{" "}
             <code>{generatedPassword}</code>
           </MessageBarBody>
         </MessageBar>
@@ -246,14 +256,14 @@ export function UserDrawer({ mode, userId, roles, permissions, onClose }: Props)
         selectedValue={tab}
         onTabSelect={(_e: SelectTabEvent, d: SelectTabData) => setTab(d.value as TabId)}
       >
-        <Tab value="details">Details</Tab>
+        <Tab value="details">Detalles</Tab>
         <Tab value="access">
-          Access
+          Acceso
           <span className={styles.selectedCount}>
-            {form.watch("role_ids").length} role · {form.watch("permission_ids").length} perm
+            {form.watch("role_ids").length} rol(es) · {form.watch("permission_ids").length} permiso(s)
           </span>
         </Tab>
-        {hasAudit ? <Tab value="audit">Audit</Tab> : null}
+        {hasAudit ? <Tab value="audit">Auditoría</Tab> : null}
       </TabList>
 
       {tab === "details" ? (
@@ -297,25 +307,25 @@ function DetailsTab({
 
   return (
     <div className={styles.tabPanel}>
-      <FormField label="Email" required error={form.formState.errors.email?.message}>
+      <FormField label="Correo" required error={form.formState.errors.email?.message}>
         <Controller
           control={form.control}
           name="email"
           render={({ field }) => (
-            <Input {...field} type="email" disabled={readOnly} placeholder="you@example.com" />
+            <Input {...field} type="email" disabled={readOnly} placeholder="tu@ejemplo.com" />
           )}
         />
       </FormField>
 
       <div className={styles.twoCol}>
-        <FormField label="First name" required error={form.formState.errors.first_name?.message}>
+        <FormField label="Nombres" required error={form.formState.errors.first_name?.message}>
           <Controller
             control={form.control}
             name="first_name"
             render={({ field }) => <Input {...field} disabled={readOnly} />}
           />
         </FormField>
-        <FormField label="Last name" required error={form.formState.errors.last_name?.message}>
+        <FormField label="Apellido paterno" required error={form.formState.errors.last_name?.message}>
           <Controller
             control={form.control}
             name="last_name"
@@ -324,7 +334,7 @@ function DetailsTab({
         </FormField>
       </div>
 
-      <FormField label="Second last name">
+      <FormField label="Apellido materno">
         <Controller
           control={form.control}
           name="second_last_name"
@@ -335,7 +345,7 @@ function DetailsTab({
       </FormField>
 
       <div className={styles.twoCol}>
-        <FormField label="Document type">
+        <FormField label="Tipo de documento">
           <Controller
             control={form.control}
             name="document_type"
@@ -344,7 +354,7 @@ function DetailsTab({
                 value={field.value ?? ""}
                 selectedOptions={field.value ? [field.value] : []}
                 disabled={readOnly}
-                placeholder="Select…"
+                placeholder="Seleccionar…"
                 onOptionSelect={(_, data) => {
                   const next = data.optionValue ? data.optionValue : null;
                   field.onChange(next);
@@ -353,7 +363,7 @@ function DetailsTab({
                   void form.trigger("document_number");
                 }}
               >
-                <Option value="">— None —</Option>
+                <Option value="">— Ninguno —</Option>
                 {DOCUMENT_TYPES.map((t) => (
                   <Option key={t} value={t}>
                     {t}
@@ -364,7 +374,7 @@ function DetailsTab({
           />
         </FormField>
         <FormField
-          label="Document number"
+          label="Número de documento"
           hint={docRule?.hint}
           error={docError}
         >
@@ -387,7 +397,7 @@ function DetailsTab({
         </FormField>
       </div>
 
-      <FormField label="Phone">
+      <FormField label="Teléfono">
         <Controller
           control={form.control}
           name="phone"
@@ -420,7 +430,7 @@ function AccessTab({
           <AccordionHeader>
             Roles
             <span className={styles.selectedCount}>
-              {form.watch("role_ids").length} of {roles.length} selected
+              {form.watch("role_ids").length} de {roles.length} seleccionados
             </span>
           </AccordionHeader>
           <AccordionPanel>
@@ -439,8 +449,8 @@ function AccessTab({
                       : [...field.value, id];
                     field.onChange(next);
                   }}
-                  searchPlaceholder="Search roles…"
-                  emptyMessage="No roles match your search."
+                  searchPlaceholder="Buscar roles…"
+                  emptyMessage="Ningún rol coincide con la búsqueda."
                 />
               )}
             />
@@ -449,9 +459,9 @@ function AccessTab({
 
         <AccordionItem value="perms">
           <AccordionHeader>
-            Direct permissions
+            Permisos directos
             <span className={styles.selectedCount}>
-              {form.watch("permission_ids").length} of {permissions.length} selected
+              {form.watch("permission_ids").length} de {permissions.length} seleccionados
             </span>
           </AccordionHeader>
           <AccordionPanel>
@@ -474,8 +484,8 @@ function AccessTab({
                       : [...field.value, id];
                     field.onChange(next);
                   }}
-                  searchPlaceholder="Search by code, name or module…"
-                  emptyMessage="No permissions match your search."
+                  searchPlaceholder="Buscar por código, nombre o módulo…"
+                  emptyMessage="Ningún permiso coincide con la búsqueda."
                 />
               )}
             />
@@ -490,7 +500,7 @@ function AuditTab({ user, styles }: { user: UserDetail | null; styles: Styles })
   if (!user) {
     return (
       <div className={styles.tabPanel}>
-        <p className={styles.emptyState}>Loading…</p>
+        <p className={styles.emptyState}>Cargando…</p>
       </div>
     );
   }
@@ -498,15 +508,15 @@ function AuditTab({ user, styles }: { user: UserDetail | null; styles: Styles })
     <div className={styles.tabPanel}>
       <div className={styles.audit}>
         <div>
-          <div className={styles.auditLabel}>Status</div>
+          <div className={styles.auditLabel}>Estado</div>
           <div className={styles.auditValue}>
             <Badge appearance="filled" color={user.active ? "success" : "informative"}>
-              {user.active ? "Active" : "Disabled"}
+              {user.active ? "Activo" : "Deshabilitado"}
             </Badge>
           </div>
         </div>
         <div>
-          <div className={styles.auditLabel}>User ID</div>
+          <div className={styles.auditLabel}>ID del usuario</div>
           <div className={styles.auditValue}>
             <code>{user.id}</code>
           </div>
@@ -517,21 +527,21 @@ function AuditTab({ user, styles }: { user: UserDetail | null; styles: Styles })
 
       <div className={styles.audit}>
         <div>
-          <div className={styles.auditLabel}>Created on</div>
+          <div className={styles.auditLabel}>Creado el</div>
           <div className={styles.auditValue}>{formatDate(user.created_on)}</div>
         </div>
         <div>
-          <div className={styles.auditLabel}>Created by</div>
+          <div className={styles.auditLabel}>Creado por</div>
           <div className={styles.auditValue}>
             {user.created_by_user?.full_name ?? "—"}
           </div>
         </div>
         <div>
-          <div className={styles.auditLabel}>Updated on</div>
+          <div className={styles.auditLabel}>Actualizado el</div>
           <div className={styles.auditValue}>{formatDate(user.updated_on)}</div>
         </div>
         <div>
-          <div className={styles.auditLabel}>Updated by</div>
+          <div className={styles.auditLabel}>Actualizado por</div>
           <div className={styles.auditValue}>
             {user.updated_by_user?.full_name ?? "—"}
           </div>
