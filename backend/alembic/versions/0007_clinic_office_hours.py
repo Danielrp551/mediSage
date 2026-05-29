@@ -1,9 +1,12 @@
 """add clinic office_operating_hours table
 
-Revision ID: 0007_clinic_office_operating_hours
+Revision ID: 0007_clinic_office_hours
 Revises: 0006_clinic_office
 Create Date: 2026-05-29 00:00:00
 
+Note: the revision id is kept <= 32 chars because Alembic's `alembic_version`
+table stores `version_num` as VARCHAR(32) — the longer
+"0007_clinic_office_operating_hours" (34 chars) overflowed it on Postgres.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "0007_clinic_office_operating_hours"
+revision: str = "0007_clinic_office_hours"
 down_revision: str | None = "0006_clinic_office"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
