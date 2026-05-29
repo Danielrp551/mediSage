@@ -2,8 +2,8 @@
  * Catalog module wire types. Mirror of the Pydantic schemas in
  * `backend/app/modules/catalog/schemas/`.
  *
- * Phase 1 ships Vertical only; Service and Product types land in
- * phases 2 and 3 — keep this file the single source of truth so the
+ * Phase 1 ships Vertical, phase 2 adds Service; Product types land in
+ * phase 3 — keep this file the single source of truth so the
  * `import type` graph stays flat.
  */
 
@@ -56,6 +56,52 @@ export interface VerticalUpdatePayload {
   description?: string | null;
   color?: string | null;
   icon?: string | null;
+  display_order?: number;
+  active?: boolean;
+}
+
+// ── Service ──────────────────────────────────────────
+
+export interface ServiceItem {
+  id: string;
+  vertical_id: string;
+  vertical_name: string; // denormalized — avoids a join in the table
+  code: string;
+  name: string;
+  description: string | null;
+  display_order: number;
+  active: boolean;
+  products_count: number;
+  created_on: string;
+  created_by: string;
+  created_by_user: UserAuditInfo | null;
+  updated_on: string;
+  updated_by: string;
+  updated_by_user: UserAuditInfo | null;
+}
+
+export interface ServiceDetail extends ServiceItem {
+  vertical: VerticalOption;
+}
+
+export interface ServiceOption {
+  id: string;
+  vertical_id: string;
+  code: string;
+  name: string;
+}
+
+export interface ServiceCreatePayload {
+  vertical_id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  display_order?: number;
+}
+
+export interface ServiceUpdatePayload {
+  name?: string;
+  description?: string | null;
   display_order?: number;
   active?: boolean;
 }

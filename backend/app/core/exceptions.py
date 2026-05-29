@@ -8,6 +8,7 @@ convert each to the uniform error shape `{success, detail, code?, errors?}`.
 from __future__ import annotations
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -42,6 +43,14 @@ class BadRequestException(AppException):
     status_code = status.HTTP_400_BAD_REQUEST
 
 
+class ConflictException(AppException):
+    """409 for state conflicts that aren't uniqueness violations — e.g.
+    deleting a parent that still has active children. Distinct from
+    `AlreadyExistsException` so the intent reads clearly at the call site."""
+
+    status_code = status.HTTP_409_CONFLICT
+
+
 # ── Handlers ───────────────────────────────────────
 
 
@@ -61,10 +70,13 @@ async def _app_handler(request: Request, exc: AppException) -> JSONResponse:
 
 
 async def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # `exc.errors()` can carry a non-serializable `ctx` (e.g. the original
+    # ValueError raised by a custom field_validator). `jsonable_encoder`
+    # coerces those to strings so `JSONResponse` doesn't 500 on 422s.
     return _error_response(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail="Validation failed",
-        errors=exc.errors(),
+        errors=jsonable_encoder(exc.errors()),
     )
 
 

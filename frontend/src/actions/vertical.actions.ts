@@ -3,30 +3,23 @@
 import { revalidateTag } from "next/cache";
 
 import { ENDPOINTS } from "@/lib/constants/endpoints";
-import {
-  verticalCreateSchema,
-  verticalUpdateSchema,
-} from "@/lib/schemas/vertical.schema";
+import { verticalCreateSchema, verticalUpdateSchema } from "@/lib/schemas/vertical.schema";
 import { backendClient } from "@/services/backend.client";
 import { HttpError, type ApiPaginated, type ApiSingle } from "@/types/api.types";
-import type {
-  VerticalDetail,
-  VerticalItem,
-  VerticalOption,
-} from "@/types/catalog.types";
+import type { VerticalDetail, VerticalItem, VerticalOption } from "@/types/catalog.types";
 import type { QueryRequest } from "@/types/query.types";
 import type { MutationResult } from "./user.actions";
 
 const VERTICALS_TAG = "catalog:verticals";
+// Children denormalize the vertical's `name` (ServiceItem.vertical_name,
+// ProductItem.vertical_name). A rename must invalidate their caches too.
+const SERVICES_TAG = "catalog:services";
+const PRODUCTS_TAG = "catalog:products";
 
-export async function listVerticals(
-  query: QueryRequest,
-): Promise<ApiPaginated<VerticalItem>> {
-  return backendClient.post<ApiPaginated<VerticalItem>>(
-    ENDPOINTS.VERTICALS.LIST,
-    query,
-    { tags: [VERTICALS_TAG] },
-  );
+export async function listVerticals(query: QueryRequest): Promise<ApiPaginated<VerticalItem>> {
+  return backendClient.post<ApiPaginated<VerticalItem>>(ENDPOINTS.VERTICALS.LIST, query, {
+    tags: [VERTICALS_TAG],
+  });
 }
 
 export async function listActiveVerticals(): Promise<VerticalOption[]> {
@@ -74,6 +67,12 @@ export async function updateVertical(
       parsed.data,
     );
     revalidateTag(VERTICALS_TAG, "max");
+    // Cross-tag: a renamed vertical makes the denormalized `vertical_name` in
+    // cached services/products stale.
+    if ("name" in parsed.data) {
+      revalidateTag(SERVICES_TAG, "max");
+      revalidateTag(PRODUCTS_TAG, "max");
+    }
     return { ok: true, data };
   } catch (e) {
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };

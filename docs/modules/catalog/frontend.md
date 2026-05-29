@@ -561,11 +561,11 @@ export async function listVerticals(
 }
 
 export async function listActiveVerticals(): Promise<VerticalOption[]> {
-  const res = await backendClient.get<ApiSingle<VerticalOption[]>>(
-    ENDPOINTS.VERTICALS.ACTIVE,
-    { tags: [TAG] },
-  );
-  return res.data;
+  // `/active` endpoints return a RAW list (response_model=list[...]), not a
+  // `{success, data}` envelope — read the array directly, no `.data`.
+  return backendClient.get<VerticalOption[]>(ENDPOINTS.VERTICALS.ACTIVE, {
+    tags: [TAG],
+  });
 }
 
 export async function getVertical(id: string): Promise<ApiSingle<VerticalDetail>> {
@@ -643,10 +643,8 @@ export async function listActiveServices(
   const url = verticalId
     ? `${ENDPOINTS.SERVICES.ACTIVE}?vertical_id=${encodeURIComponent(verticalId)}`
     : ENDPOINTS.SERVICES.ACTIVE;
-  const res = await backendClient.get<ApiSingle<ServiceOption[]>>(url, {
-    tags: [TAG],
-  });
-  return res.data;
+  // `/active` returns a RAW list (response_model=list[...]) — no envelope.
+  return backendClient.get<ServiceOption[]>(url, { tags: [TAG] });
 }
 ```
 
