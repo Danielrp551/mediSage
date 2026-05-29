@@ -134,3 +134,24 @@ export interface OfficeUpdatePayload {
   vertical_ids?: string[]; // full replace of the M:N when present
   active?: boolean;
 }
+
+// ── OfficeOperatingHours (patrón semanal) ───────────────
+// Managed via BULK PUT atomic replace — there is no per-row create/update/delete.
+
+export interface OfficeOperatingHoursItem {
+  // day_of_week uses the Python datetime.weekday() convention: 0 = lunes … 6 = domingo.
+  day_of_week: number; // 0..6
+  opens_at: string; // local time (no TZ — interpreted in branch.timezone)
+  closes_at: string; // backend CHECK closes_at > opens_at
+}
+
+// Wire shape for the GET/PUT response — each persisted block carries its id.
+// The backend serializes `time` as "HH:MM:SS"; the editor normalizes to "HH:MM".
+export interface OfficeOperatingHoursRow extends OfficeOperatingHoursItem {
+  id: string;
+}
+
+// Body of PUT /offices/{id}/operating-hours — the FULL weekly pattern.
+export interface OfficeOperatingHoursReplacePayload {
+  hours: OfficeOperatingHoursItem[];
+}

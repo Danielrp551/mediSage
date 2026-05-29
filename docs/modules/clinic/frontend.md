@@ -392,7 +392,7 @@ export type OfficeHoursBlockInput = z.infer<typeof hoursBlockSchema>;
 export type OfficeHoursReplaceInput = z.infer<typeof officeHoursReplaceSchema>;
 ```
 
-> **Por qué un `superRefine` por bloque y no a nivel array**: cada bloque es independiente (`closes_at > opens_at` es local). Se permiten **varias filas por día** (no hay unique sobre `(office_id, day_of_week)`), así que no se valida solapamiento aquí — coherente con el backend, que tampoco lo prohíbe (un solape "mañana 8-13 / 12-16" es responsabilidad operativa del usuario, no un error de datos). Si el negocio lo pide, agregar una validación de no-overlap por día en un `superRefine` a nivel de `hours`.
+> **Validación por bloque + no-overlap por día**: cada bloque valida `closes_at > opens_at` con un `superRefine` local. Además, `officeHoursReplaceSchema` lleva un `superRefine` **a nivel de `hours`** que rechaza bloques solapados del mismo día (agrupa por `day_of_week`, ordena por apertura, marca `cur.opens < prev.closes`; **adyacentes `next.opens == prev.closes` son válidos**) — **espeja el validador `OfficeOperatingHoursReplace._no_overlaps` del backend** (decisión F3, alineada al review adversario), para que el error se prevenga en cliente en español en vez de mostrar el 422 en inglés del backend. Se permiten **varias filas por día** (no hay unique sobre `(office_id, day_of_week)`), pero no pueden solaparse. `OfficeHoursTab` deshabilita "Guardar horarios" y marca inline los bloques solapados.
 
 ### `lib/schemas/office-closure.schema.ts`
 

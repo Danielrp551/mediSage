@@ -527,7 +527,7 @@ El patrón semanal (`OfficeOperatingHours`) se edita como un **agregado completo
 **Validación (Zod, client-side antes del bulk PUT)**:
 - Cada bloque: `closes_at > opens_at` (mirror del CHECK del backend). Si falla, error inline en ese bloque ("La hora de cierre debe ser mayor que la de apertura.").
 - `day_of_week ∈ 0..6` (lo fija la fila, no editable por el user).
-- Se permiten **múltiples bloques por día** (no hay unique en `(office_id, day_of_week)`). No validamos solapamiento en el MVP (el backend tampoco) — `scheduling` lo tolera al unir bloques.
+- Se permiten **múltiples bloques por día** (no hay unique en `(office_id, day_of_week)`), pero **no pueden solaparse**: el backend (`OfficeOperatingHoursReplace._no_overlaps`) y el Zod del frontend rechazan dos bloques del mismo día que se solapen (adyacentes `next.opens == prev.closes` sí valen). El editor deshabilita "Guardar horarios" y marca inline los bloques solapados, en español.
 - Días sin bloques = el office no atiende ese día (no se envía ninguna fila para ese día).
 
 **Estados de la tab Horarios**:
