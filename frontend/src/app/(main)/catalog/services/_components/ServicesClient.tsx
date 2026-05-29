@@ -155,8 +155,11 @@ export function ServicesClient({ initialData, verticals }: Props) {
 
   // When deep-linked to an inactive/stale vertical (not in the active list),
   // fall back to the name carried on the rows — every row shares the filter's
-  // vertical — so the chip and dropdown never leak a raw UUID.
-  const displayVerticalName = selectedVerticalName ?? data.data.items[0]?.vertical_name ?? null;
+  // vertical — so the chip and dropdown never leak a raw UUID. Null when no
+  // filter is set, so the dropdown shows its placeholder, not a stray row name.
+  const displayVerticalName = verticalFilter
+    ? (selectedVerticalName ?? data.data.items[0]?.vertical_name ?? null)
+    : null;
 
   const handleVerticalChange = (next: string | null) => {
     void setVerticalFilter(next);

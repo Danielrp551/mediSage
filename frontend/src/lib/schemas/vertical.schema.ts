@@ -8,6 +8,13 @@ import { z } from "zod";
  */
 export const CODE_SLUG_REGEX = /^[a-z][a-z0-9_]{1,38}[a-z0-9]$/;
 
+/**
+ * Same slug shape but 3–60 chars, for Service and Product codes (their
+ * columns are String(60) and the backend `CODE_PATTERN` uses `{1,58}`).
+ * Verticals stay at 40; do not reuse the 40-char regex for 60-char fields.
+ */
+export const CODE_SLUG_60_REGEX = /^[a-z][a-z0-9_]{1,58}[a-z0-9]$/;
+
 /** Hex colour `#RRGGBB`. The colour picker writes uppercase; we accept both. */
 export const HEX_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/;
 

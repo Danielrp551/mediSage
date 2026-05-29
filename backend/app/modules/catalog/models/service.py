@@ -25,6 +25,7 @@ from app.shared.base_model import (
 )
 
 if TYPE_CHECKING:
+    from app.modules.catalog.models.product import Product
     from app.modules.catalog.models.vertical import Vertical
 
 
@@ -41,4 +42,6 @@ class Service(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Bas
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     vertical: Mapped[Vertical] = relationship(back_populates="services", lazy="raise")
-    # `products` relationship is added in phase 3 alongside the Product model.
+    # Children. `lazy="raise"` keeps accidental N+1 loud — products_count is
+    # computed with explicit batch queries in the service layer, not via this.
+    products: Mapped[list[Product]] = relationship(back_populates="service", lazy="raise")

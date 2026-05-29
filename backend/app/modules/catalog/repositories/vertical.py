@@ -5,7 +5,10 @@ can filter/sort dynamically via `QueryRequest`. Soft-delete handled by
 
 `count_active_services` (single, for the delete-with-children guard) and
 `count_active_services_map` (batch, for the paginated list) are live as of
-phase 2. `count_active_products` lands in phase 3 with the Product model.
+phase 2. The `count_active_products*` pair lands in phase 3: it counts via the
+denormalized `Product.vertical_id` (no join) — a non-deleted product always
+belongs to a non-deleted service since a service can't be deleted while it has
+active products.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.catalog.models.product import Product
 from app.modules.catalog.models.service import Service
 from app.modules.catalog.models.vertical import Vertical
 from app.shared.base_repository import BaseRepository
@@ -71,6 +75,32 @@ class VerticalRepository(BaseRepository[Vertical]):
                 Service.deleted_at.is_(None),
             )
             .group_by(Service.vertical_id)
+        )
+        return {row[0]: row[1] for row in result.all()}
+
+    async def count_active_products(self, db: AsyncSession, vertical_id: str) -> int:
+        """Count non-deleted products in one vertical (via denormalized FK)."""
+        result = await db.execute(
+            select(func.count(Product.id)).where(
+                Product.vertical_id == vertical_id,
+                Product.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one()
+
+    async def count_active_products_map(
+        self, db: AsyncSession, vertical_ids: list[str]
+    ) -> dict[str, int]:
+        """Batch product counts for a page of verticals — one query, no N+1."""
+        if not vertical_ids:
+            return {}
+        result = await db.execute(
+            select(Product.vertical_id, func.count(Product.id))
+            .where(
+                Product.vertical_id.in_(vertical_ids),
+                Product.deleted_at.is_(None),
+            )
+            .group_by(Product.vertical_id)
         )
         return {row[0]: row[1] for row in result.all()}
 

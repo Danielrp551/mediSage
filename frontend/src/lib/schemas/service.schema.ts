@@ -1,17 +1,17 @@
 import { z } from "zod";
 
-import { CODE_SLUG_REGEX } from "./vertical.schema";
+import { CODE_SLUG_60_REGEX } from "./vertical.schema";
 
 /**
  * Service slug. Same shape as the vertical slug but up to 60 chars, mirroring
- * the backend's `CODE_PATTERN`. Stable and non-editable post-creation.
+ * the backend's `CODE_PATTERN` (`{1,58}`). Stable and non-editable post-create.
  */
 const codeField = z
   .string()
   .min(3, "Mínimo 3 caracteres")
   .max(60, "Máximo 60 caracteres")
   .regex(
-    CODE_SLUG_REGEX,
+    CODE_SLUG_60_REGEX,
     "Slug en minúsculas: letras, dígitos, '_'. Empieza con letra, termina con letra o dígito.",
   );
 

@@ -10,16 +10,18 @@ batched query, never N+1) so the service layer can hydrate the denormalized
 `ServiceOption`, which never reads the relationship, so it deliberately does
 NOT eager-load — matching `VerticalRepository.list_active`.
 
-`count_active_products` is added in phase 3 when the Product model exists;
-for now the service layer reports `products_count = 0`.
+The `count_active_products*` pair is live as of phase 3: it powers the
+denormalized `products_count` on each ServiceItem and the delete-with-children
+guard in `services/service.py:soft_delete`.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.modules.catalog.models.product import Product
 from app.modules.catalog.models.service import Service
 from app.shared.base_repository import BaseRepository
 
@@ -66,6 +68,32 @@ class ServiceRepository(BaseRepository[Service]):
             stmt = stmt.where(Service.vertical_id == vertical_id)
         result = await db.execute(stmt)
         return list(result.scalars().all())
+
+    async def count_active_products(self, db: AsyncSession, service_id: str) -> int:
+        """Count non-deleted products under one service (delete guard)."""
+        result = await db.execute(
+            select(func.count(Product.id)).where(
+                Product.service_id == service_id,
+                Product.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one()
+
+    async def count_active_products_map(
+        self, db: AsyncSession, service_ids: list[str]
+    ) -> dict[str, int]:
+        """Batch product counts for a page of services — one query, no N+1."""
+        if not service_ids:
+            return {}
+        result = await db.execute(
+            select(Product.service_id, func.count(Product.id))
+            .where(
+                Product.service_id.in_(service_ids),
+                Product.deleted_at.is_(None),
+            )
+            .group_by(Product.service_id)
+        )
+        return {row[0]: row[1] for row in result.all()}
 
 
 service_repository = ServiceRepository()

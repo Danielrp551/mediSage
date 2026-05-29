@@ -108,21 +108,39 @@ async def get_by_id(db: AsyncSession, vertical_id: str) -> SingleResponse[Vertic
     if vertical is None:
         raise NotFoundException("Vertical not found")
     services_count = await vertical_repository.count_active_services(db, vertical_id)
+    products_count = await vertical_repository.count_active_products(db, vertical_id)
     audit_users = await user_repository.get_audit_info_map(
         db, {vertical.created_by, vertical.updated_by}
     )
-    return SingleResponse(data=_to_detail(vertical, audit_users, services_count=services_count))
+    return SingleResponse(
+        data=_to_detail(
+            vertical,
+            audit_users,
+            services_count=services_count,
+            products_count=products_count,
+        )
+    )
 
 
 async def list_paginated(
     db: AsyncSession, query_request: QueryRequest
 ) -> PaginatedResponse[VerticalItem]:
     items, total = await vertical_repository.get_paginated(db, query_request)
-    counts = await vertical_repository.count_active_services_map(db, [v.id for v in items])
+    ids = [v.id for v in items]
+    svc_counts = await vertical_repository.count_active_services_map(db, ids)
+    prod_counts = await vertical_repository.count_active_products_map(db, ids)
     audit_users = await user_repository.get_audit_info_map(db, _collect_actor_ids(items))
     return PaginatedResponse(
         data=PaginatedData(
-            items=[_to_item(v, audit_users, services_count=counts.get(v.id, 0)) for v in items],
+            items=[
+                _to_item(
+                    v,
+                    audit_users,
+                    services_count=svc_counts.get(v.id, 0),
+                    products_count=prod_counts.get(v.id, 0),
+                )
+                for v in items
+            ],
             total=total,
             skip=query_request.pagination.skip,
             limit=query_request.pagination.limit,
@@ -182,10 +200,18 @@ async def update(
 
     await vertical_repository.update(db, vertical, changes)
     services_count = await vertical_repository.count_active_services(db, vertical_id)
+    products_count = await vertical_repository.count_active_products(db, vertical_id)
     audit_users = await user_repository.get_audit_info_map(
         db, {vertical.created_by, vertical.updated_by}
     )
-    return SingleResponse(data=_to_detail(vertical, audit_users, services_count=services_count))
+    return SingleResponse(
+        data=_to_detail(
+            vertical,
+            audit_users,
+            services_count=services_count,
+            products_count=products_count,
+        )
+    )
 
 
 async def soft_delete(db: AsyncSession, vertical_id: str, *, actor_id: str) -> None:

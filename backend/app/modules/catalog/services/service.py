@@ -4,9 +4,9 @@ Hydrates audit users (`created_by_user`, `updated_by_user`) and the
 denormalized `vertical_name` on every Item; the parent vertical is eager
 batch-loaded via `selectinload` (never N+1).
 
-`products_count` is 0 in phase 2 (the Product model doesn't exist yet);
-phase 3 replaces the hardcoded zero with a batch count and adds the
-delete-with-active-children guard to `soft_delete`.
+`products_count` is live as of phase 3: the paginated list uses one batch
+count query and the single-service paths count on demand; `soft_delete`
+guards against deleting a service that still has active products.
 """
 
 from __future__ import annotations
@@ -14,7 +14,11 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import AlreadyExistsException, NotFoundException
+from app.core.exceptions import (
+    AlreadyExistsException,
+    ConflictException,
+    NotFoundException,
+)
 from app.modules.admin.models.user import User
 from app.modules.admin.repositories.user import user_repository
 from app.modules.admin.schemas.audit import UserAuditInfo
@@ -103,10 +107,11 @@ async def get_by_id(db: AsyncSession, service_id: str) -> SingleResponse[Service
     service = await service_repository.get_full(db, service_id)
     if service is None:
         raise NotFoundException("Service not found")
+    products_count = await service_repository.count_active_products(db, service_id)
     audit_users = await user_repository.get_audit_info_map(
         db, {service.created_by, service.updated_by}
     )
-    return SingleResponse(data=_to_detail(service, audit_users))
+    return SingleResponse(data=_to_detail(service, audit_users, products_count=products_count))
 
 
 async def list_paginated(
@@ -115,10 +120,11 @@ async def list_paginated(
     items, total = await service_repository.get_paginated(
         db, query_request, load=(selectinload(Service.vertical),)
     )
+    counts = await service_repository.count_active_products_map(db, [s.id for s in items])
     audit_users = await user_repository.get_audit_info_map(db, _collect_actor_ids(items))
     return PaginatedResponse(
         data=PaginatedData(
-            items=[_to_item(s, audit_users) for s in items],
+            items=[_to_item(s, audit_users, products_count=counts.get(s.id, 0)) for s in items],
             total=total,
             skip=query_request.pagination.skip,
             limit=query_request.pagination.limit,
@@ -194,23 +200,27 @@ async def update(
     refreshed = await service_repository.get_full(db, service_id)
     if refreshed is None:  # pragma: no cover - just updated, cannot be missing
         raise NotFoundException("Service not found")
+    products_count = await service_repository.count_active_products(db, service_id)
     audit_users = await user_repository.get_audit_info_map(
         db, {refreshed.created_by, refreshed.updated_by}
     )
-    return SingleResponse(data=_to_detail(refreshed, audit_users))
+    return SingleResponse(data=_to_detail(refreshed, audit_users, products_count=products_count))
 
 
 async def soft_delete(db: AsyncSession, service_id: str, *, actor_id: str) -> None:
     service = await service_repository.get_by_id(db, service_id)
     if service is None:
         raise NotFoundException("Service not found")
-    # Phase 3 will guard against deleting a service with active products here:
-    #   active_products = await service_repository.count_active_products(db, service_id)
-    #   if active_products > 0:
-    #       raise ConflictException(
-    #           f"Cannot delete service with {active_products} active product(s).",
-    #           code="SERVICE_HAS_ACTIVE_CHILDREN",
-    #       )
+    # A service with live children must not vanish under them — "live" means
+    # not soft-deleted (a merely disabled product still holds the FK), so the
+    # guard counts every non-deleted product and deleting them is what unblocks.
+    active_products = await service_repository.count_active_products(db, service_id)
+    if active_products > 0:
+        raise ConflictException(
+            f"Cannot delete service with {active_products} product(s) still attached. "
+            "Delete its products first.",
+            code="SERVICE_HAS_ACTIVE_CHILDREN",
+        )
     service.updated_by = actor_id
     service.updated_on = utc_now()
     await service_repository.soft_delete(db, service)

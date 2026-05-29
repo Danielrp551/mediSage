@@ -2,8 +2,8 @@
  * Catalog module wire types. Mirror of the Pydantic schemas in
  * `backend/app/modules/catalog/schemas/`.
  *
- * Phase 1 ships Vertical, phase 2 adds Service; Product types land in
- * phase 3 — keep this file the single source of truth so the
+ * Phase 1 ships Vertical, phase 2 adds Service, phase 3 adds Product —
+ * the full hierarchy. Keep this file the single source of truth so the
  * `import type` graph stays flat.
  */
 
@@ -103,5 +103,71 @@ export interface ServiceUpdatePayload {
   name?: string;
   description?: string | null;
   display_order?: number;
+  active?: boolean;
+}
+
+// ── Product ──────────────────────────────────────────
+
+export interface ProductItem {
+  id: string;
+  service_id: string;
+  service_name: string; // denormalized
+  vertical_id: string; // denormalized
+  vertical_name: string; // denormalized
+  code: string;
+  name: string;
+  description: string | null;
+  base_price: string; // backend serializes Decimal as a string
+  currency: string;
+  duration_min: number | null;
+  requires_appointment: boolean;
+  is_package: boolean;
+  min_hours_to_cancel: number | null;
+  active: boolean;
+  created_on: string;
+  created_by: string;
+  created_by_user: UserAuditInfo | null;
+  updated_on: string;
+  updated_by: string;
+  updated_by_user: UserAuditInfo | null;
+}
+
+export interface ProductDetail extends ProductItem {
+  service: ServiceOption;
+  vertical: VerticalOption;
+}
+
+export interface ProductOption {
+  id: string;
+  service_id: string;
+  code: string;
+  name: string;
+  base_price: string;
+  currency: string;
+  duration_min: number | null;
+}
+
+export interface ProductCreatePayload {
+  service_id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  base_price: string;
+  currency?: string;
+  duration_min?: number | null;
+  requires_appointment?: boolean;
+  is_package?: boolean;
+  min_hours_to_cancel?: number | null;
+}
+
+export interface ProductUpdatePayload {
+  name?: string;
+  description?: string | null;
+  base_price?: string;
+  currency?: string;
+  duration_min?: number | null;
+  requires_appointment?: boolean;
+  is_package?: boolean;
+  min_hours_to_cancel?: number | null;
   active?: boolean;
 }
