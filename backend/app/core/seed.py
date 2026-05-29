@@ -56,6 +56,20 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "PRODUCTS_CREATE", "name": "Create products", "module": "CATALOG"},
     {"code": "PRODUCTS_UPDATE", "name": "Update products", "module": "CATALOG"},
     {"code": "PRODUCTS_DELETE", "name": "Delete products", "module": "CATALOG"},
+    # ── Module: clinic ──────────────────────────────────────────────────
+    {"code": "MENU-CLINIC", "name": "Menu Clinic", "module": "CLINIC"},
+    {"code": "BRANCHES_READ", "name": "Read branches", "module": "CLINIC"},
+    {"code": "BRANCHES_CREATE", "name": "Create branches", "module": "CLINIC"},
+    {"code": "BRANCHES_UPDATE", "name": "Update branches", "module": "CLINIC"},
+    {"code": "BRANCHES_DELETE", "name": "Delete branches", "module": "CLINIC"},
+    {"code": "OFFICES_READ", "name": "Read offices", "module": "CLINIC"},
+    {"code": "OFFICES_CREATE", "name": "Create offices", "module": "CLINIC"},
+    {"code": "OFFICES_UPDATE", "name": "Update offices", "module": "CLINIC"},
+    {"code": "OFFICES_DELETE", "name": "Delete offices", "module": "CLINIC"},
+    {"code": "OFFICE_HOURS_READ", "name": "Read office operating hours", "module": "CLINIC"},
+    {"code": "OFFICE_HOURS_WRITE", "name": "Write office operating hours", "module": "CLINIC"},
+    {"code": "OFFICE_CLOSURES_READ", "name": "Read office closures", "module": "CLINIC"},
+    {"code": "OFFICE_CLOSURES_WRITE", "name": "Write office closures", "module": "CLINIC"},
 ]
 
 

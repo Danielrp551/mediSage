@@ -52,6 +52,27 @@ export const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: "clinic",
+    label: "Clínica",
+    icon: "BuildingMultipleRegular",
+    children: [
+      {
+        key: "branches",
+        label: "Sedes",
+        icon: "BuildingRegular",
+        url: "/clinic/branches",
+        permissions: ["MENU-CLINIC"],
+      },
+      {
+        key: "offices",
+        label: "Consultorios",
+        icon: "ConferenceRoomRegular",
+        url: "/clinic/offices",
+        permissions: ["MENU-CLINIC"],
+      },
+    ],
+  },
+  {
     key: "admin",
     label: "Administración",
     icon: "SettingsRegular",

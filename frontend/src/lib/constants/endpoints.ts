@@ -4,6 +4,7 @@
 
 const ADMIN = "/api/v1/admin";
 const CATALOG = "/api/v1/catalog";
+const CLINIC = "/api/v1/clinic";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -57,5 +58,27 @@ export const ENDPOINTS = {
     CREATE: `${CATALOG}/products`,
     UPDATE: (id: string) => `${CATALOG}/products/${id}`,
     DELETE: (id: string) => `${CATALOG}/products/${id}`,
+  },
+  // ── Clinic module ────────────────────────────────────────
+  BRANCHES: {
+    LIST: `${CLINIC}/branches/list`,
+    ACTIVE: `${CLINIC}/branches/active`,
+    GET: (id: string) => `${CLINIC}/branches/${id}`,
+    CREATE: `${CLINIC}/branches`,
+    UPDATE: (id: string) => `${CLINIC}/branches/${id}`,
+    DELETE: (id: string) => `${CLINIC}/branches/${id}`,
+  },
+  OFFICES: {
+    LIST: `${CLINIC}/offices/list`,
+    // ACTIVE accepts optional ?branch_id= & ?vertical_id= query params.
+    ACTIVE: `${CLINIC}/offices/active`,
+    GET: (id: string) => `${CLINIC}/offices/${id}`,
+    CREATE: `${CLINIC}/offices`,
+    UPDATE: (id: string) => `${CLINIC}/offices/${id}`,
+    DELETE: (id: string) => `${CLINIC}/offices/${id}`,
+    // Nested sub-resources (phases 3 & 4).
+    OPERATING_HOURS: (id: string) => `${CLINIC}/offices/${id}/operating-hours`,
+    CLOSURES: (id: string) => `${CLINIC}/offices/${id}/closures`,
+    CLOSURE: (id: string, closureId: string) => `${CLINIC}/offices/${id}/closures/${closureId}`,
   },
 } as const;

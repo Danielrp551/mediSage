@@ -5,7 +5,10 @@ import {
   AppsListRegular,
   BoxRegular,
   BriefcaseRegular,
+  BuildingMultipleRegular,
+  BuildingRegular,
   ChevronRightRegular,
+  ConferenceRoomRegular,
   HomeRegular,
   LockClosedRegular,
   PeopleRegular,
@@ -33,6 +36,10 @@ const ICONS: Record<string, ReactElement> = {
   TagRegular: <TagRegular />,
   BriefcaseRegular: <BriefcaseRegular />,
   BoxRegular: <BoxRegular />,
+  // Clinic module
+  BuildingMultipleRegular: <BuildingMultipleRegular />,
+  BuildingRegular: <BuildingRegular />,
+  ConferenceRoomRegular: <ConferenceRoomRegular />,
 };
 
 const useStyles = makeStyles({
@@ -140,10 +147,7 @@ const useStyles = makeStyles({
   },
 });
 
-function filterByPermissions(
-  items: NavItem[],
-  hasAny: (codes: string[]) => boolean,
-): NavItem[] {
+function filterByPermissions(items: NavItem[], hasAny: (codes: string[]) => boolean): NavItem[] {
   return items
     .map((item) => {
       const children = item.children ? filterByPermissions(item.children, hasAny) : undefined;
@@ -160,10 +164,7 @@ export function Sidebar() {
   const { isSidebarCollapsed } = useLayout();
   const pathname = usePathname();
 
-  const items = useMemo(
-    () => filterByPermissions(NAV_ITEMS, hasAnyPermission),
-    [hasAnyPermission],
-  );
+  const items = useMemo(() => filterByPermissions(NAV_ITEMS, hasAnyPermission), [hasAnyPermission]);
 
   return (
     <aside
@@ -209,8 +210,7 @@ function NavGroup({
   styles: NavStyles;
 }) {
   // A group is expanded by default when any child is active.
-  const isAnyChildActive =
-    item.children?.some((c) => c.url && pathname.startsWith(c.url)) ?? false;
+  const isAnyChildActive = item.children?.some((c) => c.url && pathname.startsWith(c.url)) ?? false;
   const [open, setOpen] = useState(isAnyChildActive);
 
   return (
