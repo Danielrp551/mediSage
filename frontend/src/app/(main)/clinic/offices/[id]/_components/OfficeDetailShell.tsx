@@ -120,7 +120,7 @@ export function OfficeDetailShell({ office, verticals, initialTab }: Props) {
       ) : activeTab === "hours" ? (
         <OfficeHoursTab officeId={office.id} branchTimezone={office.branch.timezone} />
       ) : activeTab === "closures" ? (
-        <OfficeClosuresTab />
+        <OfficeClosuresTab officeId={office.id} branchTimezone={office.branch.timezone} />
       ) : (
         <OfficeAuditTab office={office} />
       )}

@@ -1372,6 +1372,11 @@ Para **borrar todo el patrón**, enviar `{ "hours": [] }`.
 }
 ```
 
+**Error 404** si el office no existe:
+```json
+{ "success": false, "detail": "Consultorio no encontrado", "code": "OFFICE_NOT_FOUND" }
+```
+
 #### `POST /api/v1/clinic/offices/{id}/closures`
 
 **Permiso**: `OFFICE_CLOSURES_WRITE`.
@@ -1399,13 +1404,18 @@ Para una **apertura extra** (abrir un domingo aunque el patrón diga cerrado): `
 }
 ```
 
+**Error 404** si el office no existe:
+```json
+{ "success": false, "detail": "Consultorio no encontrado", "code": "OFFICE_NOT_FOUND" }
+```
+
 #### `DELETE /api/v1/clinic/offices/{id}/closures/{closure_id}` → soft-delete
 
 **Permiso**: `OFFICE_CLOSURES_WRITE`. **Response 204**.
 
 **Error 404** si el closure no existe o no pertenece a ese office:
 ```json
-{ "success": false, "detail": "Closure not found", "code": "CLOSURE_NOT_FOUND" }
+{ "success": false, "detail": "Excepción no encontrada", "code": "CLOSURE_NOT_FOUND" }
 ```
 
 ## Lógica importante (decisiones que el código no expresa solo)
@@ -1760,8 +1770,8 @@ ClosureIdPath = Annotated[str, Path(min_length=1, description="Closure UUID")]
 async def list_closures(
     office_id: OfficeIdPath,
     db: DBSession,
-    from_: datetime | None = Query(default=None, alias="from"),
-    to: datetime | None = Query(default=None, alias="to"),
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: Annotated[datetime | None, Query()] = None,
 ) -> SingleResponse[list[OfficeClosureItem]]:
     return await office_closure_service.list_for_office(db, office_id, from_, to)
 

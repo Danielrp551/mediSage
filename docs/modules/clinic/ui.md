@@ -588,7 +588,7 @@ A diferencia de los horarios, las excepciones (`OfficeClosure`) son **CRUD indiv
 - **Motivo**: `<Input>` requerido (`varchar(255)`), texto libre para auditoría.
 - **Agregar**: `POST /offices/{id}/closures`. Tras éxito, cierra el drawer, revalida y la lista se refresca.
 - **Eliminar (✕ por fila)**: confirm dialog → `DELETE /offices/{id}/closures/{closure_id}`.
-- **Filtro de rango (Desde/Hasta)**: pasa `?from=&to=` a `GET /offices/{id}/closures?from=&to=`. Default: mes actual.
+- **Filtro de rango (Desde/Hasta)**: opcional; pasa `?from=&to=` a `GET /offices/{id}/closures?from=&to=`. **Por defecto vacío** → lista todas las excepciones no borradas del office (consistente con `frontend.md` "filtros de rango opcionales"; el MVP no preselecciona un mes). El usuario acota con Desde/Hasta y la lista se re-consulta.
 
 **Validación (Zod)**:
 - `ends_at > starts_at` (mirror del CHECK del backend). Mensaje: "La fecha de fin debe ser posterior a la de inicio."

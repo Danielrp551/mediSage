@@ -155,3 +155,29 @@ export interface OfficeOperatingHoursRow extends OfficeOperatingHoursItem {
 export interface OfficeOperatingHoursReplacePayload {
   hours: OfficeOperatingHoursItem[];
 }
+
+// ── OfficeClosure (excepción ad-hoc) ────────────────────
+// Individual CRUD nested under /offices/{id}/closures (no update — delete + recreate).
+
+export interface OfficeClosureItem {
+  id: string;
+  office_id: string;
+  starts_at: string; // timestamptz — ISO 8601 with offset
+  ends_at: string; // backend CHECK ends_at > starts_at
+  is_closed: boolean; // true = cierre, false = apertura extraordinaria
+  reason: string;
+  active: boolean;
+  created_on: string;
+  created_by: string;
+  created_by_user: UserAuditInfo | null;
+  updated_on: string;
+  updated_by: string;
+  updated_by_user: UserAuditInfo | null;
+}
+
+export interface OfficeClosureCreatePayload {
+  starts_at: string; // ISO 8601 with offset
+  ends_at: string;
+  is_closed: boolean;
+  reason: string;
+}

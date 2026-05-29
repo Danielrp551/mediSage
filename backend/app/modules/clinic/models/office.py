@@ -29,6 +29,7 @@ from app.shared.base_model import (
 if TYPE_CHECKING:
     from app.modules.catalog.models.vertical import Vertical
     from app.modules.clinic.models.branch import Branch
+    from app.modules.clinic.models.office_closure import OfficeClosure
     from app.modules.clinic.models.office_operating_hours import OfficeOperatingHours
 
 
@@ -56,3 +57,7 @@ class Office(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Base
     operating_hours: Mapped[list[OfficeOperatingHours]] = relationship(
         back_populates="office", lazy="raise"
     )
+
+    # Ad-hoc exceptions (phase 4). `lazy="raise"` — read per-office on demand via
+    # its own endpoint (list_for_office with a date range), never eagerly.
+    closures: Mapped[list[OfficeClosure]] = relationship(back_populates="office", lazy="raise")
