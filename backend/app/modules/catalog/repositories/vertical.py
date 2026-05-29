@@ -49,6 +49,18 @@ class VerticalRepository(BaseRepository[Vertical]):
         )
         return list(result.scalars().all())
 
+    async def get_by_ids(self, db: AsyncSession, ids: list[str]) -> list[Vertical]:
+        """Fetch live (non-deleted) verticals by id. Additive helper used by
+        `clinic` to resolve the office_vertical M:N — a soft-deleted vertical is
+        filtered out, so it counts as 'unknown' when attaching it to an office
+        (mirrors role_repository.get_by_ids / permission_repository.get_by_ids)."""
+        if not ids:
+            return []
+        result = await db.execute(
+            select(Vertical).where(Vertical.id.in_(ids), Vertical.deleted_at.is_(None))
+        )
+        return list(result.scalars().all())
+
     async def count_active_services(self, db: AsyncSession, vertical_id: str) -> int:
         """Count non-deleted services under one vertical (delete guard)."""
         result = await db.execute(

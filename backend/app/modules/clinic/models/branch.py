@@ -8,16 +8,18 @@ stable slug used in internal URLs and by bots — never renamed once issued.
 when scheduling resolves a local pattern time to a UTC instant; most instants
 (closures, appointments) travel as timestamptz and convert in the browser.
 
-The `offices` relationship is added in phase 2 alongside the Office model;
-`offices_count` is hardcoded to 0 until then (phase 1 has no Office table).
+The `offices` relationship is `lazy="raise"`: `offices_count` is computed with
+explicit batch queries in the service layer (count_active_offices(_map)), never
+via this relationship — accidental N+1 stays loud.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Numeric, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.shared.base_model import (
@@ -26,6 +28,9 @@ from app.shared.base_model import (
     SoftDeleteMixin,
     TimestampMixin,
 )
+
+if TYPE_CHECKING:
+    from app.modules.clinic.models.office import Office
 
 
 class Branch(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Base):
@@ -52,3 +57,7 @@ class Branch(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Base
 
     # ── Time ──
     timezone: Mapped[str] = mapped_column(String(60), nullable=False, default="America/Lima")
+
+    # Children. `lazy="raise"` keeps accidental N+1 loud — offices_count is
+    # computed with explicit batch queries in the service layer, not via this.
+    offices: Mapped[list[Office]] = relationship(back_populates="branch", lazy="raise")

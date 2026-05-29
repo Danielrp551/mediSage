@@ -3,16 +3,20 @@ Branch service. Module of functions (no classes), per template convention.
 Hydrates audit users (`created_by_user`, `updated_by_user`) on every Item via
 batch lookup, matching the pattern from `catalog.services.vertical`.
 
-`offices_count` is 0 in phase 1 (the Office model doesn't exist yet). Phase 2
-replaces the hardcoded zero with a batch count and adds the
-delete-with-active-children guard (409 BRANCH_HAS_ACTIVE_CHILDREN) here.
+`offices_count` is live as of phase 2: the paginated list uses one batch count
+query and the single-branch paths count on demand; `soft_delete` guards against
+deleting a branch that still has active (non-deleted) offices.
 """
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AlreadyExistsException, NotFoundException
+from app.core.exceptions import (
+    AlreadyExistsException,
+    ConflictException,
+    NotFoundException,
+)
 from app.modules.admin.models.user import User
 from app.modules.admin.repositories.user import user_repository
 from app.modules.admin.schemas.audit import UserAuditInfo
@@ -97,20 +101,22 @@ async def get_by_id(db: AsyncSession, branch_id: str) -> SingleResponse[BranchDe
     branch = await branch_repository.get_by_id(db, branch_id)
     if branch is None:
         raise NotFoundException("Branch not found")
+    offices_count = await branch_repository.count_active_offices(db, branch_id)
     audit_users = await user_repository.get_audit_info_map(
         db, {branch.created_by, branch.updated_by}
     )
-    return SingleResponse(data=_to_detail(branch, audit_users))
+    return SingleResponse(data=_to_detail(branch, audit_users, offices_count=offices_count))
 
 
 async def list_paginated(
     db: AsyncSession, query_request: QueryRequest
 ) -> PaginatedResponse[BranchItem]:
     items, total = await branch_repository.get_paginated(db, query_request)
+    counts = await branch_repository.count_active_offices_map(db, [b.id for b in items])
     audit_users = await user_repository.get_audit_info_map(db, _collect_actor_ids(items))
     return PaginatedResponse(
         data=PaginatedData(
-            items=[_to_item(b, audit_users) for b in items],
+            items=[_to_item(b, audit_users, offices_count=counts.get(b.id, 0)) for b in items],
             total=total,
             skip=query_request.pagination.skip,
             limit=query_request.pagination.limit,
@@ -175,23 +181,30 @@ async def update(
     changes["updated_on"] = utc_now()
 
     await branch_repository.update(db, branch, changes)
+    offices_count = await branch_repository.count_active_offices(db, branch_id)
     audit_users = await user_repository.get_audit_info_map(
         db, {branch.created_by, branch.updated_by}
     )
-    return SingleResponse(data=_to_detail(branch, audit_users))
+    return SingleResponse(data=_to_detail(branch, audit_users, offices_count=offices_count))
 
 
 async def soft_delete(db: AsyncSession, branch_id: str, *, actor_id: str) -> None:
     branch = await branch_repository.get_by_id(db, branch_id)
     if branch is None:
         raise NotFoundException("Branch not found")
-    # Phase 2 adds the delete-with-active-children guard here:
-    #   active_offices = await branch_repository.count_active_offices(db, branch_id)
-    #   if active_offices > 0:
-    #       raise ConflictException(
-    #           f"Cannot delete branch with {active_offices} office(s) still attached.",
-    #           code="BRANCH_HAS_ACTIVE_CHILDREN",
-    #       )
+    # "Active" here = not soft-deleted (a merely disabled office still holds the
+    # FK), so the guard counts every non-deleted office. Deleting them unblocks.
+    active_offices = await branch_repository.count_active_offices(db, branch_id)
+    if active_offices > 0:
+        # User-facing detail in Spanish (surfaced verbatim in the delete dialog,
+        # see ui.md copy table). Domain-exception details that reach the UI are
+        # Spanish; Pydantic validator messages stay English (the frontend
+        # re-validates with Zod). `code` stays English for frontend branching.
+        raise ConflictException(
+            f"No se puede eliminar — la sede tiene {active_offices} consultorio(s) "
+            "activo(s). Deshabilítalos o elimínalos primero.",
+            code="BRANCH_HAS_ACTIVE_CHILDREN",
+        )
     branch.updated_by = actor_id
     branch.updated_on = utc_now()
     await branch_repository.soft_delete(db, branch)

@@ -2,11 +2,13 @@
  * Clinic module wire types. Mirror of the Pydantic schemas in
  * `backend/app/modules/clinic/schemas/`.
  *
- * Phase 1 ships Branch only; Office*, OfficeOperatingHours* and OfficeClosure*
- * land in phases 2-4 — keep this file the single source of truth so the
- * `import type` graph stays flat. (Office will reuse VerticalOption from
- * catalog.types for the office↔vertical M:N.)
+ * Phase 1 ships Branch; phase 2 adds Office (+ the office↔vertical M:N, which
+ * reuses VerticalOption from catalog.types). OfficeOperatingHours* and
+ * OfficeClosure* land in phases 3-4 — keep this file the single source of truth
+ * so the `import type` graph stays flat.
  */
+
+import type { VerticalOption } from "./catalog.types";
 
 import type { UserAuditInfo } from "./audit.types";
 
@@ -78,5 +80,57 @@ export interface BranchUpdatePayload {
   phone?: string | null;
   email?: string | null;
   timezone?: string;
+  active?: boolean;
+}
+
+// ── Office (Consultorio) ────────────────────────────────
+
+export interface OfficeItem {
+  id: string;
+  branch_id: string;
+  branch_name: string; // denormalized — avoids a join in the table (mirrors vertical_name)
+  code: string;
+  name: string;
+  room_number: string | null;
+  floor: string | null;
+  description: string | null;
+  active: boolean;
+  verticals_count: number; // denormalized — # of apt (non-deleted) verticals
+  created_on: string;
+  created_by: string;
+  created_by_user: UserAuditInfo | null;
+  updated_on: string;
+  updated_by: string;
+  updated_by_user: UserAuditInfo | null;
+}
+
+export interface OfficeDetail extends OfficeItem {
+  branch: BranchOption;
+  verticals: VerticalOption[]; // soft-deleted verticals filtered out server-side
+}
+
+export interface OfficeOption {
+  id: string;
+  branch_id: string;
+  code: string;
+  name: string;
+}
+
+export interface OfficeCreatePayload {
+  branch_id: string;
+  code: string;
+  name: string;
+  room_number?: string | null;
+  floor?: string | null;
+  description?: string | null;
+  vertical_ids: string[]; // M:N office_vertical assignment at create time
+}
+
+export interface OfficeUpdatePayload {
+  name?: string;
+  room_number?: string | null;
+  floor?: string | null;
+  description?: string | null;
+  vertical_ids?: string[]; // full replace of the M:N when present
   active?: boolean;
 }

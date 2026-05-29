@@ -7,7 +7,6 @@ import {
   AccordionPanel,
   Badge,
   Button,
-  Checkbox,
   Divider,
   Dropdown,
   Input,
@@ -21,14 +20,14 @@ import {
   type SelectTabData,
   type SelectTabEvent,
 } from "@fluentui/react-components";
-import { SearchRegular } from "@fluentui/react-icons";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Controller, useForm } from "react-hook-form";
 
 import { createUser, getUser, updateUser } from "@/actions/user.actions";
 import { Drawer } from "@/components/ui/Drawer/Drawer";
 import { FormField } from "@/components/ui/Form/FormField";
+import { SearchableOptionList } from "@/components/ui/SearchableOptionList/SearchableOptionList";
 import { appTokens } from "@/lib/theme/brand";
 import {
   DOCUMENT_RULES,
@@ -47,47 +46,6 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: tokens.spacingHorizontalM,
-  },
-  searchRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-    marginBottom: tokens.spacingVerticalS,
-  },
-  searchInput: { flex: 1 },
-  optionList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-    maxHeight: "320px",
-    overflowY: "auto",
-    paddingRight: tokens.spacingHorizontalXS,
-  },
-  optionRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
-    borderRadius: tokens.borderRadiusMedium,
-    cursor: "pointer",
-    "&:hover": { backgroundColor: appTokens.chromeBgHover },
-  },
-  optionRowDisabled: { cursor: "default", opacity: 0.6, "&:hover": { backgroundColor: "transparent" } },
-  optionBody: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "2px",
-    flex: 1,
-    minWidth: 0,
-  },
-  optionTitle: {
-    fontSize: tokens.fontSizeBase300,
-    color: appTokens.chromeText,
-    fontWeight: tokens.fontWeightSemibold,
-  },
-  optionSubtle: {
-    fontSize: tokens.fontSizeBase200,
-    color: appTokens.chromeTextMuted,
   },
   emptyState: {
     fontSize: tokens.fontSizeBase200,
@@ -222,16 +180,8 @@ export function UserDrawer({ mode, userId, roles, permissions, onClose }: Props)
             <Button appearance="secondary" onClick={onClose} disabled={pending}>
               Cancelar
             </Button>
-            <Button
-              appearance="primary"
-              disabled={pending}
-              onClick={() => void onSubmit()}
-            >
-              {pending
-                ? "Guardando…"
-                : mode === "create"
-                  ? "Crear usuario"
-                  : "Guardar cambios"}
+            <Button appearance="primary" disabled={pending} onClick={() => void onSubmit()}>
+              {pending ? "Guardando…" : mode === "create" ? "Crear usuario" : "Guardar cambios"}
             </Button>
           </>
         )
@@ -260,7 +210,8 @@ export function UserDrawer({ mode, userId, roles, permissions, onClose }: Props)
         <Tab value="access">
           Acceso
           <span className={styles.selectedCount}>
-            {form.watch("role_ids").length} rol(es) · {form.watch("permission_ids").length} permiso(s)
+            {form.watch("role_ids").length} rol(es) · {form.watch("permission_ids").length}{" "}
+            permiso(s)
           </span>
         </Tab>
         {hasAudit ? <Tab value="audit">Auditoría</Tab> : null}
@@ -325,7 +276,11 @@ function DetailsTab({
             render={({ field }) => <Input {...field} disabled={readOnly} />}
           />
         </FormField>
-        <FormField label="Apellido paterno" required error={form.formState.errors.last_name?.message}>
+        <FormField
+          label="Apellido paterno"
+          required
+          error={form.formState.errors.last_name?.message}
+        >
           <Controller
             control={form.control}
             name="last_name"
@@ -338,9 +293,7 @@ function DetailsTab({
         <Controller
           control={form.control}
           name="second_last_name"
-          render={({ field }) => (
-            <Input {...field} value={field.value ?? ""} disabled={readOnly} />
-          )}
+          render={({ field }) => <Input {...field} value={field.value ?? ""} disabled={readOnly} />}
         />
       </FormField>
 
@@ -373,11 +326,7 @@ function DetailsTab({
             )}
           />
         </FormField>
-        <FormField
-          label="Número de documento"
-          hint={docRule?.hint}
-          error={docError}
-        >
+        <FormField label="Número de documento" hint={docRule?.hint} error={docError}>
           <Controller
             control={form.control}
             name="document_number"
@@ -439,7 +388,6 @@ function AccessTab({
               name="role_ids"
               render={({ field }) => (
                 <SearchableOptionList
-                  styles={styles}
                   options={roles.map((r) => ({ id: r.id, primary: r.name }))}
                   selected={field.value}
                   disabled={readOnly}
@@ -470,7 +418,6 @@ function AccessTab({
               name="permission_ids"
               render={({ field }) => (
                 <SearchableOptionList
-                  styles={styles}
                   options={permissions.map((p) => ({
                     id: p.id,
                     primary: p.code,
@@ -532,9 +479,7 @@ function AuditTab({ user, styles }: { user: UserDetail | null; styles: Styles })
         </div>
         <div>
           <div className={styles.auditLabel}>Creado por</div>
-          <div className={styles.auditValue}>
-            {user.created_by_user?.full_name ?? "—"}
-          </div>
+          <div className={styles.auditValue}>{user.created_by_user?.full_name ?? "—"}</div>
         </div>
         <div>
           <div className={styles.auditLabel}>Actualizado el</div>
@@ -542,93 +487,9 @@ function AuditTab({ user, styles }: { user: UserDetail | null; styles: Styles })
         </div>
         <div>
           <div className={styles.auditLabel}>Actualizado por</div>
-          <div className={styles.auditValue}>
-            {user.updated_by_user?.full_name ?? "—"}
-          </div>
+          <div className={styles.auditValue}>{user.updated_by_user?.full_name ?? "—"}</div>
         </div>
       </div>
     </div>
-  );
-}
-
-// ─────────────────────────────────────────────────
-// Searchable selectable list — generic helper
-// ─────────────────────────────────────────────────
-
-interface OptionItem {
-  id: string;
-  primary: string;
-  secondary?: string;
-}
-
-function SearchableOptionList({
-  styles,
-  options,
-  selected,
-  disabled,
-  onToggle,
-  searchPlaceholder,
-  emptyMessage,
-}: {
-  styles: Styles;
-  options: OptionItem[];
-  selected: string[];
-  disabled: boolean;
-  onToggle: (id: string) => void;
-  searchPlaceholder: string;
-  emptyMessage: string;
-}) {
-  const [query, setQuery] = useState("");
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter(
-      (o) =>
-        o.primary.toLowerCase().includes(q) ||
-        (o.secondary && o.secondary.toLowerCase().includes(q)),
-    );
-  }, [options, query]);
-
-  return (
-    <>
-      <div className={styles.searchRow}>
-        <Input
-          className={styles.searchInput}
-          value={query}
-          onChange={(_, d) => setQuery(d.value)}
-          placeholder={searchPlaceholder}
-          contentBefore={<SearchRegular />}
-          size="small"
-        />
-      </div>
-      <div className={styles.optionList}>
-        {filtered.length === 0 ? (
-          <div className={styles.emptyState}>{emptyMessage}</div>
-        ) : (
-          filtered.map((opt) => {
-            const checked = selected.includes(opt.id);
-            return (
-              <label
-                key={opt.id}
-                className={`${styles.optionRow} ${disabled ? styles.optionRowDisabled : ""}`}
-              >
-                <Checkbox
-                  checked={checked}
-                  disabled={disabled}
-                  onChange={() => onToggle(opt.id)}
-                />
-                <div className={styles.optionBody}>
-                  <span className={styles.optionTitle}>{opt.primary}</span>
-                  {opt.secondary ? (
-                    <span className={styles.optionSubtle}>{opt.secondary}</span>
-                  ) : null}
-                </div>
-              </label>
-            );
-          })
-        )}
-      </div>
-    </>
   );
 }

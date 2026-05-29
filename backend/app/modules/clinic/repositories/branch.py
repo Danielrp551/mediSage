@@ -3,17 +3,19 @@ Branch repository. `ALLOWED_FIELDS` whitelists which columns the frontend can
 filter/sort dynamically via `QueryRequest`. Soft-delete handled by
 `BaseRepository` (every read filters `deleted_at IS NULL`).
 
-`count_active_offices` / `count_active_offices_map` (for the delete guard and
-the denormalized `offices_count`) land in phase 2 when the Office model exists.
-For phase 1 the service layer reports `offices_count = 0`.
+`count_active_offices` (single, for the delete-with-children guard) and
+`count_active_offices_map` (batch, for the denormalized `offices_count`) are
+live as of phase 2 now that the Office model exists. "Active" here means
+not soft-deleted (a merely disabled office still holds the FK).
 """
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.clinic.models.branch import Branch
+from app.modules.clinic.models.office import Office
 from app.shared.base_repository import BaseRepository
 
 
@@ -45,6 +47,32 @@ class BranchRepository(BaseRepository[Branch]):
             .order_by(Branch.name.asc())
         )
         return list(result.scalars().all())
+
+    async def count_active_offices(self, db: AsyncSession, branch_id: str) -> int:
+        """Count non-deleted offices under one branch (delete guard)."""
+        result = await db.execute(
+            select(func.count(Office.id)).where(
+                Office.branch_id == branch_id,
+                Office.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one()
+
+    async def count_active_offices_map(
+        self, db: AsyncSession, branch_ids: list[str]
+    ) -> dict[str, int]:
+        """Batch office counts for a page of branches — one query, no N+1.
+
+        Returns a `{branch_id: count}` map; branches with zero offices are
+        simply absent (the caller defaults them to 0)."""
+        if not branch_ids:
+            return {}
+        result = await db.execute(
+            select(Office.branch_id, func.count(Office.id))
+            .where(Office.branch_id.in_(branch_ids), Office.deleted_at.is_(None))
+            .group_by(Office.branch_id)
+        )
+        return {row[0]: row[1] for row in result.all()}
 
 
 branch_repository = BranchRepository()
