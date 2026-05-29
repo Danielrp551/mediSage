@@ -58,7 +58,7 @@ Cada módulo tiene su ER (relacional) y su Class (modelos + repos + services). L
 | Módulo | ER | Class | Ficha | ADR |
 |---|---|---|---|---|
 | `catalog` (Vertical → Service → Product) | [er-catalog.puml](er-catalog.puml) ✅ | [class-backend-catalog.puml](class-backend-catalog.puml) ✅ | [catalog/](../modules/catalog/README.md) (overview + [backend](../modules/catalog/backend.md) + [ui](../modules/catalog/ui.md) + [frontend](../modules/catalog/frontend.md)) | — |
-| `clinic` (Branch / Office / horarios) | [er-clinic.puml](er-clinic.puml) ✅ | [class-backend-clinic.puml](class-backend-clinic.puml) ✅ | [clinic.md](../modules/clinic.md) | — |
+| `clinic` (Branch / Office / horarios) | [er-clinic.puml](er-clinic.puml) ✅ | [class-backend-clinic.puml](class-backend-clinic.puml) ✅ | [clinic/](../modules/clinic/README.md) (overview + [backend](../modules/clinic/backend.md) + [ui](../modules/clinic/ui.md) + [frontend](../modules/clinic/frontend.md)) | — |
 | `staff` (Doctor 1:1 User + disponibilidad) | [er-staff.puml](er-staff.puml) ✅ | [class-backend-staff.puml](class-backend-staff.puml) ✅ | [staff.md](../modules/staff.md) | [ADR-002](../decisions/ADR-002-doctor-entity-extends-user.md) |
 | `crm` (Person + estados separados) | [er-crm.puml](er-crm.puml) ✅ | [class-backend-crm.puml](class-backend-crm.puml) ✅ | [crm.md](../modules/crm.md) | [ADR-003](../decisions/ADR-003-person-with-separated-lifecycle-statuses.md) |
 | `conversations` (ChannelAccount + multicanal) | [er-conversations.puml](er-conversations.puml) ✅ | [class-backend-conversations.puml](class-backend-conversations.puml) ✅ | [conversations.md](../modules/conversations.md) | [ADR-004](../decisions/ADR-004-conversation-channel-account.md) |

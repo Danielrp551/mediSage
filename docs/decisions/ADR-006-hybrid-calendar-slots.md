@@ -148,6 +148,6 @@ Cada request de disponibilidad recalcula todo. Sin caché.
 
 - Ficha del módulo: [`docs/modules/scheduling.md`](../modules/scheduling.md)
 - Ficha del módulo staff: [`docs/modules/staff.md`](../modules/staff.md) — `DoctorAvailabilityPattern`, `DoctorAvailabilityOverride`, `Doctor.slot_duration_min`.
-- Ficha del módulo clinic: [`docs/modules/clinic.md`](../modules/clinic.md) — `OfficeOperatingHours`, `OfficeClosure`, `office_vertical`.
+- Ficha del módulo clinic: [`docs/modules/clinic/`](../modules/clinic/README.md) — `OfficeOperatingHours`, `OfficeClosure`, `office_vertical`.
 - Hardening: [`docs/HARDENING.md`](../HARDENING.md) §1 — Redis para rate limit distribuido y cache.
 - Patrón análogo en otros sistemas: Calendly, Google Calendar free/busy API — ambos calculan disponibilidad on-the-fly contra fuentes diversas, no persisten slots individuales.
