@@ -22,12 +22,17 @@ export default async function DoctorsPage({ searchParams }: PageProps) {
   const filters: QueryRequest["filters"] =
     conditions.length > 0 ? { filters: [{ operator: "AND", conditions }] } : null;
 
+  // Orden por `created_on` (columna real). full_name/email NO son columnas de
+  // `doctor` (se denormalizan del User) → no están en ALLOWED_FIELDS y el query
+  // builder responde 400 si se ordena/filtra por ellas (whitelist estricta). La
+  // búsqueda por nombre es client-side (ver DoctorsClient). El sort DEBE coincidir
+  // con el defaultSort del cliente para que initialData se use sin refetch.
   // Las sedes y verticales activas pueblan los Dropdowns de filtro Y el drawer de
   // creación (multiselect). Reusan los /active de clinic y catalog.
   const [initialData, branches, verticals] = await Promise.all([
     listDoctors({
       pagination: { skip: 0, limit: 10 },
-      sorting: { sort_by: "full_name", sort_order: "asc" },
+      sorting: { sort_by: "created_on", sort_order: "desc" },
       filters,
     }),
     listActiveBranches(),

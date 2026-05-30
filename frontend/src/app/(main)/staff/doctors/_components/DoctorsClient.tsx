@@ -97,15 +97,20 @@ export function DoctorsClient({ initialData, branches, verticals }: Props) {
     return conds.length > 0 ? conds : undefined;
   }, [branchFilter, verticalFilter]);
 
-  // full_name/email/cmp_code no son todos columnas server-filterables: el backend
-  // (DoctorRepository.ALLOWED_FIELDS) solo permite cmp_code y descarta silenciosamente
-  // full_name/email del OR. Por eso la búsqueda es CLIENT-SIDE sobre la página cargada
-  // (los conteos de doctores son pequeños — ver docs/modules/staff). useTableQuery
-  // sigue manejando paginación / sort / extraFilters (branch_id / vertical_id) server-side.
+  // full_name/email NO son columnas de `doctor` (se denormalizan del User) → NO
+  // están en DoctorRepository.ALLOWED_FIELDS, y el query builder responde 400 al
+  // ordenar/filtrar por ellas (whitelist estricta, NO las ignora). Por eso:
+  //  - el default sort usa `created_on` (columna real) — DEBE coincidir con el
+  //    prefetch del page.tsx para que `initialData` se use sin refetch;
+  //  - la búsqueda por nombre/correo/CMP es CLIENT-SIDE (`filteredItems`), sin
+  //    `searchFields`;
+  //  - las columnas full_name/email NO son ordenables (un click haría sort 400).
+  // useTableQuery sigue manejando paginación / sort / extraFilters (branch_id /
+  // vertical_id) server-side.
   const table = useTableQuery<DoctorItem>({
     queryKey: "staff:doctors",
     fetcher: listDoctors,
-    defaultSort: { field: "full_name", order: "asc" },
+    defaultSort: { field: "created_on", order: "desc" },
     extraFilters,
     initialData,
   });
@@ -293,18 +298,19 @@ export function DoctorsClient({ initialData, branches, verticals }: Props) {
             onRender: (d) => <RowActions item={d} actions={rowActions} />,
           },
           {
+            // No isSortable: full_name no es columna de `doctor` (denormalizado
+            // del User) → ordenar por ella es 400. Se busca client-side.
             key: "full_name",
             name: "Doctor",
             fieldName: "full_name",
-            isSortable: true,
             truncate: true,
             minWidth: 200,
           },
           {
+            // No isSortable: email tampoco es columna server-ordenable.
             key: "email",
             name: "Correo",
             fieldName: "email",
-            isSortable: true,
             truncate: true,
             minWidth: 220,
           },
