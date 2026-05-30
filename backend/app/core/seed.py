@@ -1,6 +1,7 @@
 """
-Idempotent seed: creates the bootstrap admin user, role, and the menu
-permissions that the frontend ships with.
+Idempotent seed: creates the canonical permissions, the base roles (ADMIN with
+all permissions, DOCTOR and ASESOR with their subset), and the bootstrap admin
+user. The SYSTEM role/user is deferred to a later module (crm/bots).
 
 Run with: ``python -m app.core.seed`` (Dockerfile invokes it on container start).
 """
@@ -70,7 +71,119 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "OFFICE_HOURS_WRITE", "name": "Write office operating hours", "module": "CLINIC"},
     {"code": "OFFICE_CLOSURES_READ", "name": "Read office closures", "module": "CLINIC"},
     {"code": "OFFICE_CLOSURES_WRITE", "name": "Write office closures", "module": "CLINIC"},
+    # ── Module: staff ───────────────────────────────────────────────────
+    {"code": "MENU-STAFF", "name": "Menu Staff", "module": "STAFF"},
+    {"code": "DOCTORS_READ", "name": "Read doctors", "module": "STAFF"},
+    {"code": "DOCTORS_CREATE", "name": "Create doctors", "module": "STAFF"},
+    {"code": "DOCTORS_UPDATE", "name": "Update doctors", "module": "STAFF"},
+    {"code": "DOCTORS_DELETE", "name": "Delete doctors", "module": "STAFF"},
+    {"code": "DOCTOR_AVAILABILITY_READ", "name": "Read any doctor availability", "module": "STAFF"},
+    {
+        "code": "DOCTOR_AVAILABILITY_WRITE",
+        "name": "Write any doctor availability",
+        "module": "STAFF",
+    },
+    {"code": "MY_DOCTOR_PROFILE_READ", "name": "Read my doctor profile", "module": "STAFF"},
+    {"code": "MY_DOCTOR_PROFILE_WRITE", "name": "Write my doctor profile", "module": "STAFF"},
+    {"code": "MY_AVAILABILITY_READ", "name": "Read my availability", "module": "STAFF"},
+    {"code": "MY_AVAILABILITY_WRITE", "name": "Write my availability", "module": "STAFF"},
 ]
+
+
+# Subsets de permisos por rol no-admin. Se declaran en su **forma final**
+# (incluyen códigos de módulos aún no implementados, p.ej. scheduling/crm):
+# ``_seed_role`` filtra `[p for p in all_permissions if p.code in codes]`, así que
+# los códigos que todavía no existen se omiten silenciosamente hoy y se suman solos
+# cuando el módulo que los define se implemente. A prueba de orden de implementación.
+DOCTOR_PERMISSION_CODES: set[str] = {
+    # Home / catálogo (consulta)
+    "MENU-HOME",
+    "MENU-CATALOG",
+    "VERTICALS_READ",
+    "SERVICES_READ",
+    "PRODUCTS_READ",
+    # Clínica (estructura, solo lectura)
+    "BRANCHES_READ",
+    "OFFICES_READ",
+    "OFFICE_HOURS_READ",
+    "OFFICE_CLOSURES_READ",
+    # Staff (su propio perfil + agenda)
+    "MENU-STAFF",
+    "DOCTORS_READ",
+    "MY_DOCTOR_PROFILE_READ",
+    "MY_DOCTOR_PROFILE_WRITE",
+    "MY_AVAILABILITY_READ",
+    "MY_AVAILABILITY_WRITE",
+    # CRM (lee paciente al atender) — módulo futuro
+    "PERSONS_READ",
+    # Scheduling (su agenda + atenciones) — módulo futuro
+    "MENU-SCHEDULING",
+    "APPOINTMENT_STATUSES_READ",
+    "APPOINTMENTS_READ",
+    "APPOINTMENTS_TRANSITION",
+    "AVAILABILITY_READ",
+    "MY_APPOINTMENTS_READ",
+}
+
+ASESOR_PERMISSION_CODES: set[str] = {
+    # Home / catálogo (consulta)
+    "MENU-HOME",
+    "MENU-CATALOG",
+    "VERTICALS_READ",
+    "SERVICES_READ",
+    "PRODUCTS_READ",
+    # Clínica (consulta para responder al lead)
+    "MENU-CLINIC",
+    "BRANCHES_READ",
+    "OFFICES_READ",
+    # Staff (sabe qué doctores hay y su agenda para agendar)
+    "DOCTORS_READ",
+    "DOCTOR_AVAILABILITY_READ",
+    # CRM (corazón de su trabajo) — módulo futuro
+    "MENU-CRM",
+    "PERSONS_READ",
+    "PERSONS_CREATE",
+    "PERSONS_UPDATE",
+    "LEAD_STATUSES_READ",
+    "CUSTOMER_STATUSES_READ",
+    "LEAD_ASSIGNMENTS_READ",
+    "LEAD_ASSIGNMENTS_WRITE",
+    "LEAD_ACTIVITIES_READ",
+    "LEAD_ACTIVITIES_WRITE",
+    "LEAD_STATUS_HISTORY_READ",
+    "MY_LEADS_READ",
+    # Conversations (toma chat del bot, envía mensajes) — módulo futuro
+    "MENU-CONVERSATIONS",
+    "CONVERSATIONS_READ",
+    "CONVERSATIONS_TAKE",
+    "CONVERSATIONS_RELEASE",
+    "CONVERSATIONS_CLOSE",
+    "MESSAGES_READ",
+    "MESSAGES_SEND",
+    "MY_CONVERSATIONS_READ",
+    # Bots (debug de la conversación que tomó) — módulo futuro
+    "BOT_CONFIGURATIONS_READ",
+    "BOT_STATE_READ",
+    "BOT_EVENTS_READ",
+    "BOT_TOOL_CALLS_READ",
+    # Scheduling (agenda citas para sus leads) — módulo futuro
+    "MENU-SCHEDULING",
+    "APPOINTMENT_STATUSES_READ",
+    "APPOINTMENTS_READ",
+    "APPOINTMENTS_CREATE",
+    "APPOINTMENTS_UPDATE",
+    "APPOINTMENTS_TRANSITION",
+    "APPOINTMENTS_CANCEL",
+    "APPOINTMENTS_RESCHEDULE",
+    "AVAILABILITY_READ",
+    # Marketing (consulta promos para ofrecer al lead) — módulo futuro
+    "MENU-MARKETING",
+    "CAMPAIGNS_READ",
+    "PROMOTIONS_READ",
+    "PROMOTION_VALIDATE",
+    "PROMOTION_APPLY",
+    "PROMOTION_USAGES_READ",
+}
 
 
 async def _seed_permissions(db: AsyncSession, actor_id: str) -> list[Permission]:
@@ -100,25 +213,41 @@ async def _seed_permissions(db: AsyncSession, actor_id: str) -> list[Permission]
     return out
 
 
-async def _seed_admin_role(db: AsyncSession, actor_id: str, permissions: list[Permission]) -> Role:
-    existing = (await db.execute(select(Role).where(Role.name == "ADMIN"))).scalars().first()
+async def _seed_role(
+    db: AsyncSession,
+    actor_id: str,
+    role_name: str,
+    role_description: str,
+    permission_codes: set[str],
+    all_permissions: list[Permission],
+) -> Role:
+    """Seed idempotente de un rol con un subconjunto de permisos.
+
+    ``permission_codes`` puede declarar códigos de módulos aún no implementados:
+    se filtran contra ``all_permissions`` (lo que existe hoy), de modo que los
+    códigos inexistentes se omiten silenciosamente. Reemplaza al antiguo
+    ``_seed_admin_role`` único del template.
+    """
+    perms = [p for p in all_permissions if p.code in permission_codes]
+    existing = (await db.execute(select(Role).where(Role.name == role_name))).scalars().first()
     if existing is not None:
-        existing.permissions = permissions
+        existing.permissions = perms
+        existing.description = role_description
         return existing
     now = datetime.now(UTC)
     role = Role(
         id=str(uuid.uuid4()),
-        name="ADMIN",
-        description="Full administrative access",
+        name=role_name,
+        description=role_description,
         active=True,
         created_by=actor_id,
         created_on=now,
         updated_by=actor_id,
         updated_on=now,
-        permissions=permissions,
+        permissions=perms,
     )
     db.add(role)
-    logger.info("seed.role.created name=ADMIN")
+    logger.info("seed.role.created name=%s perms=%d", role_name, len(perms))
     return role
 
 
@@ -157,9 +286,37 @@ async def seed() -> None:
         async with db.begin():
             perms = await _seed_permissions(db, actor_id)
             await db.flush()
-            role = await _seed_admin_role(db, actor_id, perms)
+
+            admin_role = await _seed_role(
+                db,
+                actor_id,
+                "ADMIN",
+                "Full administrative access",
+                {p.code for p in perms},
+                perms,
+            )
+            # DOCTOR/ASESOR se siembran ya con su subset disponible hoy (el helper
+            # filtra los códigos de módulos aún no implementados). SYSTEM se difiere
+            # a crm/bots (no hace falta todavía).
+            await _seed_role(
+                db,
+                actor_id,
+                "DOCTOR",
+                "Médico — agenda propia + atenciones",
+                DOCTOR_PERMISSION_CODES,
+                perms,
+            )
+            await _seed_role(
+                db,
+                actor_id,
+                "ASESOR",
+                "Asesor comercial — leads + conversaciones + citas",
+                ASESOR_PERMISSION_CODES,
+                perms,
+            )
             await db.flush()
-            await _seed_admin_user(db, role, actor_id)
+
+            await _seed_admin_user(db, admin_role, actor_id)
 
 
 if __name__ == "__main__":

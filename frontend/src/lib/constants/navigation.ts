@@ -73,6 +73,23 @@ export const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: "staff",
+    label: "Staff",
+    icon: "PeopleTeamRegular",
+    children: [
+      {
+        key: "doctors",
+        label: "Doctores",
+        icon: "DoctorRegular",
+        url: "/staff/doctors",
+        permissions: ["MENU-STAFF"],
+      },
+      // F3 — self-service del doctor logueado ("Mi perfil" / "Mi agenda",
+      // gated por MY_DOCTOR_PROFILE_READ / MY_AVAILABILITY_READ). Se agregan
+      // cuando existan sus páginas para no mostrar items que apunten a 404.
+    ],
+  },
+  {
     key: "admin",
     label: "Administración",
     icon: "SettingsRegular",

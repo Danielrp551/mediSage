@@ -193,7 +193,7 @@ existing_or_new_admin.permissions = permissions  # todos los SEED_PERMISSIONS
 
 ### `DOCTOR`
 
-Permisos del doctor (15 permisos):
+Permisos del doctor — set canónico (22 permisos; **efectivos hoy: 15** tras filtrar los códigos de módulos aún no implementados contra los 50 que existen pre-crm/scheduling):
 
 ```python
 DOCTOR_PERMISSION_CODES: set[str] = {
@@ -225,7 +225,7 @@ DOCTOR_PERMISSION_CODES: set[str] = {
 
 ### `ASESOR`
 
-Permisos del asesor (37 permisos):
+Permisos del asesor — set canónico (49 permisos; **efectivos hoy: 10** tras filtrar los códigos de módulos aún no implementados contra los 50 que existen pre-crm/scheduling):
 
 ```python
 ASESOR_PERMISSION_CODES: set[str] = {

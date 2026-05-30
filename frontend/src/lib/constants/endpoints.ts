@@ -5,6 +5,7 @@
 const ADMIN = "/api/v1/admin";
 const CATALOG = "/api/v1/catalog";
 const CLINIC = "/api/v1/clinic";
+const STAFF = "/api/v1/staff";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -80,5 +81,31 @@ export const ENDPOINTS = {
     OPERATING_HOURS: (id: string) => `${CLINIC}/offices/${id}/operating-hours`,
     CLOSURES: (id: string) => `${CLINIC}/offices/${id}/closures`,
     CLOSURE: (id: string, closureId: string) => `${CLINIC}/offices/${id}/closures/${closureId}`,
+  },
+  // ── Staff module ─────────────────────────────────────────
+  DOCTORS: {
+    LIST: `${STAFF}/doctors/list`,
+    // ACTIVE accepts optional ?branch_id= & ?vertical_id= ; raw DoctorOption list.
+    ACTIVE: `${STAFF}/doctors/active`,
+    GET: (id: string) => `${STAFF}/doctors/${id}`,
+    CREATE: `${STAFF}/doctors`, // NESTED user+doctor → 201
+    UPDATE: (id: string) => `${STAFF}/doctors/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${STAFF}/doctors/${id}`, // soft delete (does NOT touch the User)
+    // Nested: availability of one doctor (admin) — phase 2.
+    AVAILABILITY_LIST: (id: string) => `${STAFF}/doctors/${id}/availability`, // ?from=&to=
+    AVAILABILITY_CREATE: (id: string) => `${STAFF}/doctors/${id}/availability`, // bulk
+    AVAILABILITY_UPDATE: (id: string, blockId: string) =>
+      `${STAFF}/doctors/${id}/availability/${blockId}`, // PUT
+    AVAILABILITY_DELETE: (id: string, blockId: string) =>
+      `${STAFF}/doctors/${id}/availability/${blockId}`,
+  },
+  // ── Self-service (the logged-in doctor) — phase 3 ────────
+  ME: {
+    DOCTOR_GET: `${STAFF}/me/doctor`,
+    DOCTOR_UPDATE: `${STAFF}/me/doctor`, // PUT (only bio/photo/signature/slot)
+    AVAILABILITY_LIST: `${STAFF}/me/availability`, // ?from=&to=
+    AVAILABILITY_CREATE: `${STAFF}/me/availability`, // bulk
+    AVAILABILITY_UPDATE: (blockId: string) => `${STAFF}/me/availability/${blockId}`, // PUT
+    AVAILABILITY_DELETE: (blockId: string) => `${STAFF}/me/availability/${blockId}`,
   },
 } as const;

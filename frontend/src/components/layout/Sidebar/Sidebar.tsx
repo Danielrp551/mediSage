@@ -9,9 +9,11 @@ import {
   BuildingRegular,
   ChevronRightRegular,
   ConferenceRoomRegular,
+  DoctorRegular,
   HomeRegular,
   LockClosedRegular,
   PeopleRegular,
+  PeopleTeamRegular,
   SettingsRegular,
   ShieldRegular,
   TagRegular,
@@ -40,6 +42,9 @@ const ICONS: Record<string, ReactElement> = {
   BuildingMultipleRegular: <BuildingMultipleRegular />,
   BuildingRegular: <BuildingRegular />,
   ConferenceRoomRegular: <ConferenceRoomRegular />,
+  // Staff module
+  PeopleTeamRegular: <PeopleTeamRegular />,
+  DoctorRegular: <DoctorRegular />,
 };
 
 const useStyles = makeStyles({
