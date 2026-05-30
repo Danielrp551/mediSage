@@ -28,6 +28,7 @@ from app.middleware.request_context import RequestContextMiddleware
 from app.modules.admin.routers import router as admin_router
 from app.modules.catalog.routers import router as catalog_router
 from app.modules.clinic.routers import router as clinic_router
+from app.modules.staff.routers import router as staff_router
 
 settings = get_settings()
 configure_logging(settings.LOG_LEVEL)
@@ -68,6 +69,7 @@ register_exception_handlers(app)
 app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
 app.include_router(catalog_router, prefix=settings.API_V1_PREFIX)
 app.include_router(clinic_router, prefix=settings.API_V1_PREFIX)
+app.include_router(staff_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/health", tags=["meta"])

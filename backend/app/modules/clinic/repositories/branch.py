@@ -48,6 +48,18 @@ class BranchRepository(BaseRepository[Branch]):
         )
         return list(result.scalars().all())
 
+    async def get_by_ids(self, db: AsyncSession, ids: list[str]) -> list[Branch]:
+        """Fetch live (non-deleted) branches by id. Additive helper used by
+        `staff` to resolve the doctor_branch M:N — a soft-deleted branch is
+        filtered out, so it counts as 'unknown' when attaching it to a doctor
+        (mirrors vertical_repository.get_by_ids / role_repository.get_by_ids)."""
+        if not ids:
+            return []
+        result = await db.execute(
+            select(Branch).where(Branch.id.in_(ids), Branch.deleted_at.is_(None))
+        )
+        return list(result.scalars().all())
+
     async def count_active_offices(self, db: AsyncSession, branch_id: str) -> int:
         """Count non-deleted offices under one branch (delete guard)."""
         result = await db.execute(

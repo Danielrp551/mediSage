@@ -1,6 +1,16 @@
-"""Routers de `staff`.
-
-En F1 este `__init__.py` se vuelve el aggregator (`router = APIRouter(prefix="/staff")`
-que incluye los sub-routers `doctor`/`doctor_availability`/`me`) y se registra una
-sola vez en `app/main.py`, igual que `clinic.routers`. Hoy el módulo no expone rutas.
 """
+Agrega los sub-routers de staff bajo un solo prefix. `main.py` incluye este
+`router` una sola vez (igual que clinic.routers).
+
+F1 expone `doctor` (/doctors/*). Los sub-routers `doctor_availability`
+(/doctors/{id}/availability/*, F2) y `me` (/me/*, F3) se incluyen al implementarse.
+"""
+
+from fastapi import APIRouter
+
+from app.modules.staff.routers.doctor import router as doctor_router
+
+router = APIRouter(prefix="/staff")
+router.include_router(doctor_router)
+
+__all__ = ["router"]
