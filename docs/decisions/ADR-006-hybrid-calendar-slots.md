@@ -1,8 +1,14 @@
 # ADR-006: Slots de calendario híbridos — solo `Appointment` persiste; disponibilidad se calcula on-the-fly
 
-> **Status**: Accepted
+> **Status**: Accepted (entradas de disponibilidad actualizadas el 2026-05-29 por [ADR-007](ADR-007-doctor-availability-concrete-blocks.md))
 > **Date**: 2026-05-28
 > **Deciders**: @daniel, @marco
+
+## Actualización (2026-05-29) — las entradas de disponibilidad son bloques concretos (ADR-007)
+
+La **decisión núcleo de este ADR sigue vigente**: no existe tabla `appointment_slot`; lo único persistido es `Appointment`; la disponibilidad se calcula on-the-fly (con cache TTL cuando aplique). Lo que cambió es **una de las fuentes de entrada**: [ADR-007](ADR-007-doctor-availability-concrete-blocks.md) reemplazó el modelo de disponibilidad del doctor de **patrón semanal recurrente (`DoctorAvailabilityPattern`) + excepciones (`DoctorAvailabilityOverride`)** por una sola entidad de **bloques concretos por fecha (`staff.DoctorAvailability`)**.
+
+Efecto en el algoritmo de abajo: donde el pseudocódigo combina `doctor.pattern_for(day, office)` + `doctor.overrides_in(day, office)`, ahora se lee directamente `doctor.availability_blocks_on(day, office)` (los bloques concretos de esa fecha/office). El resto del cómputo (intersección con `OfficeOperatingHours`, resta de `OfficeClosure` y de citas activas, filtro por vertical apta, grano `slot_duration_min`, N slots contiguos) es **idéntico**. El pseudocódigo original se conserva abajo como referencia histórica; mentalmente, sustituir "pattern ∪ overrides" por "availability_blocks".
 
 ## Context
 
@@ -147,7 +153,7 @@ Cada request de disponibilidad recalcula todo. Sin caché.
 ## Referencias
 
 - Ficha del módulo: [`docs/modules/scheduling.md`](../modules/scheduling.md)
-- Ficha del módulo staff: [`docs/modules/staff.md`](../modules/staff.md) — `DoctorAvailabilityPattern`, `DoctorAvailabilityOverride`, `Doctor.slot_duration_min`.
+- Ficha del módulo staff: [`docs/modules/staff/README.md`](../modules/staff/README.md) — `DoctorAvailability` (bloques concretos por fecha, ver [ADR-007](ADR-007-doctor-availability-concrete-blocks.md)), `Doctor.slot_duration_min`.
 - Ficha del módulo clinic: [`docs/modules/clinic/`](../modules/clinic/README.md) — `OfficeOperatingHours`, `OfficeClosure`, `office_vertical`.
 - Hardening: [`docs/HARDENING.md`](../HARDENING.md) §1 — Redis para rate limit distribuido y cache.
 - Patrón análogo en otros sistemas: Calendly, Google Calendar free/busy API — ambos calculan disponibilidad on-the-fly contra fuentes diversas, no persisten slots individuales.

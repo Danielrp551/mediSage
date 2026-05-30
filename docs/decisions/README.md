@@ -49,14 +49,15 @@ PROPOSED → ACCEPTED → (SUPERSEDED | DEPRECATED)
 | [ADR-003](ADR-003-person-with-separated-lifecycle-statuses.md) | Person + estados lead/customer separados en tablas hijas | Accepted | 2026-05-28 |
 | [ADR-004](ADR-004-conversation-channel-account.md) | Conversation + ChannelAccount como par central de mensajería multicanal | Accepted | 2026-05-28 |
 | [ADR-005](ADR-005-agnostic-bot-engine.md) | Motor del bot agnóstico — entidades separadas de la implementación del engine | Accepted | 2026-05-28 |
-| [ADR-006](ADR-006-hybrid-calendar-slots.md) | Slots de calendario híbridos — solo Appointment persiste; disponibilidad on-the-fly | Accepted | 2026-05-28 |
-| _(pendiente)_ 007 | JWT en cookie httpOnly (no localStorage)     | —      | —     |
-| _(pendiente)_ 004 | Permisos viajan en el access token           | —      | —     |
-| _(pendiente)_ 005 | Arquitectura backend en 5 capas              | —      | —     |
-| _(pendiente)_ 006 | Refresh token con rotación por familia       | —      | —     |
-| _(pendiente)_ 007 | RBAC dual: permisos directos + por rol       | —      | —     |
-| _(pendiente)_ 008 | Server Actions vs cliente HTTP en frontend   | —      | —     |
-| _(pendiente)_ 009 | URL state con nuqs para listados             | —      | —     |
+| [ADR-006](ADR-006-hybrid-calendar-slots.md) | Slots de calendario híbridos — solo Appointment persiste; disponibilidad on-the-fly | Accepted (act. 2026-05-29) | 2026-05-28 |
+| [ADR-007](ADR-007-doctor-availability-concrete-blocks.md) | Disponibilidad del doctor como bloques concretos por fecha (no patrón recurrente) | Accepted | 2026-05-29 |
+| _(pendiente)_ | JWT en cookie httpOnly (no localStorage)     | —      | —     |
+| _(pendiente)_ | Permisos viajan en el access token           | —      | —     |
+| _(pendiente)_ | Arquitectura backend en 5 capas              | —      | —     |
+| _(pendiente)_ | Refresh token con rotación por familia       | —      | —     |
+| _(pendiente)_ | RBAC dual: permisos directos + por rol       | —      | —     |
+| _(pendiente)_ | Server Actions vs cliente HTTP en frontend   | —      | —     |
+| _(pendiente)_ | URL state con nuqs para listados             | —      | —     |
 
 ## Referencias
 

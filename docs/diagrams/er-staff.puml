@@ -1,6 +1,6 @@
 @startuml er-staff
-' Propósito: modelo relacional del módulo staff (Doctor 1:1 con User, M:N con Branch y Vertical, patrón y overrides de disponibilidad)
-' Última actualización: 2026-05-28
+' Propósito: modelo relacional del módulo staff (Doctor 1:1 con User, M:N con Branch y Vertical, disponibilidad como bloques concretos por fecha)
+' Última actualización: 2026-05-29 (ADR-007: bloques concretos, reemplaza pattern+override)
 ' Código de referencia: backend/app/modules/staff/models/
 
 !theme plain
@@ -45,48 +45,25 @@ entity "doctor" as t_doc {
   * updated_by : varchar(36)
 }
 
-entity "doctor_availability_pattern" as t_pat {
+entity "doctor_availability" as t_av {
   * id : varchar(36) <<PK>>
   --
-  * doctor_id : varchar(36) <<FK→doctor>>
+  * doctor_id : varchar(36) <<FK→doctor, indexed>>
   * branch_id : varchar(36) <<FK→branch>>
   * office_id : varchar(36) <<FK→office>>
-  * day_of_week : smallint
+  * date : date
   * opens_at : time
   * closes_at : time
   --
-  ' day_of_week: convención Python (0=Lun, 6=Dom)
-  ' CHECK (closes_at > opens_at)
+  ' Bloque CONCRETO por fecha (ADR-007) — NO recurrente, sin day_of_week, sin is_available.
+  ' La hora local se interpreta en branch.timezone (igual que clinic.OfficeOperatingHours).
+  ' CHECK (closes_at > opens_at)  → ck_doctor_availability_closes_after_opens
   ' Invariantes validados en service (no constraint):
-  '   1) office_id pertenece a branch_id
-  '   2) doctor está asignado a branch (doctor_branch)
-  '   3) no superposición por (doctor, day, office) ni (doctor, day, branch)
-  '   4) bloque cabe dentro del OfficeOperatingHours del office
-  * active : boolean
-  deleted_at : timestamptz <<nullable>>
-  * created_on : timestamptz
-  * created_by : varchar(36)
-  * updated_on : timestamptz
-  * updated_by : varchar(36)
-}
-
-entity "doctor_availability_override" as t_ov {
-  * id : varchar(36) <<PK>>
-  --
-  * doctor_id : varchar(36) <<FK→doctor>>
-  branch_id : varchar(36) <<nullable, FK→branch>>
-  office_id : varchar(36) <<nullable, FK→office>>
-  * starts_at : timestamptz
-  * ends_at : timestamptz
-  * is_available : boolean
-  * reason : varchar(255)
-  --
-  ' CHECK (ends_at > starts_at)
-  ' Regla branch/office según is_available (validada en service):
-  '   is_available=false + branch=NULL + office=NULL → global (vacaciones)
-  '   is_available=false + branch + office=NULL → solo esa sede
-  '   is_available=false + branch + office → solo ese consultorio
-  '   is_available=true → branch y office REQUERIDOS
+  '   1) office_id pertenece a branch_id                 (OFFICE_NOT_IN_BRANCH)
+  '   2) doctor está asignado a branch (doctor_branch)    (DOCTOR_NOT_IN_BRANCH)
+  '   3) sin solapamiento del mismo doctor en la misma date (AVAILABILITY_OVERLAP)
+  ' Semántica: "no disponible" = sin bloque · "extra" = agregar bloque · "vacaciones" = sin bloques.
+  ' Cierre del consultorio NO vive aquí (clinic.OfficeClosure); scheduling lo resta.
   * active : boolean
   deleted_at : timestamptz <<nullable>>
   * created_on : timestamptz
@@ -103,14 +80,14 @@ entity "doctor_branch" as t_db <<join>> {
   * doctor_id : varchar(36) <<PK, FK→doctor>>
   * branch_id : varchar(36) <<PK, FK→branch>>
   --
-  ON DELETE CASCADE
+  ON DELETE CASCADE (doctor_id) · RESTRICT (branch_id)
 }
 
 entity "doctor_vertical" as t_dv <<join>> {
   * doctor_id : varchar(36) <<PK, FK→doctor>>
   * vertical_id : varchar(36) <<PK, FK→vertical>>
   --
-  ON DELETE CASCADE
+  ON DELETE CASCADE (doctor_id) · RESTRICT (vertical_id)
 }
 
 ' ─────────────────────────────────────────────────────────────
@@ -158,17 +135,12 @@ entity "appointment" as t_appt <<external>> #lightgrey {
 ' Doctor ↔ User (1:1)
 t_user ||--|| t_doc : "user_id\n(UNIQUE)"
 
-' Patterns y overrides (1:N desde Doctor)
-t_doc ||--o{ t_pat : "patrón\nsemanal"
-t_doc ||--o{ t_ov  : "excepciones"
+' Disponibilidad (1:N desde Doctor)
+t_doc ||--o{ t_av : "bloques\nconcretos"
 
-' Pattern → Branch/Office (1:N)
-t_br  ||--o{ t_pat
-t_off ||--o{ t_pat
-
-' Override → Branch/Office (FKs nullable)
-t_br  |o--o{ t_ov
-t_off |o--o{ t_ov
+' Availability → Branch/Office (1:N, ambos NOT NULL)
+t_br  ||--o{ t_av
+t_off ||--o{ t_av
 
 ' M:N Doctor ↔ Branch
 t_doc ||--o{ t_db
@@ -186,47 +158,42 @@ t_doc ||--o{ t_appt : "atiende citas (scheduling)"
 ' ─────────────────────────────────────────────────────────────
 
 note right of t_doc
-  **1:1 con User**
-  Ver ADR-002.
+  **1:1 con User** (ADR-002).
+  Creación NESTED: el service crea
+  User (role DOCTOR) + Doctor en
+  una transacción.
   Asesor/Admin son User+Role
   sin tabla propia.
 
-  ""slot_duration_min"" define
-  el grano del calendario:
-  scheduling reserva 1+ slots
-  contiguos según ""product.duration_min"".
+  ""slot_duration_min"" define el
+  grano del calendario: scheduling
+  reserva 1+ slots contiguos según
+  ""product.duration_min"".
 end note
 
-note right of t_pat
-  **Pattern semanal**
-  Granularidad confirmada:
-  (doctor, branch, office, día).
-  El doctor reserva consultorio.
-  Bulk PUT atómico — mismo
-  patrón que OfficeOperatingHours.
-end note
-
-note bottom of t_ov
-  **Override ad-hoc**
-  is_available=false → vacaciones,
-   licencia, no disponible.
-  is_available=true → disponibilidad
-   extra (debe declarar dónde).
-  Reglas branch/office validadas
-  en service, no constraint.
+note right of t_av
+  **Disponibilidad = bloques
+  concretos por fecha** (ADR-007).
+  Reemplaza el patrón semanal
+  recurrente + overrides.
+  El doctor (re)define su calendario
+  por periodo; la UI es una grilla
+  semanal (ver staff/ui.md).
+  Edición: CRUD por bloque + alta
+  masiva (varios días a la vez).
 end note
 
 note bottom of t_db
   **Sedes donde atiende**
-  Doctor puede declarar pattern
-  solo en sedes donde está
-  asignado (validado en service).
+  El doctor solo puede crear bloques
+  de disponibilidad en sedes donde
+  está asignado (invariante #2).
 end note
 
 note bottom of t_dv
   **Verticales que cubre**
-  Cruza con office_vertical
-  (clinic) al agendar: el office
+  Cruza con office_vertical (clinic)
+  al agendar: el office del bloque
   debe ser apto para la vertical
   del producto.
 end note

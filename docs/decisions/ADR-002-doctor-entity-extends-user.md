@@ -101,4 +101,4 @@ Tabla `user` base + tabla `doctor` (id FK a `user.id` y PK también) + tabla `ad
   - `backend/app/modules/staff/models/doctor.py`
   - `backend/app/modules/staff/services/doctor.py`
 - Patrón del template: el `User` del admin module (`backend/app/modules/admin/models/user.py`) ya documenta en su docstring que se aceptó "fold Person into User". Esta decisión extiende explícitamente al primer caso donde necesitamos perfil profesional aparte.
-- Ficha del módulo: [`docs/modules/staff.md`](../modules/staff.md)
+- Ficha del módulo: [`docs/modules/staff/README.md`](../modules/staff/README.md) (+ `backend.md`/`ui.md`/`frontend.md`)
