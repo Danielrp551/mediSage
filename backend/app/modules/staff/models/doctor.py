@@ -10,9 +10,6 @@ del calendario del doctor; scheduling redondea la duración del producto a un
 múltiplo de él (ver ADR-006). El soft-delete de un Doctor NO toca al User
 (ADR-002): para bloquear el acceso a la plataforma se pone `user.active = false`
 desde el módulo admin.
-
-La relación `availability` (1:N a DoctorAvailability) se agrega en la fase F2,
-cuando exista ese modelo.
 """
 
 from __future__ import annotations
@@ -35,6 +32,7 @@ if TYPE_CHECKING:
     from app.modules.admin.models.user import User
     from app.modules.catalog.models.vertical import Vertical
     from app.modules.clinic.models.branch import Branch
+    from app.modules.staff.models.doctor_availability import DoctorAvailability
 
 
 class Doctor(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Base):
@@ -63,3 +61,9 @@ class Doctor(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Base
     branches: Mapped[list[Branch]] = relationship(secondary=doctor_branch, lazy="raise")
     # M:N con catalog.Vertical (verticales que cubre). Misma estrategia.
     verticals: Mapped[list[Vertical]] = relationship(secondary=doctor_vertical, lazy="raise")
+
+    # Bloques de disponibilidad (1:N, F2). `lazy="raise"` — se leen por doctor en
+    # rango de fechas vía su propio endpoint, nunca eager con la lista de doctores.
+    availability: Mapped[list[DoctorAvailability]] = relationship(
+        back_populates="doctor", lazy="raise"
+    )
