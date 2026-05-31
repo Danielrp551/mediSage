@@ -8,7 +8,7 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { AddRegular } from "@fluentui/react-icons";
+import { AddRegular, CalendarLtrRegular } from "@fluentui/react-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
 
@@ -18,7 +18,7 @@ import {
 } from "@/actions/doctor-availability.actions";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog/ConfirmDialog";
 import { CALENDAR, minutesToTime, timeToMinutes } from "@/lib/constants/calendar";
-import { appTokens } from "@/lib/theme/brand";
+import { appTokens, brandPalette } from "@/lib/theme/brand";
 import type { BranchOption } from "@/types/clinic.types";
 import type { DoctorAvailabilityItem } from "@/types/staff.types";
 
@@ -37,21 +37,36 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
   },
   gridWrap: { position: "relative" },
-  overlay: {
+  // El estado de carga/vacío es una tarjeta anclada cerca del tope de la grilla
+  // (no centrada en el vacío). pointerEvents:none deja las celdas clicables debajo.
+  hintLayer: {
     position: "absolute",
-    inset: 0,
+    insetInline: 0,
+    top: "92px",
+    display: "flex",
+    justifyContent: "center",
+    pointerEvents: "none",
+  },
+  hintCard: {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    justifyContent: "center",
-    gap: tokens.spacingVerticalS,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    color: appTokens.chromeTextMuted,
-    fontSize: tokens.fontSizeBase300,
+    gap: tokens.spacingVerticalXS,
+    maxWidth: "380px",
+    padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalXL}`,
+    backgroundColor: appTokens.chromeBg,
+    border: `1px solid ${appTokens.tableBorder}`,
+    borderRadius: tokens.borderRadiusLarge,
+    boxShadow: tokens.shadow16,
     textAlign: "center",
-    padding: tokens.spacingHorizontalL,
-    pointerEvents: "none",
   },
+  hintIcon: { fontSize: "28px", color: brandPalette.primary },
+  hintTitle: {
+    fontSize: tokens.fontSizeBase400,
+    fontWeight: tokens.fontWeightSemibold,
+    color: appTokens.chromeText,
+  },
+  hintText: { fontSize: tokens.fontSizeBase200, color: appTokens.chromeTextMuted },
   loadingRow: {
     display: "flex",
     alignItems: "center",
@@ -211,17 +226,23 @@ export function DoctorAvailabilityTab({ doctorId, doctorBranches, canWrite }: Pr
         />
 
         {query.isLoading ? (
-          <div className={styles.overlay}>
-            <Spinner size="small" />
-            <span>Cargando disponibilidad…</span>
+          <div className={styles.hintLayer}>
+            <div className={styles.hintCard}>
+              <Spinner size="small" />
+              <span className={styles.hintText}>Cargando disponibilidad…</span>
+            </div>
           </div>
         ) : isEmpty ? (
-          <div className={styles.overlay}>
-            <span>
-              {canWrite
-                ? "Aún no hay disponibilidad esta semana — haz clic en una celda o usa Agregar disponibilidad."
-                : "Este doctor no tiene disponibilidad esta semana."}
-            </span>
+          <div className={styles.hintLayer}>
+            <div className={styles.hintCard}>
+              <CalendarLtrRegular className={styles.hintIcon} />
+              <span className={styles.hintTitle}>Sin disponibilidad esta semana</span>
+              <span className={styles.hintText}>
+                {canWrite
+                  ? "Haz clic en una celda del calendario o usa “Agregar disponibilidad”."
+                  : "Este doctor no tiene disponibilidad registrada esta semana."}
+              </span>
+            </div>
           </div>
         ) : null}
       </div>

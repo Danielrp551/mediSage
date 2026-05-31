@@ -30,7 +30,15 @@ import type { DoctorAvailabilityItem } from "@/types/staff.types";
 import { addDays, parseIsoDate, toIsoDate } from "./week";
 
 const useStyles = makeStyles({
-  twoCol: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: tokens.spacingHorizontalM },
+  // minmax(0, 1fr): sin el min de 0, las columnas no encogen bajo el ancho
+  // intrínseco de los <input type=date|time> nativos y el drawer desborda.
+  twoCol: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+    gap: tokens.spacingHorizontalM,
+  },
+  // Los inputs nativos de fecha/hora deben estirarse a su celda y poder encoger.
+  field: { width: "100%", minWidth: 0 },
   hint: { fontSize: tokens.fontSizeBase200, color: appTokens.chromeTextMuted },
   loadingRow: {
     display: "flex",
@@ -279,15 +287,30 @@ export function AddAvailabilityDrawer({
 
       {mode === "edit" ? (
         <FormField label="Fecha" required>
-          <Input type="date" value={dateFrom} onChange={(_, d) => setDateFrom(d.value)} />
+          <Input
+            className={styles.field}
+            type="date"
+            value={dateFrom}
+            onChange={(_, d) => setDateFrom(d.value)}
+          />
         </FormField>
       ) : (
         <div className={styles.twoCol}>
           <FormField label="Desde" required>
-            <Input type="date" value={dateFrom} onChange={(_, d) => setDateFrom(d.value)} />
+            <Input
+              className={styles.field}
+              type="date"
+              value={dateFrom}
+              onChange={(_, d) => setDateFrom(d.value)}
+            />
           </FormField>
           <FormField label="Hasta" required>
-            <Input type="date" value={dateTo} onChange={(_, d) => setDateTo(d.value)} />
+            <Input
+              className={styles.field}
+              type="date"
+              value={dateTo}
+              onChange={(_, d) => setDateTo(d.value)}
+            />
           </FormField>
         </div>
       )}
@@ -298,7 +321,12 @@ export function AddAvailabilityDrawer({
           required
           error={TIME_HHMM_REGEX.test(opensAt) ? undefined : "Hora como HH:MM"}
         >
-          <Input type="time" value={opensAt} onChange={(_, d) => setOpensAt(d.value)} />
+          <Input
+            className={styles.field}
+            type="time"
+            value={opensAt}
+            onChange={(_, d) => setOpensAt(d.value)}
+          />
         </FormField>
         <FormField
           label="Cierre"
@@ -311,7 +339,12 @@ export function AddAvailabilityDrawer({
                 : undefined
           }
         >
-          <Input type="time" value={closesAt} onChange={(_, d) => setClosesAt(d.value)} />
+          <Input
+            className={styles.field}
+            type="time"
+            value={closesAt}
+            onChange={(_, d) => setClosesAt(d.value)}
+          />
         </FormField>
       </div>
 
