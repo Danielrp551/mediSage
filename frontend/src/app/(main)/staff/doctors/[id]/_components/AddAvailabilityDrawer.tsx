@@ -39,6 +39,22 @@ const useStyles = makeStyles({
   },
   // Los inputs nativos de fecha/hora deben estirarse a su celda y poder encoger.
   field: { width: "100%", minWidth: 0 },
+  // Footer: en modo edit "Eliminar" va a la izquierda (acción destructiva
+  // separada) y Cancelar/Guardar a la derecha. space-between evita que los 3
+  // botones se apretujen/desborden en el drawer estrecho.
+  footerBar: {
+    display: "flex",
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: tokens.spacingHorizontalS,
+  },
+  footerRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    marginLeft: "auto",
+  },
   hint: { fontSize: tokens.fontSizeBase200, color: appTokens.chromeTextMuted },
   loadingRow: {
     display: "flex",
@@ -221,7 +237,7 @@ export function AddAvailabilityDrawer({
       title={title}
       size="small"
       footer={
-        <>
+        <div className={styles.footerBar}>
           {mode === "edit" && onRequestDelete ? (
             <Button
               appearance="subtle"
@@ -231,14 +247,18 @@ export function AddAvailabilityDrawer({
             >
               Eliminar
             </Button>
-          ) : null}
-          <Button appearance="secondary" onClick={onClose} disabled={pending}>
-            Cancelar
-          </Button>
-          <Button appearance="primary" disabled={!canSubmit} onClick={onSubmit}>
-            {submitLabel}
-          </Button>
-        </>
+          ) : (
+            <span />
+          )}
+          <div className={styles.footerRight}>
+            <Button appearance="secondary" onClick={onClose} disabled={pending}>
+              Cancelar
+            </Button>
+            <Button appearance="primary" disabled={!canSubmit} onClick={onSubmit}>
+              {submitLabel}
+            </Button>
+          </div>
+        </div>
       }
     >
       {serverError ? (
