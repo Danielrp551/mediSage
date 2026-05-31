@@ -94,5 +94,13 @@ export const doctorUpdateSchema = doctorProfileBase.partial().extend({
   active: z.boolean().optional(),
 });
 
+// Self-service update (perfil propio del doctor logueado, fase F3). El backend
+// SOLO acepta estos campos en `PUT /me/doctor` (ignora branch_ids/vertical_ids/
+// active aunque lleguen); el self NUNCA edita sus sedes/verticales/estado (eso es
+// admin). Mismas reglas de validación que `doctorProfileBase` para los campos en
+// común. NO toca doctorCreate/doctorUpdate.
+export const doctorSelfUpdateSchema = doctorProfileBase.partial();
+
 export type DoctorCreateInput = z.infer<typeof doctorCreateSchema>;
 export type DoctorUpdateInput = z.infer<typeof doctorUpdateSchema>;
+export type DoctorSelfUpdateInput = z.infer<typeof doctorSelfUpdateSchema>;

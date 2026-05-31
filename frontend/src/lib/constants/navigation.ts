@@ -84,9 +84,23 @@ export const NAV_ITEMS: NavItem[] = [
         url: "/staff/doctors",
         permissions: ["MENU-STAFF"],
       },
-      // F3 — self-service del doctor logueado ("Mi perfil" / "Mi agenda",
-      // gated por MY_DOCTOR_PROFILE_READ / MY_AVAILABILITY_READ). Se agregan
-      // cuando existan sus páginas para no mostrar items que apunten a 404.
+      // F3 — self-service del doctor logueado. El role DOCTOR tiene los MY_*; un
+      // admin con ese permiso pero sin perfil de doctor verá el item, pero el RSC
+      // muestra el estado vacío NOT_A_DOCTOR (no 404, no crash).
+      {
+        key: "my-profile",
+        label: "Mi perfil",
+        icon: "PersonRegular",
+        url: "/staff/me/perfil",
+        permissions: ["MY_DOCTOR_PROFILE_READ"],
+      },
+      {
+        key: "my-agenda",
+        label: "Mi agenda",
+        icon: "CalendarLtrRegular",
+        url: "/staff/me/agenda",
+        permissions: ["MY_AVAILABILITY_READ"],
+      },
     ],
   },
   {

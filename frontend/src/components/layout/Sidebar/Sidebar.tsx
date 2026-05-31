@@ -7,6 +7,7 @@ import {
   BriefcaseRegular,
   BuildingMultipleRegular,
   BuildingRegular,
+  CalendarLtrRegular,
   ChevronRightRegular,
   ConferenceRoomRegular,
   DoctorRegular,
@@ -14,6 +15,7 @@ import {
   LockClosedRegular,
   PeopleRegular,
   PeopleTeamRegular,
+  PersonRegular,
   SettingsRegular,
   ShieldRegular,
   TagRegular,
@@ -45,6 +47,8 @@ const ICONS: Record<string, ReactElement> = {
   // Staff module
   PeopleTeamRegular: <PeopleTeamRegular />,
   DoctorRegular: <DoctorRegular />,
+  PersonRegular: <PersonRegular />,
+  CalendarLtrRegular: <CalendarLtrRegular />,
 };
 
 const useStyles = makeStyles({

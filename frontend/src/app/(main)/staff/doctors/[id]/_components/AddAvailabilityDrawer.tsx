@@ -19,13 +19,18 @@ import {
   createDoctorAvailability,
   updateDoctorAvailability,
 } from "@/actions/doctor-availability.actions";
+import type { MutationResult } from "@/actions/user.actions";
 import { Drawer } from "@/components/ui/Drawer/Drawer";
 import { FormField } from "@/components/ui/Form/FormField";
 import { TIME_HHMM_REGEX } from "@/lib/schemas/doctor-availability.schema";
 import { appTokens } from "@/lib/theme/brand";
 import type { OfficeOption } from "@/types/clinic.types";
 import type { BranchOption } from "@/types/clinic.types";
-import type { DoctorAvailabilityItem } from "@/types/staff.types";
+import type {
+  DoctorAvailabilityBulkCreatePayload,
+  DoctorAvailabilityItem,
+  DoctorAvailabilityUpdatePayload,
+} from "@/types/staff.types";
 
 import { addDays, parseIsoDate, toIsoDate } from "./week";
 
@@ -76,8 +81,25 @@ export interface AvailabilityDraft {
   closes_at: string; // "HH:MM"
 }
 
+// Capa de datos inyectable: el drawer NO sabe si la agenda es de un doctor (admin)
+// o del usuario logueado (self /me). El caller pasa las funciones de alta/edición.
+// `onCreate` recibe el body bulk; `onUpdate` el blockId + el patch. Ambas devuelven
+// el `MutationResult` estándar para que el drawer muestre el error en español.
+export type CreateAvailabilityAction = (
+  input: DoctorAvailabilityBulkCreatePayload,
+) => Promise<MutationResult<DoctorAvailabilityItem[]>>;
+export type UpdateAvailabilityAction = (
+  blockId: string,
+  input: DoctorAvailabilityUpdatePayload,
+) => Promise<MutationResult<DoctorAvailabilityItem>>;
+
 interface Props {
-  doctorId: string;
+  /**
+   * Solo necesario para la ruta admin (`/doctors/{id}/...`): si no se pasan
+   * `onCreate`/`onUpdate`, el drawer cae a las actions admin enlazadas con este id.
+   * En la ruta self (`/me/...`) NO se usa (los endpoints no llevan doctorId).
+   */
+  doctorId?: string;
   doctorBranches: BranchOption[];
   mode: "create" | "edit";
   /** En modo edit, el bloque que se está editando (para el PUT). */
@@ -87,6 +109,13 @@ interface Props {
   onSaved: () => void;
   /** En modo edit, abre la confirmación de borrado del bloque. */
   onRequestDelete?: () => void;
+  /**
+   * Capa de datos. Si se omiten, se usan las actions admin enlazadas con
+   * `doctorId` (comportamiento histórico — el caller admin no las pasa). La
+   * variante self (`MyAvailabilityClient`) inyecta las actions `/me`.
+   */
+  onCreate?: CreateAvailabilityAction;
+  onUpdate?: UpdateAvailabilityAction;
 }
 
 // Expande [date_from..date_to] (ambos inclusive) a la lista de fechas "YYYY-MM-DD".
@@ -108,8 +137,17 @@ export function AddAvailabilityDrawer({
   onClose,
   onSaved,
   onRequestDelete,
+  onCreate,
+  onUpdate,
 }: Props) {
   const styles = useStyles();
+
+  // Capa de datos resuelta: callbacks inyectados o, por defecto, las actions admin
+  // enlazadas con `doctorId` (la ruta admin no inyecta nada → idéntica a antes).
+  const createAction: CreateAvailabilityAction =
+    onCreate ?? ((input) => createDoctorAvailability(doctorId ?? "", input));
+  const updateAction: UpdateAvailabilityAction =
+    onUpdate ?? ((blockId, input) => updateDoctorAvailability(doctorId ?? "", blockId, input));
 
   const [branchId, setBranchId] = useState(initial.branch_id);
   const [officeId, setOfficeId] = useState(initial.office_id);
@@ -189,7 +227,7 @@ export function AddAvailabilityDrawer({
     setServerError(null);
     startTransition(async () => {
       if (mode === "edit" && editingBlock) {
-        const result = await updateDoctorAvailability(doctorId, editingBlock.id, {
+        const result = await updateAction(editingBlock.id, {
           branch_id: branchId,
           office_id: officeId,
           date: dateFrom,
@@ -216,7 +254,7 @@ export function AddAvailabilityDrawer({
         opens_at: opensAt,
         closes_at: closesAt,
       }));
-      const result = await createDoctorAvailability(doctorId, { blocks });
+      const result = await createAction({ blocks });
       if (!result.ok) {
         // AVAILABILITY_OVERLAP / OFFICE_NOT_IN_BRANCH / DOCTOR_NOT_IN_BRANCH llegan
         // aquí ya en español.

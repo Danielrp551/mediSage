@@ -84,6 +84,19 @@ class DoctorUpdate(BaseModel):
         return v
 
 
+class DoctorSelfUpdate(BaseModel):
+    """Subset de DoctorUpdate que el doctor logueado puede editar de SU perfil
+    vía PUT /me/doctor: solo campos profesionales propios. NO incluye branch_ids/
+    vertical_ids (asignar sedes/verticales es decisión del admin) ni active
+    (habilitar/deshabilitar también es del admin) ni la identidad del User."""
+
+    cmp_code: str | None = Field(default=None, max_length=40)
+    bio: str | None = None
+    photo_url: str | None = Field(default=None, max_length=500)
+    signature_url: str | None = Field(default=None, max_length=500)
+    slot_duration_min: int | None = Field(default=None, ge=5, le=240)
+
+
 class DoctorItem(BaseModel):
     """Fila de la tabla de doctores. Denormaliza full_name/email del User (la
     lista nunca necesita un join) + conteos batch de sedes/verticales (mismo
