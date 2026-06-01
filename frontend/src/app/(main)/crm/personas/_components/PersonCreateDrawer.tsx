@@ -53,12 +53,14 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
   },
-  // `minmax(0, 1fr)` en Valor: deja que el input encoja bajo su ancho intrínseco
-  // (sin esto desborda y el placeholder se corta — lección del drawer de staff).
+  // Canal | Valor | quitar. Mitades iguales (como `twoCol` de la sección Datos)
+  // con `minmax(0,1fr)` para que ambos encojan sin cortarse; NO capear Canal a un
+  // ancho fijo (el Dropdown de Fluent desborda su track y se pega al input). Gutter
+  // `spacingHorizontalM` = igual que el resto del form (sin esto Canal y Valor se ven pegados).
   identTopRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 160px) minmax(0, 1fr) auto",
-    gap: tokens.spacingHorizontalS,
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) auto",
+    gap: tokens.spacingHorizontalM,
     alignItems: "flex-end",
   },
   identChecksRow: {
