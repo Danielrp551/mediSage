@@ -43,17 +43,30 @@ const useStyles = makeStyles({
   },
   twoCol: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: tokens.spacingHorizontalM },
   identList: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalS },
+  // Tarjeta por identificador: fila superior (Canal | Valor | quitar) + fila de
+  // flags debajo. Evita el apretujamiento de meter todo en una sola línea.
   identRow: {
     display: "flex",
-    alignItems: "flex-end",
-    gap: tokens.spacingHorizontalS,
-    padding: tokens.spacingVerticalS,
+    flexDirection: "column",
+    gap: tokens.spacingVerticalS,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
   },
-  identChannel: { minWidth: "140px" },
-  identValue: { flex: 1, minWidth: 0 },
-  identChecks: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalXXS },
+  // `minmax(0, 1fr)` en Valor: deja que el input encoja bajo su ancho intrínseco
+  // (sin esto desborda y el placeholder se corta — lección del drawer de staff).
+  identTopRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 160px) minmax(0, 1fr) auto",
+    gap: tokens.spacingHorizontalS,
+    alignItems: "flex-end",
+  },
+  identChecksRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalL,
+  },
   hint: { fontSize: tokens.fontSizeBase200, color: appTokens.chromeTextMuted },
 });
 
@@ -260,7 +273,7 @@ export function PersonCreateDrawer({ onClose }: Props) {
           <div className={styles.identList}>
             {identifiers.fields.map((row, i) => (
               <div key={row.id} className={styles.identRow}>
-                <div className={styles.identChannel}>
+                <div className={styles.identTopRow}>
                   <FormField label="Canal">
                     <Controller
                       control={form.control}
@@ -282,8 +295,6 @@ export function PersonCreateDrawer({ onClose }: Props) {
                       )}
                     />
                   </FormField>
-                </div>
-                <div className={styles.identValue}>
                   <FormField label="Valor" error={identifierErrors?.[i]?.identifier?.message}>
                     <Controller
                       control={form.control}
@@ -297,8 +308,14 @@ export function PersonCreateDrawer({ onClose }: Props) {
                       )}
                     />
                   </FormField>
+                  <Button
+                    appearance="subtle"
+                    icon={<DismissRegular />}
+                    aria-label="Quitar identificador"
+                    onClick={() => identifiers.remove(i)}
+                  />
                 </div>
-                <div className={styles.identChecks}>
+                <div className={styles.identChecksRow}>
                   <Controller
                     control={form.control}
                     name={`identifiers.${i}.is_primary`}
@@ -322,12 +339,6 @@ export function PersonCreateDrawer({ onClose }: Props) {
                     )}
                   />
                 </div>
-                <Button
-                  appearance="subtle"
-                  icon={<DismissRegular />}
-                  aria-label="Quitar identificador"
-                  onClick={() => identifiers.remove(i)}
-                />
               </div>
             ))}
           </div>

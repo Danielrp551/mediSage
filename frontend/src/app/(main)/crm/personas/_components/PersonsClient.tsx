@@ -199,7 +199,7 @@ export function PersonsClient({ initialData }: Props) {
           {
             // No isSortable: primary_identifier es denormalizado.
             key: "primary_identifier",
-            name: "Contacto principal",
+            name: "Contacto",
             minWidth: 200,
             onRender: (p) => {
               if (!p.primary_identifier) return <span className={styles.muted}>—</span>;
@@ -288,7 +288,7 @@ export function PersonsClient({ initialData }: Props) {
             // F1: last_activity_at llega null del backend → "—". Es denormalizado
             // (no server-sortable). La fecha relativa llega con el timeline (F5).
             key: "last_activity_at",
-            name: "Última actividad",
+            name: "Actividad",
             minWidth: 140,
             onRender: () => <span className={styles.muted}>—</span>,
           },
