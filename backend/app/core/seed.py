@@ -26,6 +26,10 @@ from app.core.security import hash_password
 from app.modules.admin.models.permission import Permission
 from app.modules.admin.models.role import Role
 from app.modules.admin.models.user import User
+from app.modules.crm.models.customer_status import CustomerStatus
+from app.modules.crm.models.customer_status_transition import CustomerStatusTransition
+from app.modules.crm.models.lead_status import LeadStatus
+from app.modules.crm.models.lead_status_transition import LeadStatusTransition
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -210,6 +214,68 @@ ASESOR_PERMISSION_CODES: set[str] = {
 SYSTEM_PERMISSION_CODES: set[str] = set()
 
 
+# ── Catálogos de estado seed (crm F2, ADR-008) ─────────────────────────────
+# Idempotentes por `code`: el seed inserta los faltantes y NO pisa los existentes
+# (la clínica los puede renombrar/editar después). El `code` es UNIQUE no-parcial,
+# así que se busca por código sobre TODAS las filas (incl. soft-deleted) para no
+# chocar con la constraint.
+#
+# LeadStatus (7): (code, name, color, is_initial, is_final, is_won, display_order)
+LEAD_STATUS_SEED: list[tuple[str, str, str, bool, bool, bool, int]] = [
+    ("NUEVO", "Nuevo", "#9CA3AF", True, False, False, 10),
+    ("INTENTANDO_CONTACTAR", "Intentando contactar", "#F59E0B", False, False, False, 20),
+    ("CONTACTADO", "Contactado", "#3B82F6", False, False, False, 30),
+    ("INTERESADO", "Interesado", "#06B6D4", False, False, False, 40),
+    ("EVALUANDO", "Evaluando", "#8B5CF6", False, False, False, 50),
+    ("CITA_AGENDADA", "Cita agendada", "#22C55E", False, True, True, 60),
+    ("NO_INTERESADO", "No interesado", "#EF4444", False, True, False, 70),
+]
+
+# CustomerStatus (5): (code, name, color, is_initial, is_final, display_order)
+CUSTOMER_STATUS_SEED: list[tuple[str, str, str, bool, bool, int]] = [
+    ("ACTIVO", "Activo", "#22C55E", True, False, 10),
+    ("EN_TRATAMIENTO", "En tratamiento", "#06B6D4", False, False, 20),
+    ("COMPLETADO", "Completado", "#8B5CF6", False, False, 30),
+    ("INACTIVO", "Inactivo", "#9CA3AF", False, False, 40),
+    ("PERDIDO", "Perdido", "#EF4444", False, True, 50),
+]
+
+# Matriz base de transiciones (from_code, to_code). Editable por admin sin deploy.
+# Lead: CITA_AGENDADA y NO_INTERESADO son terminales (sin aristas de salida).
+LEAD_TRANSITIONS: list[tuple[str, str]] = [
+    ("NUEVO", "INTENTANDO_CONTACTAR"),
+    ("NUEVO", "NO_INTERESADO"),
+    ("INTENTANDO_CONTACTAR", "CONTACTADO"),
+    ("INTENTANDO_CONTACTAR", "NO_INTERESADO"),
+    ("CONTACTADO", "INTERESADO"),
+    ("CONTACTADO", "INTENTANDO_CONTACTAR"),
+    ("CONTACTADO", "NO_INTERESADO"),
+    ("INTERESADO", "EVALUANDO"),
+    ("INTERESADO", "NO_INTERESADO"),
+    ("EVALUANDO", "CITA_AGENDADA"),
+    ("EVALUANDO", "INTERESADO"),
+    ("EVALUANDO", "NO_INTERESADO"),
+]
+
+# Customer (permisiva): no-finales entre sí + hacia finales; PERDIDO terminal.
+CUSTOMER_TRANSITIONS: list[tuple[str, str]] = [
+    ("ACTIVO", "EN_TRATAMIENTO"),
+    ("ACTIVO", "COMPLETADO"),
+    ("EN_TRATAMIENTO", "ACTIVO"),
+    ("EN_TRATAMIENTO", "COMPLETADO"),
+    ("COMPLETADO", "ACTIVO"),
+    ("COMPLETADO", "EN_TRATAMIENTO"),
+    ("ACTIVO", "INACTIVO"),
+    ("EN_TRATAMIENTO", "INACTIVO"),
+    ("COMPLETADO", "INACTIVO"),
+    ("ACTIVO", "PERDIDO"),
+    ("EN_TRATAMIENTO", "PERDIDO"),
+    ("COMPLETADO", "PERDIDO"),
+    ("INACTIVO", "PERDIDO"),
+    ("INACTIVO", "ACTIVO"),  # reactivar
+]
+
+
 async def _seed_permissions(db: AsyncSession, actor_id: str) -> list[Permission]:
     existing = (await db.execute(select(Permission))).scalars().all()
     by_code = {p.code: p for p in existing}
@@ -333,6 +399,132 @@ async def _seed_system_user(db: AsyncSession, role: Role, actor_id: str) -> User
     return user
 
 
+async def _seed_lead_statuses(db: AsyncSession, actor_id: str) -> None:
+    """Inserta los LeadStatus faltantes (idempotente por code). Busca sobre TODAS
+    las filas — el code es UNIQUE no-parcial: un code soft-deleted sigue reservado."""
+    existing_codes = {s.code for s in (await db.execute(select(LeadStatus))).scalars().all()}
+    now = datetime.now(UTC)
+    for code, name, color, is_initial, is_final, is_won, display_order in LEAD_STATUS_SEED:
+        if code in existing_codes:
+            continue
+        db.add(
+            LeadStatus(
+                id=str(uuid.uuid4()),
+                code=code,
+                name=name,
+                description=None,
+                color=color,
+                is_initial=is_initial,
+                is_final=is_final,
+                is_won=is_won,
+                display_order=display_order,
+                active=True,
+                created_by=actor_id,
+                created_on=now,
+                updated_by=actor_id,
+                updated_on=now,
+            )
+        )
+        logger.info("seed.lead_status.created code=%s", code)
+
+
+async def _seed_customer_statuses(db: AsyncSession, actor_id: str) -> None:
+    """Inserta los CustomerStatus faltantes (idempotente por code, incl. soft-deleted)."""
+    existing_codes = {s.code for s in (await db.execute(select(CustomerStatus))).scalars().all()}
+    now = datetime.now(UTC)
+    for code, name, color, is_initial, is_final, display_order in CUSTOMER_STATUS_SEED:
+        if code in existing_codes:
+            continue
+        db.add(
+            CustomerStatus(
+                id=str(uuid.uuid4()),
+                code=code,
+                name=name,
+                description=None,
+                color=color,
+                is_initial=is_initial,
+                is_final=is_final,
+                display_order=display_order,
+                active=True,
+                created_by=actor_id,
+                created_on=now,
+                updated_by=actor_id,
+                updated_on=now,
+            )
+        )
+        logger.info("seed.customer_status.created code=%s", code)
+
+
+async def _seed_lead_transition_matrix(db: AsyncSession, actor_id: str) -> None:
+    """Inserta las aristas base de la matriz de lead que falten (idempotente).
+    Resuelve los codes a ids sobre estados VIVOS (no resucita aristas a estados
+    borrados); omite una arista si alguno de sus extremos no existe."""
+    id_by_code = {
+        s.code: s.id
+        for s in (await db.execute(select(LeadStatus).where(LeadStatus.deleted_at.is_(None))))
+        .scalars()
+        .all()
+    }
+    existing_edges = {
+        (t.from_lead_status_id, t.to_lead_status_id)
+        for t in (await db.execute(select(LeadStatusTransition))).scalars().all()
+    }
+    now = datetime.now(UTC)
+    for from_code, to_code in LEAD_TRANSITIONS:
+        from_id = id_by_code.get(from_code)
+        to_id = id_by_code.get(to_code)
+        if from_id is None or to_id is None or (from_id, to_id) in existing_edges:
+            continue
+        db.add(
+            LeadStatusTransition(
+                id=str(uuid.uuid4()),
+                from_lead_status_id=from_id,
+                to_lead_status_id=to_id,
+                active=True,
+                created_by=actor_id,
+                created_on=now,
+                updated_by=actor_id,
+                updated_on=now,
+            )
+        )
+        logger.info("seed.lead_transition.created %s->%s", from_code, to_code)
+
+
+async def _seed_customer_transition_matrix(db: AsyncSession, actor_id: str) -> None:
+    """Inserta las aristas base de la matriz de cliente que falten (idempotente)."""
+    id_by_code = {
+        s.code: s.id
+        for s in (
+            await db.execute(select(CustomerStatus).where(CustomerStatus.deleted_at.is_(None)))
+        )
+        .scalars()
+        .all()
+    }
+    existing_edges = {
+        (t.from_customer_status_id, t.to_customer_status_id)
+        for t in (await db.execute(select(CustomerStatusTransition))).scalars().all()
+    }
+    now = datetime.now(UTC)
+    for from_code, to_code in CUSTOMER_TRANSITIONS:
+        from_id = id_by_code.get(from_code)
+        to_id = id_by_code.get(to_code)
+        if from_id is None or to_id is None or (from_id, to_id) in existing_edges:
+            continue
+        db.add(
+            CustomerStatusTransition(
+                id=str(uuid.uuid4()),
+                from_customer_status_id=from_id,
+                to_customer_status_id=to_id,
+                active=True,
+                created_by=actor_id,
+                created_on=now,
+                updated_by=actor_id,
+                updated_on=now,
+            )
+        )
+        logger.info("seed.customer_transition.created %s->%s", from_code, to_code)
+
+
 async def seed() -> None:
     """Run the full seed inside one transaction."""
     actor_id = "00000000-0000-0000-0000-000000000001"
@@ -380,6 +572,14 @@ async def seed() -> None:
 
             await _seed_admin_user(db, admin_role, actor_id)
             await _seed_system_user(db, system_role, actor_id)
+
+            # crm F2: catálogos de estado + matriz base (idempotente). Primero los
+            # estados; flush para materializar sus ids antes de resolver las aristas.
+            await _seed_lead_statuses(db, actor_id)
+            await _seed_customer_statuses(db, actor_id)
+            await db.flush()
+            await _seed_lead_transition_matrix(db, actor_id)
+            await _seed_customer_transition_matrix(db, actor_id)
 
 
 if __name__ == "__main__":

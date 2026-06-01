@@ -19,6 +19,7 @@ import {
   PersonRegular,
   SettingsRegular,
   ShieldRegular,
+  TagMultipleRegular,
   TagRegular,
 } from "@fluentui/react-icons";
 import Link from "next/link";
@@ -52,6 +53,7 @@ const ICONS: Record<string, ReactElement> = {
   CalendarLtrRegular: <CalendarLtrRegular />,
   // CRM module
   ContactCardRegular: <ContactCardRegular />,
+  TagMultipleRegular: <TagMultipleRegular />,
 };
 
 const useStyles = makeStyles({

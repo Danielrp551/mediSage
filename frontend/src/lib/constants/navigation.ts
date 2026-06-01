@@ -115,10 +115,22 @@ export const NAV_ITEMS: NavItem[] = [
         url: "/crm/personas",
         permissions: ["MENU-CRM"],
       },
-      // F2 agregará "Estados de lead" (/crm/estados-lead, LEAD_STATUSES_READ) y
-      // "Estados de cliente" (/crm/estados-cliente, CUSTOMER_STATUSES_READ);
-      // F3 agregará "Mis leads" (/crm/mis-leads, MY_LEADS_READ). Se suman recién
-      // cuando existan sus páginas (mismo patrón que staff, que añadió los me/*
+      {
+        key: "lead-statuses",
+        label: "Estados de lead",
+        icon: "TagRegular",
+        url: "/crm/estados-lead",
+        permissions: ["LEAD_STATUSES_READ"],
+      },
+      {
+        key: "customer-statuses",
+        label: "Estados de cliente",
+        icon: "TagMultipleRegular",
+        url: "/crm/estados-cliente",
+        permissions: ["CUSTOMER_STATUSES_READ"],
+      },
+      // F3 agregará "Mis leads" (/crm/mis-leads, MY_LEADS_READ). Se suma recién
+      // cuando exista su página (mismo patrón que staff, que añadió los me/*
       // recién en F3).
     ],
   },
