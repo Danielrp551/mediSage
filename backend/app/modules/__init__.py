@@ -6,5 +6,6 @@ relationships before `Base.metadata.create_all` or Alembic autogenerate.
 from app.modules.admin import models as admin_models  # noqa: F401
 from app.modules.catalog import models as catalog_models  # noqa: F401
 from app.modules.clinic import models as clinic_models  # noqa: F401
+from app.modules.crm import models as crm_models  # noqa: F401
 
-__all__ = ["admin_models", "catalog_models", "clinic_models"]
+__all__ = ["admin_models", "catalog_models", "clinic_models", "crm_models"]
