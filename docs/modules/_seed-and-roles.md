@@ -5,7 +5,7 @@
 
 ## Resumen
 
-Medisage acumula **117 permisos** distribuidos en 9 módulos y **4 roles seed** (`ADMIN`, `DOCTOR`, `ASESOR`, `SYSTEM`). Este documento centraliza:
+Medisage acumula **116 permisos** distribuidos en 9 módulos y **4 roles seed** (`ADMIN`, `DOCTOR`, `ASESOR`, `SYSTEM`). Este documento centraliza:
 
 1. Tabla resumen por módulo.
 2. Lista canónica de `SEED_PERMISSIONS` lista para pegar.
@@ -22,12 +22,12 @@ El template trae solo el seed del módulo `admin` (13 permisos + role `ADMIN`). 
 | `catalog` | 13 | `MENU-CATALOG` | VERTICALS, SERVICES, PRODUCTS |
 | `clinic` | 13 | `MENU-CLINIC` | BRANCHES, OFFICES, OFFICE_HOURS, OFFICE_CLOSURES |
 | `staff` | 11 | `MENU-STAFF` | DOCTORS, DOCTOR_AVAILABILITY, MY_* (self-service) |
-| `crm` | 16 | `MENU-CRM` | PERSONS, LEAD_STATUSES, CUSTOMER_STATUSES, LEAD_ASSIGNMENTS, LEAD_ACTIVITIES |
+| `crm` | 15 | `MENU-CRM` | PERSONS, LEAD_STATUSES, CUSTOMER_STATUSES, LEAD_ASSIGNMENTS, LEAD_ACTIVITIES |
 | `conversations` | 12 | `MENU-CONVERSATIONS` | CHANNEL_ACCOUNTS, CONVERSATIONS, MESSAGES |
 | `bots` | 14 | `MENU-BOTS` | BOT_CONFIGURATIONS, BOT_TOOLS, BOT_STATE, BOT_EVENTS, BOT_ENGINE_INVOKE |
 | `scheduling` | 13 | `MENU-SCHEDULING` | APPOINTMENT_STATUSES, APPOINTMENTS, AVAILABILITY |
 | `marketing` | 12 | `MENU-MARKETING` | CAMPAIGNS, PROMOTIONS, PROMOTION_USAGES |
-| **Total** | **117** | — | — |
+| **Total** | **116** | — | — |
 
 ## Roles seed
 
@@ -399,7 +399,7 @@ Cada uno se implementa como `_seed_<catalog>_statuses(db, actor_id)` análogo a 
 
 ## Checklist de verificación al implementar
 
-- [ ] `SEED_PERMISSIONS` tiene los 117 códigos (13 existentes + 104 nuevos).
+- [ ] `SEED_PERMISSIONS` tiene los 116 códigos (13 del template + 103 de los módulos de dominio).
 - [ ] Existen 4 roles seed (`ADMIN`, `DOCTOR`, `ASESOR`, `SYSTEM`).
 - [ ] El user `system@medisage.internal` existe con `active=false` y sin password usable.
 - [ ] Catálogos seedeados: `lead_status` (7), `customer_status` (5), `appointment_status` (8).

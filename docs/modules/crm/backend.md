@@ -992,21 +992,24 @@ class PersonLeadStatusDetail(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     person_id: str
-    status: LeadStatusOption       # denormalized current LeadStatus
+    lead_status: LeadStatusOption  # denormalized current LeadStatus (clave `lead_status`, NO `status`)
     source_campaign_id: str | None
     entered_status_at: datetime
     last_activity_at: datetime | None
     created_on: datetime
+    # Sin `active`/`updated_on` — el detalle del estado activo es liviano (espeja types/crm.types.ts).
 
 
 class LeadStatusHistoryItem(BaseModel):
-    """One row of the lead status timeline. from_status null on creation."""
+    """One row of the lead status timeline. from_lead_status null on creation."""
 
     model_config = ConfigDict(from_attributes=True)
     id: str
     person_id: str
-    from_status: LeadStatusOption | None = None  # denormalized
-    to_status: LeadStatusOption                  # denormalized
+    # Claves `from_lead_status`/`to_lead_status` (NO `from_status`/`to_status`) — el badge
+    # consume id/code/name/color/is_final/is_won (espeja LeadStatusSummary de types/crm.types.ts).
+    from_lead_status: LeadStatusOption | None = None  # denormalized
+    to_lead_status: LeadStatusOption                  # denormalized
     source_campaign_id: str | None
     changed_at: datetime
     changed_by: str | None
@@ -1014,7 +1017,7 @@ class LeadStatusHistoryItem(BaseModel):
     reason: str | None
 ```
 
-> `schemas/customer_lifecycle.py` análogo: `CustomerStatusTransitionRequest {to_customer_status_id, reason?}`, `PromoteToCustomerRequest {reason?}`, `PersonCustomerStatusDetail` (con `became_customer_at`), `CustomerStatusHistoryItem`.
+> `schemas/customer_lifecycle.py` análogo: `CustomerStatusTransitionRequest {to_customer_status_id, reason?}`, `PromoteToCustomerRequest {reason?}`, `PersonCustomerStatusDetail` (campo **`customer_status`** — NO `status`; `became_customer_at` + `entered_status_at` + `created_on`, sin `active`/`updated_on`), `CustomerStatusHistoryItem` (**`from_customer_status`/`to_customer_status`**). Espeja `types/crm.types.ts` (contrato front).
 
 ### `schemas/assignment.py`
 
@@ -1046,7 +1049,7 @@ class LeadAssignmentDetail(BaseModel):
     reason: str | None
 ```
 
-> `POST /persons/{id}/assignment/auto` no lleva body (round-robin). `/me/leads/list` reusa `PersonItem` (los leads del asesor logueado).
+> `POST /persons/{id}/assignment/auto` no lleva body (round-robin). **`/me/leads/list` devuelve `PaginatedResponse[MyLeadItem]` (NO `PersonItem`)**: `MyLeadItem = {person_id, full_name, primary_identifier, lead_status, last_activity_at, next_follow_up_at}` — `next_follow_up_at` (el `FOLLOW_UP_SCHEDULED` pendiente más próximo) se denormaliza para la bandeja del asesor. Espeja `types/crm.types.ts`.
 
 ### `schemas/activity.py`
 
@@ -1110,6 +1113,7 @@ class ActivityItem(BaseModel):
     id: str
     person_id: str
     activity_type: ActivityType
+    advisor_user_id: str | None           # raw FK lógica (null/SYSTEM → actividad de sistema)
     advisor: UserAuditInfo | None = None  # denormalized; null for SYSTEM-only events
     content: str | None
     scheduled_for: datetime | None
@@ -1119,7 +1123,14 @@ class ActivityItem(BaseModel):
     related_appointment_id: str | None
     related_conversation_id: str | None
     active: bool
+    # Audit cols (LeadActivity tiene TimestampMixin; NO SoftDelete) — consistentes con el
+    # resto de los *Item del codebase y con types/crm.types.ts.
     created_on: datetime
+    created_by: str
+    created_by_user: UserAuditInfo | None = None
+    updated_on: datetime
+    updated_by: str
+    updated_by_user: UserAuditInfo | None = None
 ```
 
 ## Repositories
@@ -1764,9 +1775,9 @@ Asesores activos (usuarios `active`, no borrados, con rol `ASESOR`) para poblar 
 ]
 ```
 
-#### `POST /me/leads/list` — `MY_LEADS_READ` → `PaginatedResponse[PersonItem]`
+#### `POST /me/leads/list` — `MY_LEADS_READ` → `PaginatedResponse[MyLeadItem]`
 
-Los leads asignados al asesor logueado (filtra por `lead_assignment.advisor_user_id == CurrentAuth.user.id` + lead activo). Misma forma que `/persons/list`.
+Los leads asignados al asesor logueado (filtra por `lead_assignment.advisor_user_id == CurrentAuth.user.id` + lead activo). Body = `QueryRequest` como `/persons/list`. **Devuelve `MyLeadItem`** (NO `PersonItem`): `{person_id, full_name, primary_identifier, lead_status, last_activity_at, next_follow_up_at}` — bandeja del asesor con el próximo seguimiento denormalizado. Espeja `types/crm.types.ts`.
 
 ### LeadActivity (timeline)
 

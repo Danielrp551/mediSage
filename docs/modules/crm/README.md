@@ -224,7 +224,7 @@ Todos bajo `/api/v1/crm/`. Listado paginado con `POST /<recurso>/list` + `QueryR
 
 ## Permisos seed
 
-16 permisos. Ya consolidados en [`docs/modules/_seed-and-roles.md`](../_seed-and-roles.md#módulo-crm) — **no se redefinen aquí, se referencian**:
+15 permisos. Ya consolidados en [`docs/modules/_seed-and-roles.md`](../_seed-and-roles.md#módulo-crm) — **no se redefinen aquí, se referencian**:
 
 ```
 MENU-CRM · PERSONS_{READ,CREATE,UPDATE,DELETE} ·
@@ -235,7 +235,7 @@ LEAD_STATUS_HISTORY_READ · MY_LEADS_READ
 
 **Roles seed que tocan `crm`** (subsets canónicos en [`_seed-and-roles.md`](../_seed-and-roles.md#matriz-roles--permisos)):
 
-- `ADMIN` — **todos** los permisos (incluidos los 16 de crm).
+- `ADMIN` — **todos** los permisos (incluidos los 15 de crm).
 - `ASESOR` — corazón de su trabajo: `MENU-CRM`, `PERSONS_{READ,CREATE,UPDATE}` (**no** `PERSONS_DELETE`), `LEAD_STATUSES_READ`, `CUSTOMER_STATUSES_READ`, `LEAD_ASSIGNMENTS_{READ,WRITE}`, `LEAD_ACTIVITIES_{READ,WRITE}`, `LEAD_STATUS_HISTORY_READ`, `MY_LEADS_READ`. **No** edita catálogos de estado (eso es admin).
 - `DOCTOR` — solo `PERSONS_READ` (lee los datos del paciente al atender la cita).
 

@@ -1,7 +1,10 @@
 """
 Idempotent seed: creates the canonical permissions, the base roles (ADMIN with
-all permissions, DOCTOR and ASESOR with their subset), and the bootstrap admin
-user. The SYSTEM role/user is deferred to a later module (crm/bots).
+all permissions, DOCTOR and ASESOR with their subset, SYSTEM with none), the
+bootstrap admin user and the SYSTEM technical user. The SYSTEM role/user is
+introduced with the crm module (F0): it is the created_by / actor_id of the
+module's automated operations (find_by_identifier_or_create, system-triggered
+status transitions and round-robin assignment).
 
 Run with: ``python -m app.core.seed`` (Dockerfile invokes it on container start).
 """
@@ -87,6 +90,22 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "MY_DOCTOR_PROFILE_WRITE", "name": "Write my doctor profile", "module": "STAFF"},
     {"code": "MY_AVAILABILITY_READ", "name": "Read my availability", "module": "STAFF"},
     {"code": "MY_AVAILABILITY_WRITE", "name": "Write my availability", "module": "STAFF"},
+    # ── Module: crm (15 permisos) ───────────────────────────────────────
+    {"code": "MENU-CRM", "name": "Menu CRM", "module": "CRM"},
+    {"code": "PERSONS_READ", "name": "Read persons", "module": "CRM"},
+    {"code": "PERSONS_CREATE", "name": "Create persons", "module": "CRM"},
+    {"code": "PERSONS_UPDATE", "name": "Update persons", "module": "CRM"},
+    {"code": "PERSONS_DELETE", "name": "Delete persons", "module": "CRM"},
+    {"code": "LEAD_STATUSES_READ", "name": "Read lead statuses", "module": "CRM"},
+    {"code": "LEAD_STATUSES_WRITE", "name": "Write lead statuses", "module": "CRM"},
+    {"code": "CUSTOMER_STATUSES_READ", "name": "Read customer statuses", "module": "CRM"},
+    {"code": "CUSTOMER_STATUSES_WRITE", "name": "Write customer statuses", "module": "CRM"},
+    {"code": "LEAD_ASSIGNMENTS_READ", "name": "Read lead assignments", "module": "CRM"},
+    {"code": "LEAD_ASSIGNMENTS_WRITE", "name": "Write lead assignments", "module": "CRM"},
+    {"code": "LEAD_ACTIVITIES_READ", "name": "Read lead activities", "module": "CRM"},
+    {"code": "LEAD_ACTIVITIES_WRITE", "name": "Write lead activities", "module": "CRM"},
+    {"code": "LEAD_STATUS_HISTORY_READ", "name": "Read lead status history", "module": "CRM"},
+    {"code": "MY_LEADS_READ", "name": "Read my assigned leads", "module": "CRM"},
 ]
 
 
@@ -185,6 +204,11 @@ ASESOR_PERMISSION_CODES: set[str] = {
     "PROMOTION_USAGES_READ",
 }
 
+# SYSTEM: rol del usuario técnico no autenticable. NO lleva permisos — solo existe
+# para etiquetar como SYSTEM al actor de operaciones automáticas. El backend nunca
+# resuelve `CurrentAuth` a este usuario (su `active=False` lo bloquea en el login).
+SYSTEM_PERMISSION_CODES: set[str] = set()
+
 
 async def _seed_permissions(db: AsyncSession, actor_id: str) -> list[Permission]:
     existing = (await db.execute(select(Permission))).scalars().all()
@@ -279,6 +303,36 @@ async def _seed_admin_user(db: AsyncSession, role: Role, actor_id: str) -> User:
     return user
 
 
+async def _seed_system_user(db: AsyncSession, role: Role, actor_id: str) -> User:
+    """Usuario técnico para las audit columns de operaciones automáticas (crm/bots).
+
+    `active=False` → no puede autenticarse; el backend nunca resuelve `CurrentAuth`
+    a él. Su id es estable (lo usan los services como `created_by`/`actor_id`).
+    """
+    system_user_id = "00000000-0000-0000-0000-000000000002"
+    existing = (await db.execute(select(User).where(User.id == system_user_id))).scalars().first()
+    if existing is not None:
+        existing.roles = [role]
+        return existing
+    now = datetime.now(UTC)
+    user = User(
+        id=system_user_id,
+        email="system@medisage.internal",
+        password_hash=hash_password(uuid.uuid4().hex),  # no adivinable, no usable
+        first_name="System",
+        last_name="Internal",
+        active=False,  # no puede iniciar sesión
+        created_by=actor_id,
+        created_on=now,
+        updated_by=actor_id,
+        updated_on=now,
+        roles=[role],
+    )
+    db.add(user)
+    logger.info("seed.user.created email=system@medisage.internal active=false")
+    return user
+
+
 async def seed() -> None:
     """Run the full seed inside one transaction."""
     actor_id = "00000000-0000-0000-0000-000000000001"
@@ -295,9 +349,9 @@ async def seed() -> None:
                 {p.code for p in perms},
                 perms,
             )
-            # DOCTOR/ASESOR se siembran ya con su subset disponible hoy (el helper
-            # filtra los códigos de módulos aún no implementados). SYSTEM se difiere
-            # a crm/bots (no hace falta todavía).
+            # DOCTOR/ASESOR se siembran con su subset disponible hoy (el helper
+            # filtra los códigos de módulos aún no implementados). SYSTEM se
+            # introduce con crm: rol sin permisos + usuario técnico no autenticable.
             await _seed_role(
                 db,
                 actor_id,
@@ -314,9 +368,18 @@ async def seed() -> None:
                 ASESOR_PERMISSION_CODES,
                 perms,
             )
+            system_role = await _seed_role(
+                db,
+                actor_id,
+                "SYSTEM",
+                "Usuario técnico no autenticable (operaciones automáticas)",
+                SYSTEM_PERMISSION_CODES,
+                perms,
+            )
             await db.flush()
 
             await _seed_admin_user(db, admin_role, actor_id)
+            await _seed_system_user(db, system_role, actor_id)
 
 
 if __name__ == "__main__":

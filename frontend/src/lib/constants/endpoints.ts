@@ -6,6 +6,7 @@ const ADMIN = "/api/v1/admin";
 const CATALOG = "/api/v1/catalog";
 const CLINIC = "/api/v1/clinic";
 const STAFF = "/api/v1/staff";
+const CRM = "/api/v1/crm";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -107,5 +108,59 @@ export const ENDPOINTS = {
     AVAILABILITY_CREATE: `${STAFF}/me/availability`, // bulk
     AVAILABILITY_UPDATE: (blockId: string) => `${STAFF}/me/availability/${blockId}`, // PUT
     AVAILABILITY_DELETE: (blockId: string) => `${STAFF}/me/availability/${blockId}`,
+  },
+  // ── CRM module ───────────────────────────────────────────
+  PERSONS: {
+    LIST: `${CRM}/persons/list`,
+    CREATE: `${CRM}/persons`,
+    GET: (id: string) => `${CRM}/persons/${id}`,
+    UPDATE: (id: string) => `${CRM}/persons/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${CRM}/persons/${id}`, // soft delete
+    ACTIVE: `${CRM}/persons/active`, // raw list — PersonOption[]
+    SEARCH: `${CRM}/persons/search`, // ?q=&channel_type=&identifier= (lo usa el bot; raw list)
+    // Nested: identificadores multicanal de UNA persona.
+    IDENTIFIERS: (id: string) => `${CRM}/persons/${id}/identifiers`, // GET (list) / POST (create)
+    IDENTIFIER: (id: string, identId: string) => `${CRM}/persons/${id}/identifiers/${identId}`, // PUT / DELETE
+    // Nested: estado lead + transición + history + promote.
+    LEAD_STATUS: (id: string) => `${CRM}/persons/${id}/lead-status`, // GET / POST (crear lead)
+    LEAD_TRANSITION: (id: string) => `${CRM}/persons/${id}/lead-status/transition`, // POST
+    LEAD_HISTORY: (id: string) => `${CRM}/persons/${id}/lead-status/history`, // GET
+    PROMOTE: (id: string) => `${CRM}/persons/${id}/promote-to-customer`, // POST
+    // Nested: estado cliente + transición + history.
+    CUSTOMER_STATUS: (id: string) => `${CRM}/persons/${id}/customer-status`, // GET
+    CUSTOMER_TRANSITION: (id: string) => `${CRM}/persons/${id}/customer-status/transition`, // POST
+    CUSTOMER_HISTORY: (id: string) => `${CRM}/persons/${id}/customer-status/history`, // GET
+    // Nested: asignación (owner).
+    ASSIGNMENT: (id: string) => `${CRM}/persons/${id}/assignment`, // GET / PUT (manual / "asignarme")
+    ASSIGNMENT_AUTO: (id: string) => `${CRM}/persons/${id}/assignment/auto`, // POST (round-robin)
+    // Nested: timeline de actividad.
+    ACTIVITIES_LIST: (id: string) => `${CRM}/persons/${id}/activities/list`, // POST (filtros en body)
+    ACTIVITIES_CREATE: (id: string) => `${CRM}/persons/${id}/activities`, // POST
+    ACTIVITY: (id: string, actId: string) => `${CRM}/persons/${id}/activities/${actId}`, // PUT / DELETE (active=false)
+  },
+  LEAD_STATUSES: {
+    LIST: `${CRM}/lead-statuses/list`,
+    CREATE: `${CRM}/lead-statuses`,
+    GET: (id: string) => `${CRM}/lead-statuses/${id}`,
+    UPDATE: (id: string) => `${CRM}/lead-statuses/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${CRM}/lead-statuses/${id}`, // 409 LEAD_STATUS_IN_USE si referenciado
+    ACTIVE: `${CRM}/lead-statuses/active`, // raw list — LeadStatusOption[]
+    TRANSITIONS: (id: string) => `${CRM}/lead-statuses/${id}/transitions`, // GET (destinos) / PUT (reemplaza aristas)
+  },
+  CUSTOMER_STATUSES: {
+    LIST: `${CRM}/customer-statuses/list`,
+    CREATE: `${CRM}/customer-statuses`,
+    GET: (id: string) => `${CRM}/customer-statuses/${id}`,
+    UPDATE: (id: string) => `${CRM}/customer-statuses/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${CRM}/customer-statuses/${id}`, // 409 CUSTOMER_STATUS_IN_USE
+    ACTIVE: `${CRM}/customer-statuses/active`, // raw list — CustomerStatusOption[]
+    TRANSITIONS: (id: string) => `${CRM}/customer-statuses/${id}/transitions`, // GET / PUT
+  },
+  ADVISORS: {
+    // raw list — AdvisorOption[] (asesores; LEAD_ASSIGNMENTS_READ). crm-owned, NO admin/users.
+    ACTIVE: `${CRM}/advisors/active`,
+  },
+  ME_CRM: {
+    LEADS_LIST: `${CRM}/me/leads/list`, // POST + QueryRequest — leads del asesor logueado (MY_LEADS_READ)
   },
 } as const;

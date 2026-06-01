@@ -10,6 +10,7 @@ import {
   CalendarLtrRegular,
   ChevronRightRegular,
   ConferenceRoomRegular,
+  ContactCardRegular,
   DoctorRegular,
   HomeRegular,
   LockClosedRegular,
@@ -49,6 +50,8 @@ const ICONS: Record<string, ReactElement> = {
   DoctorRegular: <DoctorRegular />,
   PersonRegular: <PersonRegular />,
   CalendarLtrRegular: <CalendarLtrRegular />,
+  // CRM module
+  ContactCardRegular: <ContactCardRegular />,
 };
 
 const useStyles = makeStyles({
