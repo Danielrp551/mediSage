@@ -69,6 +69,13 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingHorizontalL,
   },
+  // El grid item (FormField/Field) debe poder encoger por debajo del ancho de su
+  // contenido (min-width:auto por defecto lo impide).
+  gridCell: { minWidth: 0 },
+  // El control llena su celda y encoge CON ella. Sin esto el Dropdown de Fluent
+  // conserva su min-width intrínseco (~250px), desborda su track del grid y se
+  // pega al vecino (el track encoge con minmax(0,1fr) pero el control no).
+  control: { width: "100%", minWidth: 0 },
   hint: { fontSize: tokens.fontSizeBase200, color: appTokens.chromeTextMuted },
 });
 
@@ -276,12 +283,13 @@ export function PersonCreateDrawer({ onClose }: Props) {
             {identifiers.fields.map((row, i) => (
               <div key={row.id} className={styles.identRow}>
                 <div className={styles.identTopRow}>
-                  <FormField label="Canal">
+                  <FormField label="Canal" className={styles.gridCell}>
                     <Controller
                       control={form.control}
                       name={`identifiers.${i}.channel_type`}
                       render={({ field }) => (
                         <Dropdown
+                          className={styles.control}
                           value={CHANNEL_TYPE_META[field.value as ChannelType]?.label ?? ""}
                           selectedOptions={[field.value]}
                           onOptionSelect={(_, data) =>
@@ -297,12 +305,17 @@ export function PersonCreateDrawer({ onClose }: Props) {
                       )}
                     />
                   </FormField>
-                  <FormField label="Valor" error={identifierErrors?.[i]?.identifier?.message}>
+                  <FormField
+                    label="Valor"
+                    className={styles.gridCell}
+                    error={identifierErrors?.[i]?.identifier?.message}
+                  >
                     <Controller
                       control={form.control}
                       name={`identifiers.${i}.identifier`}
                       render={({ field }) => (
                         <Input
+                          className={styles.control}
                           {...field}
                           value={field.value ?? ""}
                           placeholder="ej. +51999111222"
