@@ -390,8 +390,9 @@ async def seed() -> None:
 
 Además de permisos, hay tres catálogos en BD que se seedean al boot. Las listas exactas están en sus fichas:
 
-- **LeadStatus** seed (7 entries) — [`crm.md`](crm.md#leadstatus-catlogo-configurable).
-- **CustomerStatus** seed (5 entries) — [`crm.md`](crm.md#customerstatus-catlogo-configurable).
+- **LeadStatus** seed (7 entries) — [`crm/README.md`](crm/README.md#leadstatus-catálogo-configurable).
+- **CustomerStatus** seed (5 entries) — [`crm/README.md`](crm/README.md#customerstatus-catálogo-configurable).
+- **Matriz de transiciones** lead/customer (`_seed_lead_transition_matrix` / `_seed_customer_transition_matrix`, idempotentes) — base seedeada sobre los estados ([ADR-008](../decisions/ADR-008-configurable-status-transition-matrix.md); detalle en [`crm/backend.md`](crm/backend.md)).
 - **AppointmentStatus** seed (8 entries) — [`scheduling.md`](scheduling.md#appointmentstatus-catlogo).
 
 Cada uno se implementa como `_seed_<catalog>_statuses(db, actor_id)` análogo a `_seed_permissions`, idempotente.
@@ -402,6 +403,7 @@ Cada uno se implementa como `_seed_<catalog>_statuses(db, actor_id)` análogo a 
 - [ ] Existen 4 roles seed (`ADMIN`, `DOCTOR`, `ASESOR`, `SYSTEM`).
 - [ ] El user `system@medisage.internal` existe con `active=false` y sin password usable.
 - [ ] Catálogos seedeados: `lead_status` (7), `customer_status` (5), `appointment_status` (8).
+- [ ] Matriz de transiciones seedeada: `lead_status_transition` (base lead) + `customer_status_transition` (base customer) — ver [ADR-008](../decisions/ADR-008-configurable-status-transition-matrix.md).
 - [ ] Test smoke: login con admin bootstrap funciona y los 3 roles aparecen en `/roles/list`.
 - [ ] Test smoke: el JWT del admin contiene los 117 permisos como claims.
 - [ ] Si se asignan los roles `DOCTOR` o `ASESOR` a un nuevo user, el JWT contiene exactamente el subset documentado arriba.

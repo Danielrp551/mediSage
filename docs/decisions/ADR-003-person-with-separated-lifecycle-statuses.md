@@ -3,6 +3,7 @@
 > **Status**: Accepted
 > **Date**: 2026-05-28
 > **Deciders**: @daniel, @marco
+> **Actualización (2026-05-31)**: el modelo quedó detallado en las fichas [`docs/modules/crm/`](../modules/crm/README.md) (fase de documentación). Las reglas de transición que este ADR dejó abiertas ("matriz de transiciones permitidas — futura ADR") se cierran en [ADR-008](ADR-008-configurable-status-transition-matrix.md) (matriz configurable). El manejo de las FKs a módulos aún no construidos (`campaign`/`appointment`/`conversation`) se define en [ADR-009](ADR-009-forward-fk-deferred-cross-module.md). El núcleo de este ADR (Person + tablas hijas separadas, `UNIQUE person_id`, catálogos configurables, dedup) sigue **Accepted** sin cambios.
 
 ## Context
 
@@ -130,10 +131,10 @@ Person tiene dos columnas FK directas: `current_lead_status_id` y `current_custo
   - Si no existe: crear `Person` + `PersonContactIdentifier` + `PersonLeadStatus(NUEVO)` + `LeadAssignment(round_robin)` + `LeadStatusHistory` + `LeadActivity(CAMPAIGN_ATTRIBUTION)` — todo en una transacción.
 - **En `conversations`**: `Conversation.person_id` es FK a `person`, no a `lead` ni a `customer`. La conversación pertenece al humano, no al hilo comercial.
 - **En `bots`**: la decisión preventa/postventa es `query: SELECT EXISTS(... FROM person_customer_status WHERE person_id = ? AND deleted_at IS NULL)`.
-- **En `seed.py`**: poblar `LeadStatus` (7) y `CustomerStatus` (5) con los códigos seed iniciales (lista exacta en [`docs/modules/crm.md`](../modules/crm.md)).
+- **En `seed.py`**: poblar `LeadStatus` (7) y `CustomerStatus` (5) con los códigos seed iniciales (lista exacta en [`docs/modules/crm/README.md`](../modules/crm/README.md)), más la matriz de transiciones base ([ADR-008](ADR-008-configurable-status-transition-matrix.md)).
 
 ## Referencias
 
 - Código futuro: `backend/app/modules/crm/models/`, `backend/app/modules/crm/services/`.
-- Ficha del módulo: [`docs/modules/crm.md`](../modules/crm.md).
+- Fichas del módulo: [`docs/modules/crm/README.md`](../modules/crm/README.md) (overview), [`backend.md`](../modules/crm/backend.md), [`ui.md`](../modules/crm/ui.md), [`frontend.md`](../modules/crm/frontend.md).
 - ADR relacionado: [ADR-002](ADR-002-doctor-entity-extends-user.md) — patrón análogo "extender User" vs "Person + tablas hijas" para el ciclo de vida del contacto.

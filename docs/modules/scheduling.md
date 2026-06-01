@@ -281,7 +281,7 @@ Cuando la cita llega a `ATTENDED`, el service decide:
 - Si el `Person` no tiene `PersonCustomerStatus` activo → `promote_to_customer` (close LeadStatus con `is_won=true`, create CustomerStatus con `is_initial`).
 - Si ya es customer → no-op en CRM, solo emite `LeadActivity(APPOINTMENT_ATTENDED)`.
 
-Esto cierra el flujo lead → cita → cliente del [flujo end-to-end del módulo `crm`](crm.md#flujo-end-to-end-tpico).
+Esto cierra el flujo lead → cita → cliente del [flujo end-to-end del módulo `crm`](crm/README.md#flujo-end-to-end-típico).
 
 ### User "sistema" para citas creadas por el bot
 Cuando el bot agenda, el `created_by` de la `Appointment` necesita un `user.id`. Decisión: en el seed se crea un user `system@medisage.internal` con `active=false` (no puede loguearse) y role `SYSTEM` (sin permisos operativos). Su id se usa para `created_by` de las citas del bot, los `LeadActivity` automáticos, etc. El `source='bot'` distingue claramente.
