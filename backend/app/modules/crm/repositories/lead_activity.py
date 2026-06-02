@@ -4,8 +4,9 @@ Repositorio del timeline (LeadActivity). `list_for_person` devuelve el feed
 `next_follow_up_map` denormaliza el próximo FOLLOW_UP_SCHEDULED pendiente por persona
 para la bandeja del asesor (MyLeadItem.next_follow_up_at).
 
-⚠ F3 subset: el create/update/delete del timeline (composer del asesor) llega en F5;
-F3 solo emite vía el helper `log` (STATUS_CHANGE/REASSIGNED) y lee el feed.
+F5: el composer del asesor (create/update/delete) usa `get_owned` para resolver una
+actividad por (id, person_id) y validar ownership (404 ACTIVITY_NOT_FOUND); "borrar"
+es `active=false` (no hay SoftDelete).
 """
 
 from __future__ import annotations
@@ -52,6 +53,33 @@ class LeadActivityRepository(BaseRepository[LeadActivity]):
             stmt = stmt.where(LeadActivity.created_on <= date_to)
         result = await db.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_owned(
+        self, db: AsyncSession, activity_id: str, person_id: str
+    ) -> LeadActivity | None:
+        """Resuelve una actividad VIVA (active=true) de una persona — ownership para
+        el PUT/DELETE del composer (404 ACTIVITY_NOT_FOUND si no matchea). LeadActivity
+        no tiene SoftDelete; "borrada" (active=false) NO se devuelve."""
+        result = await db.execute(
+            select(LeadActivity).where(
+                LeadActivity.id == activity_id,
+                LeadActivity.person_id == person_id,
+                LeadActivity.active.is_(True),
+            )
+        )
+        return result.scalars().first()
+
+    async def latest_active_at(self, db: AsyncSession, person_id: str) -> datetime | None:
+        """`max(created_on)` de las actividades VIVAS (active=true) de la persona, o
+        None si no quedan. Lo usa `delete` para recomputar el denormalizado
+        `last_activity_at` del lead tras ocultar una actividad."""
+        result = await db.execute(
+            select(func.max(LeadActivity.created_on)).where(
+                LeadActivity.person_id == person_id,
+                LeadActivity.active.is_(True),
+            )
+        )
+        return result.scalar()
 
     async def next_follow_up_map(
         self, db: AsyncSession, person_ids: list[str], now: datetime

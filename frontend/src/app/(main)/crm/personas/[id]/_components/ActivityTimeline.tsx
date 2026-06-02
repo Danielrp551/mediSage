@@ -1,25 +1,27 @@
 "use client";
 
 import {
-  Avatar,
-  Badge,
-  Card,
+  Button,
   MessageBar,
   MessageBarBody,
   Skeleton,
   SkeletonItem,
-  Tooltip,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
 import { HistoryRegular } from "@fluentui/react-icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryState } from "nuqs";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { listActivities } from "@/actions/lead-activity.actions";
-import { ACTIVITY_OUTCOME_LABELS, ACTIVITY_TYPE_META } from "@/lib/constants/crm";
+import { deleteActivity, listActivities, updateActivity } from "@/actions/lead-activity.actions";
+import { ACTIVITY_FILTER_GROUPS } from "@/lib/constants/crm";
+import type { LeadActivityUpdateInput } from "@/lib/schemas/lead-activity.schema";
 import { appTokens } from "@/lib/theme/brand";
-import { dayGroupLabel, formatDate, formatRelative } from "@/lib/utils/date";
+import { dayGroupLabel } from "@/lib/utils/date";
 import type { LeadActivityItem } from "@/types/crm.types";
+
+import { ActivityCard } from "./ActivityCard";
+import { ActivityComposer } from "./ActivityComposer";
 
 const useStyles = makeStyles({
   root: {
@@ -28,6 +30,11 @@ const useStyles = makeStyles({
     gap: tokens.spacingVerticalL,
     maxWidth: "760px",
   },
+  chips: {
+    display: "flex",
+    gap: tokens.spacingHorizontalXS,
+    flexWrap: "wrap",
+  },
   dayGroup: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalS },
   dayHeader: {
     fontSize: tokens.fontSizeBase200,
@@ -35,59 +42,6 @@ const useStyles = makeStyles({
     textTransform: "uppercase",
     letterSpacing: "0.04em",
     color: appTokens.chromeTextMuted,
-  },
-  card: {
-    display: "flex",
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: tokens.spacingHorizontalM,
-    padding: tokens.spacingVerticalM,
-    // Lista potencialmente larga — el navegador no paga layout fuera de viewport.
-    contentVisibility: "auto",
-    containIntrinsicSize: "auto 80px",
-  },
-  cardIcon: {
-    display: "inline-flex",
-    fontSize: "20px",
-    flexShrink: 0,
-    marginTop: "2px",
-  },
-  cardMain: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-    flex: 1,
-    minWidth: 0,
-  },
-  cardTopRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: tokens.spacingHorizontalS,
-  },
-  cardTitle: {
-    fontSize: tokens.fontSizeBase300,
-    fontWeight: tokens.fontWeightSemibold,
-    color: appTokens.chromeText,
-  },
-  cardMeta: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-    fontSize: tokens.fontSizeBase200,
-    color: appTokens.chromeTextMuted,
-    flexShrink: 0,
-  },
-  cardContent: {
-    fontSize: tokens.fontSizeBase300,
-    color: appTokens.chromeText,
-    wordBreak: "break-word",
-  },
-  cardExtras: {
-    display: "flex",
-    gap: tokens.spacingHorizontalXS,
-    flexWrap: "wrap",
-    marginTop: tokens.spacingVerticalXXS,
   },
   empty: {
     display: "flex",
@@ -98,14 +52,14 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalXXXL} ${tokens.spacingHorizontalL}`,
     textAlign: "center",
     color: appTokens.chromeTextMuted,
-    minHeight: "200px",
+    minHeight: "160px",
   },
   emptyIcon: { fontSize: "36px", opacity: 0.7 },
 });
 
 interface Props {
   personId: string;
-  /** Sin uso en F3 (no hay composer; el create llega en F5). */
+  /** LEAD_ACTIVITIES_WRITE — habilita composer + editar/borrar/completar. */
   canWrite: boolean;
 }
 
@@ -115,42 +69,89 @@ interface DayGroup {
   items: LeadActivityItem[];
 }
 
+// Mapea la key del chip → activity_type[] del filtro server-side (null = todos).
+const FILTER_BY_KEY = new Map(ACTIVITY_FILTER_GROUPS.map((g) => [g.key, g.types]));
+
 /**
- * Feed read-only del timeline (F3, Iteración A). Carga `listActivities` al
- * montar y agrupa por día (Hoy/Ayer/fecha). La agrupación y los timestamps
- * relativos se calculan SOLO en cliente (montados ya) — SSR en UTC desfasaría la
- * frontera del día en Lima. SIN composer / SIN crear/editar/borrar (eso es F5).
+ * Timeline rico del tab Actividad (F5). Compone el composer (gated `canWrite`),
+ * los chips de filtro (URL state `?act_type=`, re-query server-side), y el feed
+ * agrupado por día. La agrupación "Hoy"/"Ayer" y el resaltado de seguimientos
+ * futuros se calculan SOLO en cliente (`mounted` + `nowMs`) — SSR en UTC
+ * desfasaría la frontera del día en Lima (UTC-5).
  */
-export function ActivityTimeline({ personId }: Props) {
+export function ActivityTimeline({ personId, canWrite }: Props) {
   const styles = useStyles();
 
   const [activities, setActivities] = useState<LeadActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Se vuelve true sólo tras montar en cliente → habilita los cálculos con
-  // `new Date()` (agrupación por día + tiempo relativo) sin mismatch de hidratación.
+  // true sólo tras montar en cliente → habilita los cálculos con `new Date()`
+  // (agrupación por día, tiempo relativo, seguimientos futuros) sin mismatch.
   const [mounted, setMounted] = useState(false);
+  const [nowMs, setNowMs] = useState(0);
+
+  const [actType, setActType] = useQueryState("act_type", { defaultValue: "all" });
+  const activeChip = FILTER_BY_KEY.has(actType) ? actType : "all";
 
   const reqIdRef = useRef(0);
 
+  // `silent` (refetch tras una mutación) NO toca `loading` → el feed visible se
+  // mantiene mientras llega el nuevo lote (sin flash de skeleton ni desmontar las
+  // cards). La carga inicial y el cambio de chip SÍ muestran skeleton.
+  const load = useCallback(
+    (silent = false) => {
+      const reqId = ++reqIdRef.current;
+      if (!silent) setLoading(true);
+      setError(null);
+      const types = FILTER_BY_KEY.get(activeChip) ?? null;
+      void listActivities(personId, types ? { activity_type: types } : {})
+        .then((res) => {
+          if (reqId !== reqIdRef.current) return;
+          setActivities(res.data);
+          setLoading(false);
+        })
+        .catch(() => {
+          if (reqId !== reqIdRef.current) return;
+          setError("No se pudo cargar la actividad. Intenta de nuevo.");
+          setLoading(false);
+        });
+    },
+    [personId, activeChip],
+  );
+
+  // Refetch silencioso reutilizable tras crear/editar/borrar/completar (estable).
+  const refresh = useCallback(() => load(true), [load]);
+
   useEffect(() => {
     setMounted(true);
-    const reqId = ++reqIdRef.current;
-    setLoading(true);
-    setError(null);
-    void listActivities(personId)
-      .then((res) => {
-        if (reqId !== reqIdRef.current) return;
-        setActivities(res.data);
-        setLoading(false);
-      })
-      .catch(() => {
-        if (reqId !== reqIdRef.current) return;
-        setError("No se pudo cargar la actividad. Intenta de nuevo.");
-        setLoading(false);
-      });
-  }, [personId]);
+    setNowMs(Date.now());
+  }, []);
+
+  // Re-fetch al montar y cada vez que cambia el chip (filtro server-side).
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Handlers ESTABLES para no romper el React.memo de ActivityCard. Tras una
+  // mutación exitosa re-fetcheamos el feed (mínimo viable; sin optimismo).
+  const handleUpdate = useCallback(
+    async (activityId: string, input: LeadActivityUpdateInput) => {
+      const result = await updateActivity(personId, activityId, input);
+      if (result.ok) refresh();
+      return result;
+    },
+    [personId, refresh],
+  );
+
+  const handleDelete = useCallback(
+    async (activityId: string) => {
+      const result = await deleteActivity(personId, activityId);
+      if (result.ok) refresh();
+      return result;
+    },
+    [personId, refresh],
+  );
 
   // Agrupación por día — recomputa sólo cuando cambian las actividades (o al
   // montar). Las actividades llegan más recientes primero (orden del backend).
@@ -170,83 +171,70 @@ export function ActivityTimeline({ personId }: Props) {
     return Array.from(byKey.values());
   }, [activities, mounted]);
 
-  if (loading) {
-    return (
-      <div className={styles.root}>
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i}>
-            <SkeletonItem shape="rectangle" size={48} />
-          </Skeleton>
+  return (
+    <div className={styles.root}>
+      {canWrite ? <ActivityComposer personId={personId} onCreated={refresh} /> : null}
+
+      <div className={styles.chips}>
+        {ACTIVITY_FILTER_GROUPS.map((g) => (
+          <Button
+            key={g.key}
+            appearance={activeChip === g.key ? "primary" : "outline"}
+            shape="circular"
+            size="small"
+            onClick={() => void setActType(g.key)}
+          >
+            {g.label}
+          </Button>
         ))}
       </div>
-    );
-  }
 
-  if (error) {
-    return (
-      <div className={styles.root}>
+      {error ? (
         <MessageBar intent="error">
           <MessageBarBody>{error}</MessageBarBody>
         </MessageBar>
-      </div>
-    );
-  }
+      ) : null}
 
-  if (activities.length === 0) {
-    return (
-      <div className={styles.empty}>
-        <HistoryRegular className={styles.emptyIcon} />
-        <span>Aún no hay actividad.</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className={styles.root}>
-      {groups.map((group) => (
-        <div key={group.key} className={styles.dayGroup}>
-          <div className={styles.dayHeader}>{group.label}</div>
-          {group.items.map((a) => (
-            <ActivityCard key={a.id} activity={a} />
+      {loading ? (
+        <div className={styles.dayGroup}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i}>
+              <SkeletonItem shape="rectangle" size={48} />
+            </Skeleton>
           ))}
         </div>
-      ))}
-    </div>
-  );
-}
-
-function ActivityCard({ activity }: { activity: LeadActivityItem }) {
-  const styles = useStyles();
-  const meta = ACTIVITY_TYPE_META[activity.activity_type];
-  const Icon = meta.icon;
-  const actorName = activity.advisor?.full_name ?? "Sistema";
-
-  return (
-    <Card className={styles.card}>
-      <span className={styles.cardIcon} style={{ color: meta.color }}>
-        <Icon />
-      </span>
-      <div className={styles.cardMain}>
-        <div className={styles.cardTopRow}>
-          <span className={styles.cardTitle}>{meta.label}</span>
-          <span className={styles.cardMeta}>
-            <Avatar size={20} name={actorName} color={activity.advisor ? "colorful" : "neutral"} />
-            {actorName}
-            {" · "}
-            <Tooltip content={formatDate(activity.created_on)} relationship="label" withArrow>
-              <span>{formatRelative(activity.created_on)}</span>
-            </Tooltip>
-          </span>
-        </div>
-        {activity.content ? <span className={styles.cardContent}>{activity.content}</span> : null}
-        {activity.outcome ? (
-          <div className={styles.cardExtras}>
-            <Badge appearance="tint" color="informative">
-              {ACTIVITY_OUTCOME_LABELS[activity.outcome]}
-            </Badge>
+      ) : activities.length === 0 ? (
+        activeChip === "all" ? (
+          <div className={styles.empty}>
+            <HistoryRegular className={styles.emptyIcon} />
+            <span>Sin actividad aún. Registra la primera nota, llamada o seguimiento.</span>
           </div>
-        ) : null}
-      </div>
-    </Card>
+        ) : (
+          <div className={styles.empty}>
+            <HistoryRegular className={styles.emptyIcon} />
+            <span>No hay actividades de este tipo.</span>
+            <Button appearance="secondary" size="small" onClick={() => void setActType("all")}>
+              Ver todas
+            </Button>
+          </div>
+        )
+      ) : (
+        groups.map((group) => (
+          <div key={group.key} className={styles.dayGroup}>
+            <div className={styles.dayHeader}>{group.label}</div>
+            {group.items.map((a) => (
+              <ActivityCard
+                key={a.id}
+                activity={a}
+                canWrite={canWrite}
+                nowMs={nowMs}
+                onUpdate={handleUpdate}
+                onDelete={handleDelete}
+              />
+            ))}
+          </div>
+        ))
+      )}
+    </div>
   );
 }

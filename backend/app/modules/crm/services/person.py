@@ -21,16 +21,24 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AlreadyExistsException, NotFoundException
+from app.core.exceptions import (
+    AlreadyExistsException,
+    BadRequestException,
+    NotFoundException,
+)
 from app.modules.admin.models.user import User
 from app.modules.admin.repositories.user import user_repository
 from app.modules.admin.schemas.audit import UserAuditInfo
-from app.modules.crm.enums import ChannelType
+from app.modules.crm.enums import ActivityType, ChannelType
 from app.modules.crm.models.customer_status import CustomerStatus
+from app.modules.crm.models.lead_assignment import LeadAssignment
 from app.modules.crm.models.lead_status import LeadStatus
+from app.modules.crm.models.lead_status_history import LeadStatusHistory
 from app.modules.crm.models.person import Person
 from app.modules.crm.models.person_contact_identifier import PersonContactIdentifier
+from app.modules.crm.models.person_lead_status import PersonLeadStatus
 from app.modules.crm.repositories.lead_assignment import lead_assignment_repository
+from app.modules.crm.repositories.lead_status import lead_status_repository
 from app.modules.crm.repositories.person import person_repository
 from app.modules.crm.repositories.person_customer_status import (
     person_customer_status_repository,
@@ -47,6 +55,7 @@ from app.modules.crm.schemas.person import (
     PersonPrimaryIdentifier,
     PersonUpdate,
 )
+from app.modules.crm.services import lead_activity
 from app.shared.base_schemas import (
     PaginatedData,
     PaginatedResponse,
@@ -407,10 +416,121 @@ async def find_by_identifier_or_create(
     *,
     campaign_id: str | None = None,
 ) -> Person:
-    """Orquestación del bot (sin endpoint público): resuelve la Person por
-    identifier o la crea junto con su lead inicial + asignación round-robin.
+    """Orquestación del bot (F5, sin endpoint público — la invoca conversations
+    server-side). Resuelve la Person por (channel_type, identifier): si ya existe,
+    la devuelve sin duplicar; si no, crea en UNA transacción la cadena completa con
+    `created_by = SYSTEM`:
+      1) Person + el identifier entrante (principal, NO verificado).
+      2) PersonLeadStatus en el estado `is_initial` + LeadStatusHistory(NULL→initial).
+      3) LeadAssignment por round-robin (si hay asesores; concurrency-safe FOR UPDATE).
+      4) LeadActivity(CAMPAIGN_ATTRIBUTION) si `campaign_id` originó el alta.
+    """
+    existing = await person_repository.get_by_identifier(db, channel_type.value, identifier)
+    if existing is not None:
+        return existing
 
-    ⚠ Stub F1: la cadena completa (PersonLeadStatus initial + LeadStatusHistory +
-    LeadAssignment round-robin + CAMPAIGN_ATTRIBUTION) necesita los modelos de
-    F3/F4 que aún no existen. Se completa en F5. NO usar todavía."""
-    raise NotImplementedError("find_by_identifier_or_create se completa en F5")
+    initial = await lead_status_repository.get_initial(db)
+    if initial is None:
+        raise BadRequestException(
+            "No hay un estado de lead inicial configurado", code="NO_INITIAL_LEAD_STATUS"
+        )
+
+    now = utc_now()
+    person = Person(
+        id=generate_uuid(),
+        first_name=profile.first_name,
+        last_name=profile.last_name,
+        second_last_name=profile.second_last_name,
+        document_type=profile.document_type,
+        document_number=profile.document_number,
+        birth_date=profile.birth_date,
+        gender=profile.gender,
+        address=profile.address,
+        notes=profile.notes,
+        active=True,
+        created_by=SYSTEM_USER_ID,
+        created_on=now,
+        updated_by=SYSTEM_USER_ID,
+        updated_on=now,
+    )
+    db.add(person)
+    await db.flush()  # materializa person.id para los FKs
+
+    db.add(
+        PersonContactIdentifier(
+            id=generate_uuid(),
+            person_id=person.id,
+            channel_type=channel_type.value,
+            identifier=identifier,
+            is_primary=True,
+            verified=False,
+            active=True,
+            created_by=SYSTEM_USER_ID,
+            created_on=now,
+            updated_by=SYSTEM_USER_ID,
+            updated_on=now,
+        )
+    )
+    db.add(
+        PersonLeadStatus(
+            id=generate_uuid(),
+            person_id=person.id,
+            lead_status_id=initial.id,
+            source_campaign_id=campaign_id,
+            entered_status_at=now,
+            last_activity_at=now,
+            active=True,
+            created_by=SYSTEM_USER_ID,
+            created_on=now,
+            updated_by=SYSTEM_USER_ID,
+            updated_on=now,
+        )
+    )
+    db.add(
+        LeadStatusHistory(
+            id=generate_uuid(),
+            person_id=person.id,
+            from_lead_status_id=None,
+            to_lead_status_id=initial.id,
+            source_campaign_id=campaign_id,
+            changed_at=now,
+            changed_by=SYSTEM_USER_ID,
+            reason="Alta automática",
+            active=True,
+            created_by=SYSTEM_USER_ID,
+            created_on=now,
+            updated_by=SYSTEM_USER_ID,
+            updated_on=now,
+        )
+    )
+
+    advisor_id = await lead_assignment_repository.pick_round_robin_advisor(db)
+    if advisor_id is not None:
+        db.add(
+            LeadAssignment(
+                id=generate_uuid(),
+                person_id=person.id,
+                advisor_user_id=advisor_id,
+                assigned_at=now,
+                assigned_by=None,  # auto (round-robin)
+                reason="Round-robin automático",
+                active=True,
+                created_by=SYSTEM_USER_ID,
+                created_on=now,
+                updated_by=SYSTEM_USER_ID,
+                updated_on=now,
+            )
+        )
+
+    if campaign_id is not None:
+        await lead_activity.log(
+            db,
+            person.id,
+            ActivityType.CAMPAIGN_ATTRIBUTION,
+            advisor_user_id=None,
+            actor_id=SYSTEM_USER_ID,
+            payload={"campaign_id": campaign_id},
+        )
+
+    await db.flush()
+    return person

@@ -113,3 +113,42 @@ export function toLocalDatetimeInputValue(iso: string | null | undefined): strin
     `T${pad(d.getHours())}:${pad(d.getMinutes())}`
   );
 }
+
+/**
+ * Convierte el valor de un `<input type="datetime-local">` (sin TZ, en la hora
+ * que el usuario eligió en su navegador) a ISO 8601 **con el offset local** —
+ * NO a UTC ciego con `.toISOString()`. `new Date("YYYY-MM-DDTHH:mm")` se
+ * interpreta en la TZ local, así que el `Date` resultante representa el instante
+ * correcto; le anexamos el offset del navegador para que el backend lo guarde
+ * como el `timestamptz` que el asesor quiso. ⚠ Client-only (usa la TZ local).
+ */
+export function localDatetimeInputToISO(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  // getTimezoneOffset() devuelve minutos al ESTE de UTC con signo invertido
+  // (Lima UTC-5 → +300). Lo convertimos a "-05:00".
+  const offMin = -d.getTimezoneOffset();
+  const sign = offMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offMin);
+  const offset = `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${offset}`
+  );
+}
+
+/** ISO 8601 del instante actual con el offset local del navegador. Client-only. */
+export function nowLocalISO(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const offMin = -d.getTimezoneOffset();
+  const sign = offMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offMin);
+  const offset = `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${offset}`
+  );
+}

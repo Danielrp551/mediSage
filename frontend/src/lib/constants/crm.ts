@@ -110,6 +110,16 @@ export const ACTIVITY_TYPE_META: Record<ActivityType, { label: string; icon: FC;
     },
   };
 
+// Canal de recordatorio de un seguimiento (payload.reminder_channel). Label ES para
+// el select del composer Y el render de la tarjeta (que muestra el valor crudo si no
+// se mapea). El valor crudo es un slug (whatsapp/email/phone); la clave del map es ese
+// slug. Mapeo laxo (Record<string,...>) porque el payload es JSONB libre.
+export const REMINDER_CHANNEL_LABELS: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  email: "Correo",
+  phone: "Teléfono",
+};
+
 // Resultado de llamada (label ES para el chip y el select del composer).
 export const ACTIVITY_OUTCOME_LABELS: Record<ActivityOutcome, string> = {
   successful: "Exitosa",
