@@ -1,6 +1,6 @@
 @startuml er-conversations
-' Propósito: modelo relacional del módulo conversations (ChannelAccount + Conversation + Message + MessageAttachment + AssignmentLog)
-' Última actualización: 2026-05-28
+' Propósito: modelo relacional del módulo conversations (5 entidades): ChannelAccount + Conversation + Message + MessageAttachment + ConversationAssignmentLog. Pipe de mensajería multicanal (WhatsApp en el MVP).
+' Última actualización: 2026-06-02 (modelo final spec §2: +phone_number_id; channel_type = reuse crm.ChannelType (sin FK); bot_configuration_id/default_campaign_id = FK forward sin constraint ADR-009; FK aditiva lead_activity.related_conversation_id → conversation)
 ' Código de referencia: backend/app/modules/conversations/models/
 
 !theme plain
@@ -17,26 +17,30 @@ legend top right
   | <#FFFFE0> Marker | Significado |
   | * | NOT NULL |
   | <<PK>> | Primary Key |
-  | <<FK>> | Foreign Key |
+  | <<FK>> | Foreign Key (constraint física) |
   | <<unique>> | UNIQUE constraint |
   | <<nullable>> | NULL permitido |
+  | <<fwd>> | FK forward diferida — columna sin FK física (ADR-009) |
 endlegend
 
 ' ─────────────────────────────────────────────────────────────
-' Cuenta de canal (config externa)
+' Cuenta de canal (config externa + ref al secreto)
 ' ─────────────────────────────────────────────────────────────
 entity "channel_account" as t_ca {
   * id : varchar(36) <<PK>>
   --
-  * channel_type : varchar(40)
+  * channel_type : varchar(40)   ' slug de crm.ChannelType (reuse, NO FK)
   * name : varchar(120)
   * external_identifier : varchar(255)
   secret_name : varchar(255) <<nullable>>
   webhook_verify_token : varchar(255) <<nullable>>
-  bot_configuration_id : varchar(36) <<nullable, FK→bot_configuration>>
-  default_campaign_id : varchar(36) <<nullable, FK→campaign>>
+  phone_number_id : varchar(64) <<nullable>>
+  bot_configuration_id : varchar(36) <<nullable, fwd→bot_configuration>>
+  default_campaign_id : varchar(36) <<nullable, fwd→campaign>>
   --
-  ' UNIQUE (channel_type, external_identifier) WHERE deleted_at IS NULL
+  ' UNIQUE PARCIAL (channel_type, external_identifier) WHERE deleted_at IS NULL
+  '   (dialect-agnóstico: postgresql_where + sqlite_where)
+  '   Violación → CHANNEL_ACCOUNT_EXTERNAL_TAKEN (409)
   * active : boolean
   deleted_at : timestamptz <<nullable>>
   * created_on : timestamptz
@@ -56,19 +60,21 @@ entity "conversation" as t_conv {
   * status : varchar(20)        ' open / closed
   * assignee_type : varchar(20) ' bot / advisor / unassigned
   assignee_user_id : varchar(36) <<nullable, FK→user>>
-  bot_configuration_id : varchar(36) <<nullable, FK→bot_configuration>>
+  bot_configuration_id : varchar(36) <<nullable, fwd→bot_configuration>>
   * opened_at : timestamptz
   closed_at : timestamptz <<nullable>>
   last_message_at : timestamptz <<nullable>>
   last_message_preview : varchar(255) <<nullable>>
   * unread_count : int = 0
   --
-  ' UNIQUE PARTIAL (person_id, channel_account_id)
-  '   WHERE status='open' AND deleted_at IS NULL
-  ' Invariantes (validados en service):
-  '   assignee_type='advisor' ⇒ assignee_user_id NOT NULL
-  '   assignee_type='bot'     ⇒ bot_configuration_id NOT NULL
-  '   assignee_type='unassigned' ⇒ ambos NULL
+  ' UNIQUE PARCIAL (person_id, channel_account_id)
+  '   WHERE status='open' AND deleted_at IS NULL  (una sola open por par)
+  ' Invariantes (validados en service, code propio):
+  '   assignee_type='advisor'    ⇒ assignee_user_id NOT NULL (sino INVALID_ASSIGNEE 400)
+  '   assignee_type ∈ {bot, unassigned} ⇒ assignee_user_id IS NULL
+  '   assignee_type='bot'        ⇒ bot_configuration_id NOT NULL (no aplica en MVP)
+  '   cerrar (closed)            ⇒ cierra el log vigente (ended_at=now)
+  '   cambio de assignee         ⇒ cierra log vigente + abre uno nuevo (misma tx)
   * active : boolean
   deleted_at : timestamptz <<nullable>>
   * created_on : timestamptz
@@ -78,7 +84,7 @@ entity "conversation" as t_conv {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Mensaje individual
+' Mensaje individual (audit inmutable — SIN SoftDelete)
 ' ─────────────────────────────────────────────────────────────
 entity "message" as t_msg {
   * id : varchar(36) <<PK>>
@@ -87,8 +93,8 @@ entity "message" as t_msg {
   * direction : varchar(10)         ' inbound / outbound
   * sender_type : varchar(20)       ' contact / bot / advisor / system
   sender_user_id : varchar(36) <<nullable, FK→user>>
-  bot_configuration_id : varchar(36) <<nullable, FK→bot_configuration>>
-  * content_type : varchar(20)      ' text / image / audio / ...
+  bot_configuration_id : varchar(36) <<nullable, fwd→bot_configuration>>
+  * content_type : varchar(20)      ' text / image / audio / ... / system_notification
   content : text <<nullable>>
   external_id : varchar(255) <<nullable>>
   external_status : varchar(40) <<nullable>>
@@ -99,8 +105,8 @@ entity "message" as t_msg {
   failure_reason : varchar(255) <<nullable>>
   provider_payload : jsonb <<nullable>>
   --
-  ' UNIQUE PARTIAL (conversation_id, external_id)
-  '   WHERE external_id IS NOT NULL — idempotencia webhook
+  ' UNIQUE PARCIAL (conversation_id, external_id)
+  '   WHERE external_id IS NOT NULL — idempotencia ante reenvío de webhook
   ' SIN SoftDelete — mensajes inmutables (audit)
   * active : boolean
   * created_on : timestamptz
@@ -110,7 +116,7 @@ entity "message" as t_msg {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Adjuntos (1:N desde Message)
+' Adjuntos (1:N desde Message) — SIN SoftDelete; processing diferido (F4)
 ' ─────────────────────────────────────────────────────────────
 entity "message_attachment" as t_att {
   * id : varchar(36) <<PK>>
@@ -129,6 +135,7 @@ entity "message_attachment" as t_att {
   metadata : jsonb <<nullable>>
   --
   ' SIN SoftDelete — coherente con Message
+  ' Modelado desde el inicio; el processor F2/F3 NO la puebla (texto-primero; F4 cablea media)
   * active : boolean
   * created_on : timestamptz
   * created_by : varchar(36)
@@ -137,7 +144,7 @@ entity "message_attachment" as t_att {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Historial de handoff (inmutable)
+' Historial de handoff (inmutable — SIN SoftDelete)
 ' ─────────────────────────────────────────────────────────────
 entity "conversation_assignment_log" as t_log {
   * id : varchar(36) <<PK>>
@@ -173,13 +180,20 @@ entity "user" as t_user <<external>> #lightgrey {
   * id : varchar(36) <<PK>>
   ...
 }
+entity "lead_activity" as t_act <<external>> #lightgrey {
+  ' Módulo: crm — conversations le agrega la FK aditiva
+  * id : varchar(36) <<PK>>
+  * person_id : varchar(36) <<FK→person>>
+  related_conversation_id : varchar(36) <<nullable, FK aditiva→conversation>>
+  ...
+}
 entity "bot_configuration" as t_bot <<external>> #lightgrey {
-  ' Módulo: bots
+  ' Módulo: bots (#6, NO existe) — FK forward, hoy NULL
   * id : varchar(36) <<PK>>
   ...
 }
 entity "campaign" as t_camp <<external>> #lightgrey {
-  ' Módulo: marketing
+  ' Módulo: marketing (#8, NO existe) — FK forward, hoy NULL
   * id : varchar(36) <<PK>>
   ...
 }
@@ -197,14 +211,14 @@ t_per |o--o{ t_conv : "person_id\n(opcional al inicio)"
 ' Conversation → User (assignee opcional)
 t_user |o--o{ t_conv : "assignee\n(opcional)"
 
-' Conversation → BotConfiguration (opcional)
-t_bot |o--o{ t_conv : "bot efectivo\n(opcional)"
+' Conversation → BotConfiguration (forward, opcional)
+t_bot |o..o{ t_conv : "bot efectivo\n(fwd, opcional)"
 
-' ChannelAccount → BotConfiguration (default)
-t_bot |o--o{ t_ca : "bot default\n(opcional)"
+' ChannelAccount → BotConfiguration (default, forward)
+t_bot |o..o{ t_ca : "bot default\n(fwd, opcional)"
 
-' ChannelAccount → Campaign (atribución)
-t_camp |o--o{ t_ca : "campaña\nde origen"
+' ChannelAccount → Campaign (atribución, forward)
+t_camp |o..o{ t_ca : "campaña\nde origen (fwd)"
 
 ' Conversation → Message
 t_conv ||--o{ t_msg : "mensajes"
@@ -215,8 +229,8 @@ t_msg ||--o{ t_att : "adjuntos"
 ' Message → User (sender opcional)
 t_user |o--o{ t_msg : "sender\n(si advisor)"
 
-' Message → BotConfiguration (sender opcional)
-t_bot |o--o{ t_msg : "sender bot\n(si bot)"
+' Message → BotConfiguration (sender forward, opcional)
+t_bot |o..o{ t_msg : "sender bot\n(fwd, si bot)"
 
 ' Conversation → ConversationAssignmentLog
 t_conv ||--o{ t_log : "historial\nhandoffs"
@@ -224,58 +238,106 @@ t_conv ||--o{ t_log : "historial\nhandoffs"
 ' Log → User (from/to/by, todos opcionales)
 t_user |o--o{ t_log : "from/to/by\n(opcionales)"
 
+' Conversation → lead_activity (FK ADITIVA — conversations la agrega, ADR-009)
+t_conv ||--o{ t_act : "related_conversation_id\n(FK aditiva)"
+
 ' ─────────────────────────────────────────────────────────────
 ' Notas
 ' ─────────────────────────────────────────────────────────────
 
 note right of t_ca
-  **Cuenta de canal**
-  Multi-cuenta por canal: una clínica
-  puede tener 2 nros WhatsApp Business
-  (uno por vertical, por ejemplo).
+  **Cuenta de canal (multi-cuenta)**
+  Un nro de WhatsApp Business = una fila;
+  una clínica puede tener N números sin
+  redeploy.
 
-  ""secret_name"" apunta a GCP Secret
-  Manager — el código resuelve el token
-  en runtime, no vive en BD.
+  ""channel_type"" REUSA el enum
+  ""crm.ChannelType"" (single source of truth,
+  NO se duplica, NO es FK física).
+
+  ""secret_name"" apunta a GCP Secret Manager —
+  el ""secret_resolver"" (app.core.secrets, SDK
+  runtime + cache TTL) resuelve el token; el
+  valor NUNCA vive en BD ni viaja al schema.
+  NULL = fallback a env (local/dev). ADR-010.
+
+  ""phone_number_id"" arma la URL de envío de
+  Meta ""/{phone_number_id}/messages"".
 end note
 
 note right of t_conv
-  **Una sola conversation activa
+  **Una sola conversation OPEN
   por (person, channel_account)**
-  vía UNIQUE PARTIAL sobre status=open.
-  Múltiples conversations cerradas
-  pueden coexistir como historial.
+  vía UNIQUE PARCIAL sobre status='open'
+  AND deleted_at IS NULL. Múltiples cerradas
+  pueden coexistir como historial; reabrir
+  valida no-otra-open (CONVERSATION_ALREADY_OPEN 409).
 
   ""assignee_type"" + ""assignee_user_id"" +
-  ""bot_configuration_id"" determinan
-  quién atiende ahora.
+  ""bot_configuration_id"" determinan quién
+  atiende ahora. Conversación nueva = AUTO al
+  dueño del lead (advisor_map de crm), fallback
+  ""unassigned"" (bandeja compartida).
 end note
 
 note bottom of t_msg
   **Idempotencia webhook**
-  UNIQUE PARTIAL (conversation_id, external_id)
+  UNIQUE PARCIAL (conversation_id, external_id)
   WHERE external_id IS NOT NULL.
-  Si Meta reenvía el mismo wa_id,
-  el INSERT falla y se ignora.
+  Si Meta reenvía el mismo ""wamid"",
+  el INSERT falla y se ignora (dedup).
 
-  SIN SoftDelete — mensajes son
-  audit trail inmutable.
+  SIN SoftDelete — los mensajes son
+  audit trail inmutable. ""provider_payload""
+  guarda el JSON original (debug; JSONB en
+  Postgres, JSON en sqlite/create_all).
 end note
 
 note bottom of t_att
-  **Estructurado, no JSONB**
-  Permite reportes ("audios enviados
-  este mes") sin parsear payload.
-  ""url"" apunta a GCS (decidido al
-  implementar storage).
+  **Estructurado, no solo JSONB**
+  Permite reportes ("audios enviados este
+  mes") sin parsear payload. Modelado en F2,
+  ""url""/storage se cablea en F4 (texto-primero;
+  lazy proxy vs GCS se re-confirma en F4).
 end note
 
 note right of t_log
   **Cada handoff cierra el log previo
   (ended_at = now()) y abre uno nuevo**
   ""by_actor_user_id"" NULL = automático
-  (bot/sistema).
+  (auto-asignación / sistema).
+  Tomar/Liberar emiten CONVERSATION_TAKEN /
+  CONVERSATION_RELEASED a crm.lead_activity
+  (NO MESSAGE_SENT por-mensaje).
   Inmutable: audit trail.
 end note
+
+note bottom of t_act
+  **FK ADITIVA — conversations la agrega (ADR-009)**
+  La columna ""related_conversation_id"" ya existe
+  en ""crm.lead_activity"" (varchar(36)+index, SIN
+  constraint). conversations agrega la FK física
+  ADITIVA en su migración de threads (F2),
+  Postgres-only; NO agrega ""relationship"" ORM
+  (modelo crm intacto). Seguro: todos los valores
+  actuales son NULL. (caveat: el ALTER ADD FK no
+  corre en sqlite/create_all.)
+end note
+
+note as N_FWD
+  **FKs forward diferidas (ADR-009)** — ""<<fwd>>""
+  Columnas ""varchar(36)"" nullable SIN FK física ni
+  ""relationship"" — ""bots""(#6) y ""marketing""(#8) aún
+  NO existen (declarar el ForeignKey rompería la
+  migración; el relationship rompería el mapper).
+  Hoy son SIEMPRE NULL. El módulo dueño agrega la
+  constraint ADITIVA al crear su tabla:
+  • ""channel_account.bot_configuration_id"" → bots.bot_configuration
+  • ""conversation.bot_configuration_id""    → bots.bot_configuration
+  • ""message.bot_configuration_id""         → bots.bot_configuration
+  • ""channel_account.default_campaign_id""  → marketing.campaign
+end note
+N_FWD .. t_ca
+N_FWD .. t_bot
 
 @enduml

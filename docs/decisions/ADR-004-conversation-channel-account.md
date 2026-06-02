@@ -1,6 +1,6 @@
 # ADR-004: Conversation + ChannelAccount como par central de la mensajería multicanal
 
-> **Status**: Accepted
+> **Status**: Accepted (act. 2026-06-02)
 > **Date**: 2026-05-28
 > **Deciders**: @daniel, @marco
 
@@ -99,9 +99,51 @@ Una tabla `channel` con la config (token, etc.) compartida por canal, sin distin
   - Tomar/release/close transiciona `assignee_type` y cierra/abre `ConversationAssignmentLog`.
   - `find_or_create_open` reusa la abierta o crea una nueva si no hay.
 
+## Actualización (2026-06-02)
+
+Las decisiones se confirmaron con el usuario en la fase de documentación del módulo (ver la spec autoritativa y el [README consolidado](../modules/conversations/README.md)). El ADR sigue **Accepted**: la decisión central (`ChannelAccount` + `Conversation` con FK simple, webhooks top-level, handoff como estado plano + log inmutable) se mantiene. Los puntos siguientes **corrigen** o **refinan** el texto original.
+
+### Corrección sobre Secret Manager
+
+El texto de "Lo que esto nos obliga a hacer" afirmaba que `get_credentials()` resolvería `secret_name` contra GCP Secret Manager usando un **"cliente ya configurado en el template para `SECRET_KEY`"**. Eso es **falso**: el template hoy inyecta secretos fijos por env a **deploy-time** vía `--set-secrets` de Cloud Run (`SECRET_KEY`/DB-creds llegan como **env vars** que la app lee por `Settings`, **sin SDK**). No existe cliente de Secret Manager en el código.
+
+Las credenciales **por-`ChannelAccount`** necesitan resolución **dinámica** (multi-cuenta sin redeploy), así que se introduce el SDK `google-cloud-secret-manager` con un resolver en runtime (`app/core/secrets.py`, cache TTL + fallback env en local/test). Esa decisión vive en su propio ADR → ver **[ADR-010](ADR-010-runtime-secret-resolution.md)**. El fallback a env de `get_credentials()` que describe la sección "Negativas / Trade-offs" sigue válido.
+
+### Convención de updates: PUT, no PATCH
+
+El codebase usa **`PUT`** (no `PATCH`) para los updates de `ChannelAccount` (`PUT /channel-accounts/{id}`), consistente con el resto de los módulos (catalog/clinic/staff/crm). Cualquier referencia a PATCH queda corregida a PUT.
+
+### Asignación de la conversación nueva = auto al dueño del lead, con fallback
+
+El diseño original dejaba implícito que la conversación entra `unassigned` siempre. **Reemplazado**: al crear una conversación nueva para una `Person`, se **auto-asigna** al asesor de su `LeadAssignment` activo (el round-robin que ya hace crm, leído vía `lead_assignment_repository.advisor_map`); si la Person no tiene asesor → `unassigned` (bandeja compartida). La auto-asignación abre un `ConversationAssignmentLog` con `by_actor_user_id = NULL` (automático). El asesor puede tomar/reasignar igual. Continuidad "mis leads = mis chats".
+
+### Adjuntos texto-primero
+
+`MessageAttachment` se **modela** desde el inicio (tabla + enum `AttachmentType`, creada en la migración de threads para no re-migrar), pero el processor del MVP procesa **solo texto**. El download/storage de media (lazy proxy vs GCS, a re-confirmar) se **difiere a F4**.
+
+### Webhook entrante síncrono en el MVP
+
+El procesamiento inbound es **síncrono** antes del 200 (verify firma + dedup + resolver Person + persistir): es rápido y no hay bot que genere auto-reply lento, así que **no** se usa `BackgroundTasks`. Cuando `bots` (#6) agregue auto-reply lento → mover a cola / `--no-cpu-throttling --min-instances 1`. (Difiere del patrón general "200 inmediato + BackgroundTasks" justamente porque no hay trabajo lento aún.)
+
+### Emisión a la timeline de crm: solo handoff, no por-mensaje
+
+conversations emite a `crm.LeadActivity` **solo** `CONVERSATION_TAKEN` (al tomar) y `CONVERSATION_RELEASED` (al liberar). **NO** emite `MESSAGE_SENT` por-mensaje (evita inundar el timeline lead-céntrico y la escritura cross-módulo en el hot path del envío). `MESSAGE_SENT` queda reservado en el enum para un uso futuro (ej. "primer contacto"). Estos eventos no están en `ADVISOR_ACTIVITY_TYPES`, así que el composer del asesor de crm no puede editarlos/borrarlos → audit trail inmutable.
+
+### Hardening de `find_by_identifier_or_create` con advisory lock
+
+`crm.find_by_identifier_or_create` (que invoca el webhook processor) hacía get-then-insert **sin lock** (no tenía callers); bajo webhooks concurrentes para el MISMO número nuevo, dos requests insertarían → `IntegrityError`. Se agrega un **advisory lock transaccional Postgres** (`pg_advisory_xact_lock`) al inicio de la función, keyed por `(channel_type, identifier)` (no-op en sqlite). La hardening vive dentro de crm (la función dueña del dedup) y beneficia a cualquier caller.
+
+### FK aditiva `lead_activity.related_conversation_id → conversation`
+
+conversations **es el dueño** de la relación (ADR-009): la columna `lead_activity.related_conversation_id` ya existe en crm (`varchar(36)` + index, **sin** constraint). conversations agrega la **FK constraint aditiva** (`fk_lead_activity_conversation`, Postgres-only) en la **migración 0016** (threads). Seguro (todos los valores actuales son NULL); **sin** `relationship` ORM (mantiene el modelo crm intacto).
+
+### Mensajes de sistema en el hilo: no se insertan en el MVP
+
+El handoff (tomar/liberar/cerrar/reabrir) **NO** inserta un `Message(sender_type=system, content_type=system_notification)` en el hilo en el MVP. Se ve vía el `assignment_history` (`ConversationAssignmentLog`) en el header del hilo + el badge "Asignado a X". Los valores de enum `SenderType.system` / `ContentType.system_notification` quedan **reservados** (forward, no se emiten en el MVP).
+
 ## Referencias
 
-- Ficha del módulo: [`docs/modules/conversations.md`](../modules/conversations.md)
+- Ficha del módulo: [`docs/modules/conversations/README.md`](../modules/conversations/README.md) (overview consolidado; ver también `backend.md`/`ui.md`/`frontend.md`)
 - ADR relacionado: [ADR-003](ADR-003-person-with-separated-lifecycle-statuses.md) — `Conversation.person_id` apunta a `Person`, no a lead/customer; coherente con el modelo de identidad única acordado en CRM.
 - Patrón en código futuro: `backend/app/modules/conversations/`, `backend/app/routers/webhooks.py`.
 - Sobre Meta WhatsApp Cloud API webhook signature: el handler valida `X-Hub-Signature-256` con HMAC SHA256 sobre el body raw, usando `app_secret` resuelto desde el secret apuntado por `channel_account.secret_name`. Documentación: <https://developers.facebook.com/docs/graph-api/webhooks/getting-started#validating-payloads>.

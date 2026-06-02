@@ -47,12 +47,13 @@ PROPOSED → ACCEPTED → (SUPERSEDED | DEPRECATED)
 | [ADR-001](ADR-001-multi-env-branching.md) | Multi-environment deployment via branch-driven workflows | Accepted | 2026-05-27 |
 | [ADR-002](ADR-002-doctor-entity-extends-user.md) | Doctor como entidad 1:1 con User, no columnas en User | Accepted | 2026-05-28 |
 | [ADR-003](ADR-003-person-with-separated-lifecycle-statuses.md) | Person + estados lead/customer separados en tablas hijas | Accepted (act. 2026-05-31) | 2026-05-28 |
-| [ADR-004](ADR-004-conversation-channel-account.md) | Conversation + ChannelAccount como par central de mensajería multicanal | Accepted | 2026-05-28 |
+| [ADR-004](ADR-004-conversation-channel-account.md) | Conversation + ChannelAccount como par central de mensajería multicanal | Accepted (act. 2026-06-02) | 2026-05-28 |
 | [ADR-005](ADR-005-agnostic-bot-engine.md) | Motor del bot agnóstico — entidades separadas de la implementación del engine | Accepted | 2026-05-28 |
 | [ADR-006](ADR-006-hybrid-calendar-slots.md) | Slots de calendario híbridos — solo Appointment persiste; disponibilidad on-the-fly | Accepted (act. 2026-05-29) | 2026-05-28 |
 | [ADR-007](ADR-007-doctor-availability-concrete-blocks.md) | Disponibilidad del doctor como bloques concretos por fecha (no patrón recurrente) | Accepted | 2026-05-29 |
 | [ADR-008](ADR-008-configurable-status-transition-matrix.md) | Matriz de transiciones de estado configurable (lead/customer) | Accepted | 2026-05-31 |
 | [ADR-009](ADR-009-forward-fk-deferred-cross-module.md) | FKs forward a módulos futuros diferidas (columna ahora, constraint después) | Accepted | 2026-05-31 |
+| [ADR-010](ADR-010-runtime-secret-resolution.md) | Resolución de secretos por-cuenta vía Secret Manager SDK en runtime (cacheado) | Accepted | 2026-06-02 |
 | _(pendiente)_ | JWT en cookie httpOnly (no localStorage)     | —      | —     |
 | _(pendiente)_ | Permisos viajan en el access token           | —      | —     |
 | _(pendiente)_ | Arquitectura backend en 5 capas              | —      | —     |
