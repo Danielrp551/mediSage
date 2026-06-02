@@ -140,6 +140,34 @@ export const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: "conversations",
+    label: "Conversaciones",
+    icon: "ChatRegular", // icono del grupo (sólo label + chevron en el sidebar)
+    children: [
+      {
+        key: "inbox",
+        label: "Bandeja",
+        icon: "MailInboxRegular",
+        url: "/conversaciones/bandeja",
+        permissions: ["CONVERSATIONS_READ"],
+      },
+      {
+        key: "my-conversations",
+        label: "Mi bandeja",
+        icon: "PersonMailRegular",
+        url: "/conversaciones/mis-conversaciones",
+        permissions: ["MY_CONVERSATIONS_READ"],
+      },
+      {
+        key: "channels",
+        label: "Canales",
+        icon: "PlugConnectedRegular",
+        url: "/conversaciones/canales",
+        permissions: ["CHANNEL_ACCOUNTS_READ"],
+      },
+    ],
+  },
+  {
     key: "admin",
     label: "Administración",
     icon: "SettingsRegular",

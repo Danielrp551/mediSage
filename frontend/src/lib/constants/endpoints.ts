@@ -7,6 +7,7 @@ const CATALOG = "/api/v1/catalog";
 const CLINIC = "/api/v1/clinic";
 const STAFF = "/api/v1/staff";
 const CRM = "/api/v1/crm";
+const CONVERSATIONS = "/api/v1/conversations";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -162,5 +163,32 @@ export const ENDPOINTS = {
   },
   ME_CRM: {
     LEADS_LIST: `${CRM}/me/leads/list`, // POST + QueryRequest — leads del asesor logueado (MY_LEADS_READ)
+  },
+  // ── Conversations module ─────────────────────────────────
+  // Webhooks (top-level /api/v1/webhooks/whatsapp/{id}, sin JWT) NO van acá: los
+  // consume Meta directo contra el backend; el frontend nunca los llama.
+  CHANNEL_ACCOUNTS: {
+    LIST: `${CONVERSATIONS}/channel-accounts/list`,
+    CREATE: `${CONVERSATIONS}/channel-accounts`,
+    GET: (id: string) => `${CONVERSATIONS}/channel-accounts/${id}`,
+    UPDATE: (id: string) => `${CONVERSATIONS}/channel-accounts/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${CONVERSATIONS}/channel-accounts/${id}`, // soft delete
+    ACTIVE: `${CONVERSATIONS}/channel-accounts/active`, // raw ChannelAccountOption[] list
+  },
+  // `CONVERSATIONS_API` (no `CONVERSATIONS`): la const string ya ocupa ese
+  // identificador (mismo patrón que `ME_CRM` en crm).
+  CONVERSATIONS_API: {
+    LIST: `${CONVERSATIONS}/list`, // inbox global. PaginatedResponse[ConversationListItem]
+    GET: (id: string) => `${CONVERSATIONS}/${id}`, // SingleResponse[ConversationDetail]
+    MESSAGES_LIST: (id: string) => `${CONVERSATIONS}/${id}/messages/list`, // POST + QueryRequest
+    SEND_MESSAGE: (id: string) => `${CONVERSATIONS}/${id}/messages`, // POST outbound (real Meta)
+    TAKE: (id: string) => `${CONVERSATIONS}/${id}/take`, // POST
+    RELEASE: (id: string) => `${CONVERSATIONS}/${id}/release`, // POST
+    CLOSE: (id: string) => `${CONVERSATIONS}/${id}/close`, // POST
+    REOPEN: (id: string) => `${CONVERSATIONS}/${id}/reopen`, // POST
+    MARK_READ: (id: string) => `${CONVERSATIONS}/${id}/mark-read`, // POST
+  },
+  ME_CONVERSATIONS: {
+    LIST: `${CONVERSATIONS}/me/conversations/list`, // POST + QueryRequest — mi bandeja
   },
 } as const;

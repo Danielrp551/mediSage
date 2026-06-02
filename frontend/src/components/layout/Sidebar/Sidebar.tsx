@@ -8,15 +8,19 @@ import {
   BuildingMultipleRegular,
   BuildingRegular,
   CalendarLtrRegular,
+  ChatRegular,
   ChevronRightRegular,
   ConferenceRoomRegular,
   ContactCardRegular,
   DoctorRegular,
   HomeRegular,
   LockClosedRegular,
+  MailInboxRegular,
   PeopleRegular,
   PeopleTeamRegular,
+  PersonMailRegular,
   PersonRegular,
+  PlugConnectedRegular,
   SettingsRegular,
   ShieldRegular,
   TagMultipleRegular,
@@ -54,6 +58,11 @@ const ICONS: Record<string, ReactElement> = {
   // CRM module
   ContactCardRegular: <ContactCardRegular />,
   TagMultipleRegular: <TagMultipleRegular />,
+  // Conversations module
+  ChatRegular: <ChatRegular />,
+  MailInboxRegular: <MailInboxRegular />,
+  PersonMailRegular: <PersonMailRegular />,
+  PlugConnectedRegular: <PlugConnectedRegular />,
 };
 
 const useStyles = makeStyles({

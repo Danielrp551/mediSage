@@ -110,6 +110,19 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "LEAD_ACTIVITIES_WRITE", "name": "Write lead activities", "module": "CRM"},
     {"code": "LEAD_STATUS_HISTORY_READ", "name": "Read lead status history", "module": "CRM"},
     {"code": "MY_LEADS_READ", "name": "Read my assigned leads", "module": "CRM"},
+    # ── Module: conversations (12 permisos) ─────────────────────────────
+    {"code": "MENU-CONVERSATIONS", "name": "Menu Conversations", "module": "CONVERSATIONS"},
+    {"code": "CHANNEL_ACCOUNTS_READ", "name": "Read channel accounts", "module": "CONVERSATIONS"},
+    {"code": "CHANNEL_ACCOUNTS_CREATE", "name": "Create channel accounts", "module": "CONVERSATIONS"},
+    {"code": "CHANNEL_ACCOUNTS_UPDATE", "name": "Update channel accounts", "module": "CONVERSATIONS"},
+    {"code": "CHANNEL_ACCOUNTS_DELETE", "name": "Delete channel accounts", "module": "CONVERSATIONS"},
+    {"code": "CONVERSATIONS_READ", "name": "Read conversations", "module": "CONVERSATIONS"},
+    {"code": "CONVERSATIONS_TAKE", "name": "Take conversation", "module": "CONVERSATIONS"},
+    {"code": "CONVERSATIONS_RELEASE", "name": "Release conversation", "module": "CONVERSATIONS"},
+    {"code": "CONVERSATIONS_CLOSE", "name": "Close conversation", "module": "CONVERSATIONS"},
+    {"code": "MESSAGES_READ", "name": "Read messages", "module": "CONVERSATIONS"},
+    {"code": "MESSAGES_SEND", "name": "Send messages", "module": "CONVERSATIONS"},
+    {"code": "MY_CONVERSATIONS_READ", "name": "Read my conversations", "module": "CONVERSATIONS"},
 ]
 
 
