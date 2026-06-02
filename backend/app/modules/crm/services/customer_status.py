@@ -2,7 +2,8 @@
 CustomerStatus service. Análogo a `lead_status.py` SIN `is_won` (sin
 WON_REQUIRES_FINAL). Invariantes: `code` único (409 CUSTOMER_STATUS_CODE_TAKEN),
 exactamente un `is_initial` (400 MULTIPLE_INITIAL_STATUS). El delete-guard
-CUSTOMER_STATUS_IN_USE (PersonCustomerStatus) se difiere a F4; en F2 borrar limpia
+CUSTOMER_STATUS_IN_USE (PersonCustomerStatus) se activa en F4 (la tabla ya existe):
+no se puede borrar un estado en uso por un cliente vivo (409); además, borrar limpia
 las aristas de transición y soft-deletea.
 """
 
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import (
     AlreadyExistsException,
     BadRequestException,
+    ConflictException,
     NotFoundException,
 )
 from app.modules.admin.models.user import User
@@ -23,6 +25,9 @@ from app.modules.crm.models.customer_status_transition import CustomerStatusTran
 from app.modules.crm.repositories.customer_status import (
     customer_status_repository,
     customer_status_transition_repository,
+)
+from app.modules.crm.repositories.person_customer_status import (
+    person_customer_status_repository,
 )
 from app.modules.crm.schemas.customer_status import (
     CustomerStatusCreate,
@@ -168,6 +173,12 @@ async def remove(db: AsyncSession, status_id: str, *, actor_id: str) -> None:
     status = await customer_status_repository.get_by_id(db, status_id)
     if status is None:
         raise NotFoundException("Estado de cliente no encontrado", code="CUSTOMER_STATUS_NOT_FOUND")
+    # F4: guard de uso — no borrar un estado referenciado por un cliente vivo.
+    if await person_customer_status_repository.count_using_status(db, status_id) > 0:
+        raise ConflictException(
+            "No se puede eliminar: hay clientes en este estado",
+            code="CUSTOMER_STATUS_IN_USE",
+        )
     await customer_status_transition_repository.delete_referencing(db, status_id)
     status.updated_by = actor_id
     status.updated_on = utc_now()

@@ -9,10 +9,10 @@ Creación de Person + identifiers nested en UNA transacción, con dedup proactiv
 (`get_by_identifier` → 409 IDENTIFIER_TAKEN) y `is_primary` único por canal. NO
 crea lead automáticamente.
 
-⚠ F3 subset: `lead_status`/`assigned_advisor`/`last_activity_at` YA se pueblan vía
-batch maps (person_lead_status / lead_assignment). `customer_status` sigue SIEMPRE
-None hasta F4 (PersonCustomerStatus no existe). Deep-links `lead_status_id`/
-`advisor_user_id`/`has_active_lead` → EXISTS; `customer_status_id` sigue NO-OP (F4).
+⚠ F4: `lead_status`/`customer_status`/`assigned_advisor`/`last_activity_at` YA se
+pueblan vía batch maps (person_lead_status / person_customer_status / lead_assignment).
+Deep-links `lead_status_id`/`customer_status_id`/`advisor_user_id`/`has_active_lead`
+→ EXISTS correlados en el repo.
 """
 
 from __future__ import annotations
@@ -26,14 +26,19 @@ from app.modules.admin.models.user import User
 from app.modules.admin.repositories.user import user_repository
 from app.modules.admin.schemas.audit import UserAuditInfo
 from app.modules.crm.enums import ChannelType
+from app.modules.crm.models.customer_status import CustomerStatus
 from app.modules.crm.models.lead_status import LeadStatus
 from app.modules.crm.models.person import Person
 from app.modules.crm.models.person_contact_identifier import PersonContactIdentifier
 from app.modules.crm.repositories.lead_assignment import lead_assignment_repository
 from app.modules.crm.repositories.person import person_repository
+from app.modules.crm.repositories.person_customer_status import (
+    person_customer_status_repository,
+)
 from app.modules.crm.repositories.person_lead_status import person_lead_status_repository
 from app.modules.crm.schemas.contact_identifier import ContactIdentifierItem
 from app.modules.crm.schemas.person import (
+    CustomerStatusSummary,
     LeadStatusSummary,
     PersonCreate,
     PersonDetail,
@@ -71,6 +76,7 @@ def _to_item(
     *,
     primary_identifier: PersonContactIdentifier | None = None,
     lead_status: LeadStatus | None = None,
+    customer_status: CustomerStatus | None = None,
     assigned_advisor: User | None = None,
     last_activity_at: datetime | None = None,
 ) -> PersonItem:
@@ -88,14 +94,19 @@ def _to_item(
             if primary_identifier is not None
             else None
         ),
-        # F3: lead_status/assigned_advisor/last_activity_at denormalizados vía batch
-        # maps. customer_status sigue None hasta F4 (PersonCustomerStatus no existe).
+        # F4: lead_status/customer_status/assigned_advisor/last_activity_at
+        # denormalizados vía batch maps (person_lead_status / person_customer_status /
+        # lead_assignment).
         lead_status=(
             LeadStatusSummary.model_validate(lead_status, from_attributes=True)
             if lead_status is not None
             else None
         ),
-        customer_status=None,
+        customer_status=(
+            CustomerStatusSummary.model_validate(customer_status, from_attributes=True)
+            if customer_status is not None
+            else None
+        ),
         assigned_advisor=_audit_info(assigned_advisor),
         last_activity_at=last_activity_at,
         created_on=person.created_on,
@@ -112,6 +123,7 @@ def _to_detail(
     audit_users: dict[str, User],
     *,
     lead_status: LeadStatus | None = None,
+    customer_status: CustomerStatus | None = None,
     assigned_advisor: User | None = None,
     last_activity_at: datetime | None = None,
 ) -> PersonDetail:
@@ -121,8 +133,8 @@ def _to_detail(
     # Orden determinista (created_on desc): la cabecera toma el principal más
     # reciente —mismo desempate que `primary_identifier_map` del listado— y la
     # lista del detalle queda igual que el sub-recurso /identifiers (list_for_person).
-    # lead_status/assigned_advisor/last_activity_at = denormalizados vía batch maps
-    # (F3); customer_status sigue None hasta F4.
+    # lead_status/customer_status/assigned_advisor/last_activity_at = denormalizados
+    # vía batch maps (F4).
     sorted_identifiers = sorted(person.identifiers, key=lambda i: i.created_on, reverse=True)
     primary = next((i for i in sorted_identifiers if i.is_primary), None)
     return PersonDetail(
@@ -131,6 +143,7 @@ def _to_detail(
             audit_users,
             primary_identifier=primary,
             lead_status=lead_status,
+            customer_status=customer_status,
             assigned_advisor=assigned_advisor,
             last_activity_at=last_activity_at,
         ).model_dump(),
@@ -219,8 +232,9 @@ async def get_by_id(db: AsyncSession, person_id: str) -> SingleResponse[PersonDe
     person = await person_repository.get_full(db, person_id)
     if person is None:
         raise NotFoundException("Persona no encontrada", code="PERSON_NOT_FOUND")
-    # Denormalizados F3 vía batch maps (single person).
+    # Denormalizados F4 vía batch maps (single person).
     lead_status_map = await person_lead_status_repository.status_map(db, [person_id])
+    customer_status_map = await person_customer_status_repository.status_map(db, [person_id])
     advisor_id_map = await lead_assignment_repository.advisor_map(db, [person_id])
     last_activity_map = await person_lead_status_repository.last_activity_map(db, [person_id])
     advisor_id = advisor_id_map.get(person_id)
@@ -233,6 +247,7 @@ async def get_by_id(db: AsyncSession, person_id: str) -> SingleResponse[PersonDe
             person,
             audit_users,
             lead_status=lead_status_map.get(person_id),
+            customer_status=customer_status_map.get(person_id),
             assigned_advisor=(audit_users.get(advisor_id) if advisor_id is not None else None),
             last_activity_at=last_activity_map.get(person_id),
         )
@@ -248,19 +263,21 @@ async def list_paginated(
     advisor_user_id: str | None = None,
     has_active_lead: bool | None = None,
 ) -> PaginatedResponse[PersonItem]:
-    # F3: lead_status_id / advisor_user_id / has_active_lead → EXISTS correlados en el
-    # repo (person_lead_status / lead_assignment). customer_status_id sigue no-op
-    # hasta F4 (PersonCustomerStatus no existe).
+    # F4: lead_status_id / customer_status_id / advisor_user_id / has_active_lead →
+    # EXISTS correlados en el repo (person_lead_status / person_customer_status /
+    # lead_assignment).
     items, total = await person_repository.list_paginated_filtered(
         db,
         query_request,
         lead_status_id=lead_status_id,
+        customer_status_id=customer_status_id,
         advisor_user_id=advisor_user_id,
         has_active_lead=has_active_lead,
     )
     person_ids = [p.id for p in items]
     primary_map = await person_repository.primary_identifier_map(db, person_ids)
     lead_status_map = await person_lead_status_repository.status_map(db, person_ids)
+    customer_status_map = await person_customer_status_repository.status_map(db, person_ids)
     last_activity_map = await person_lead_status_repository.last_activity_map(db, person_ids)
     advisor_id_map = await lead_assignment_repository.advisor_map(db, person_ids)
     actor_ids = _collect_actor_ids(items)
@@ -272,6 +289,7 @@ async def list_paginated(
             audit_users,
             primary_identifier=primary_map.get(p.id),
             lead_status=lead_status_map.get(p.id),
+            customer_status=customer_status_map.get(p.id),
             assigned_advisor=audit_users.get(advisor_id_map.get(p.id) or ""),
             last_activity_at=last_activity_map.get(p.id),
         )

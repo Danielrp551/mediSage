@@ -19,10 +19,10 @@ import { appTokens } from "@/lib/theme/brand";
 import type { PersonDetail } from "@/types/crm.types";
 
 import { ActivityTimeline } from "./ActivityTimeline";
+import { CustomerTab } from "./CustomerTab";
 import { IdentifiersTab } from "./IdentifiersTab";
 import { LeadTab } from "./LeadTab";
 import { PersonAuditTab } from "./PersonAuditTab";
-import { PersonPlaceholderTab } from "./PersonPlaceholderTab";
 import { PersonSummaryTab } from "./PersonSummaryTab";
 import { StatusBadge } from "./StatusBadge";
 
@@ -77,7 +77,8 @@ export function PersonDetailShell({ person, initialTab }: Props) {
   // Actividad sólo se renderiza con LEAD_ACTIVITIES_READ (ui.md). Resumen /
   // Identificadores / Lead / Cliente / Auditoría se ven con PERSONS_READ (que el
   // RSC ya garantizó). F3 funcionaliza Lead (estado + transición + history) y
-  // Actividad (feed read-only); Cliente sigue placeholder hasta F4.
+  // Actividad (feed read-only); F4 funcionaliza Cliente (estado + transición +
+  // history; la promoción nace desde el tab Lead).
   const canReadActivity = hasPermission("LEAD_ACTIVITIES_READ");
 
   const [tabParam, setTabParam] = useQueryState("tab", { defaultValue: initialTab });
@@ -162,9 +163,10 @@ export function PersonDetailShell({ person, initialTab }: Props) {
           canReadHistory={hasPermission("LEAD_STATUS_HISTORY_READ")}
         />
       ) : activeTab === "customer" ? (
-        <PersonPlaceholderTab
-          title="Cliente"
-          message="La gestión del estado de cliente estará disponible en una próxima fase."
+        <CustomerTab
+          personId={person.id}
+          canWrite={hasPermission("LEAD_ACTIVITIES_WRITE")}
+          canReadHistory={hasPermission("LEAD_STATUS_HISTORY_READ")}
         />
       ) : activeTab === "activity" ? (
         <ActivityTimeline personId={person.id} canWrite={hasPermission("LEAD_ACTIVITIES_WRITE")} />

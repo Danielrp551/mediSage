@@ -21,11 +21,15 @@ import {
 import { ArrowRightRegular } from "@fluentui/react-icons";
 import { useEffect, useRef, useState } from "react";
 
+import { getCustomerTransitions } from "@/actions/customer-status.actions";
 import { getLeadTransitions } from "@/actions/lead-status.actions";
 import { appTokens } from "@/lib/theme/brand";
-import type { LeadStatusOption } from "@/types/crm.types";
+import type { CustomerStatusOption, LeadStatusOption } from "@/types/crm.types";
 
 import { StatusBadge } from "./StatusBadge";
+
+/** Destino de transición: lead o customer (StatusBadge acepta ambos). */
+type TransitionTarget = LeadStatusOption | CustomerStatusOption;
 
 const useStyles = makeStyles({
   root: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalXS },
@@ -38,25 +42,30 @@ const useStyles = makeStyles({
 
 interface Props {
   currentStatusId: string;
-  kind: "lead";
+  kind: "lead" | "customer";
   onTransition: (toId: string, reason?: string | null) => Promise<void>;
   disabled?: boolean;
 }
 
 /**
  * Dado el estado actual, ofrece SOLO los destinos permitidos por la matriz
- * (`getLeadTransitions`). Si el estado es terminal (sin destinos) → control
- * deshabilitado con hint. Al elegir un destino, abre un diálogo con `reason?`
- * opcional → llama `onTransition`.
+ * (`getLeadTransitions` para lead, `getCustomerTransitions` para customer). Si el
+ * estado es terminal (sin destinos) → control deshabilitado con hint. Al elegir un
+ * destino, abre un diálogo con `reason?` opcional → llama `onTransition`.
  */
-export function TransitionControl({ currentStatusId, onTransition, disabled = false }: Props) {
+export function TransitionControl({
+  currentStatusId,
+  kind,
+  onTransition,
+  disabled = false,
+}: Props) {
   const styles = useStyles();
 
   const [loading, setLoading] = useState(true);
-  const [targets, setTargets] = useState<LeadStatusOption[]>([]);
+  const [targets, setTargets] = useState<TransitionTarget[]>([]);
   const [loadError, setLoadError] = useState(false);
 
-  const [chosen, setChosen] = useState<LeadStatusOption | null>(null);
+  const [chosen, setChosen] = useState<TransitionTarget | null>(null);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -66,7 +75,11 @@ export function TransitionControl({ currentStatusId, onTransition, disabled = fa
     const reqId = ++reqIdRef.current;
     setLoading(true);
     setLoadError(false);
-    void getLeadTransitions(currentStatusId)
+    const fetchTargets =
+      kind === "customer"
+        ? getCustomerTransitions(currentStatusId)
+        : getLeadTransitions(currentStatusId);
+    void fetchTargets
       .then((res) => {
         if (reqId !== reqIdRef.current) return;
         setTargets(res.to);
@@ -77,7 +90,7 @@ export function TransitionControl({ currentStatusId, onTransition, disabled = fa
         setLoadError(true);
         setLoading(false);
       });
-  }, [currentStatusId]);
+  }, [currentStatusId, kind]);
 
   const handleConfirm = async () => {
     if (!chosen) return;
@@ -153,7 +166,9 @@ export function TransitionControl({ currentStatusId, onTransition, disabled = fa
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>Cambiar estado del lead</DialogTitle>
+            <DialogTitle>
+              {kind === "customer" ? "Cambiar estado del cliente" : "Cambiar estado del lead"}
+            </DialogTitle>
             <DialogContent>
               <div className={styles.root}>
                 {chosen ? (

@@ -2,11 +2,16 @@
 
 import {
   Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   MessageBar,
   MessageBarBody,
   Spinner,
   Textarea,
-  Tooltip,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
@@ -18,6 +23,7 @@ import {
   createLead,
   getLeadHistory,
   getLeadStatus,
+  promoteToCustomer,
   transitionLead,
 } from "@/actions/lead-lifecycle.actions";
 import { FormField } from "@/components/ui/Form/FormField";
@@ -120,7 +126,8 @@ interface Props {
  *
  * - Sin lead activo (`null`) → estado vacío + "Crear lead" (gated canWrite).
  * - Con lead activo → StatusBadge + entered_status_at + source_campaign_id +
- *   TransitionControl + "Promover a cliente" DESHABILITADO (F4).
+ *   TransitionControl + "Promover a cliente" (F4: confirm Dialog → promoteToCustomer;
+ *   puede cerrar el lead como ganado).
  */
 export function LeadTab({ personId, canWrite, canReadHistory }: Props) {
   const styles = useStyles();
@@ -208,6 +215,9 @@ function ActiveLead({
   onChanged: () => void;
 }) {
   const [transitionError, setTransitionError] = useState<string | null>(null);
+  const [promoteOpen, setPromoteOpen] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
+  const [promoting, setPromoting] = useState(false);
 
   const handleTransition = async (toId: string, reason?: string | null) => {
     setTransitionError(null);
@@ -221,6 +231,24 @@ function ActiveLead({
       return;
     }
     onChanged();
+  };
+
+  const handlePromote = async () => {
+    setPromoteError(null);
+    setPromoting(true);
+    try {
+      const result = await promoteToCustomer(lead.person_id, { reason: null });
+      if (!result.ok) {
+        // 409 ALREADY_CUSTOMER → "La persona ya es cliente" (backend, en español).
+        setPromoteError(result.error ?? "No se pudo promover a cliente.");
+        return;
+      }
+      setPromoteOpen(false);
+      // El lead pudo cerrarse como ganado + nace la ficha de cliente → refresca todo.
+      onChanged();
+    } finally {
+      setPromoting(false);
+    }
   };
 
   return (
@@ -255,17 +283,65 @@ function ActiveLead({
               kind="lead"
               onTransition={handleTransition}
             />
-            {/* "Promover a cliente" llega en F4 (el endpoint de backend no existe en F3). */}
-            <Tooltip content="Disponible en la fase Cliente" relationship="label" withArrow>
-              <span>
-                <Button appearance="secondary" icon={<ArrowRightRegular />} disabled>
-                  Promover a cliente
-                </Button>
-              </span>
-            </Tooltip>
+            <Button
+              appearance="secondary"
+              icon={<ArrowRightRegular />}
+              onClick={() => {
+                setPromoteError(null);
+                setPromoteOpen(true);
+              }}
+            >
+              Promover a cliente
+            </Button>
           </div>
         ) : null}
       </div>
+
+      <Dialog
+        open={promoteOpen}
+        onOpenChange={(_, d) => {
+          if (!d.open && !promoting) {
+            setPromoteOpen(false);
+            setPromoteError(null);
+          }
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Promover a cliente</DialogTitle>
+            <DialogContent>
+              {promoteError ? (
+                <MessageBar intent="error">
+                  <MessageBarBody>{promoteError}</MessageBarBody>
+                </MessageBar>
+              ) : null}
+              <p>
+                ¿Promover a este contacto a cliente? Se creará su ficha de cliente y, si el estado
+                actual lo permite, se cerrará el lead como ganado.
+              </p>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="secondary"
+                disabled={promoting}
+                onClick={() => {
+                  setPromoteOpen(false);
+                  setPromoteError(null);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                appearance="primary"
+                disabled={promoting}
+                onClick={() => void handlePromote()}
+              >
+                {promoting ? "Promoviendo…" : "Promover"}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   );
 }

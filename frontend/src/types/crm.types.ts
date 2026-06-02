@@ -423,8 +423,11 @@ export interface LeadStatusHistoryItem {
 export interface CustomerStatusHistoryItem {
   id: string;
   person_id: string;
-  from_customer_status: CustomerStatusSummary | null;
-  to_customer_status: CustomerStatusSummary;
+  // El backend (schemas/customer_lifecycle.py) emite CustomerStatusOption en el
+  // history, igual que PersonCustomerStatusDetail.customer_status. null en la
+  // promoción inicial (NULL→initial).
+  from_customer_status: CustomerStatusOption | null;
+  to_customer_status: CustomerStatusOption;
   changed_at: string;
   changed_by: string | null;
   changed_by_user: UserAuditInfo | null;

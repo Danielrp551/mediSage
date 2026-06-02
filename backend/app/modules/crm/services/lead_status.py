@@ -7,10 +7,10 @@ Invariantes (validados acá, NO en Pydantic, para devolver 400 + code consistent
 - exactamente un `is_initial` por catálogo → 400 MULTIPLE_INITIAL_STATUS.
 - `is_won ⟹ is_final` → 400 WON_REQUIRES_FINAL (create y update, sobre el merge).
 
-⚠ Subset F2: el delete-guard `LEAD_STATUS_IN_USE` (que mira PersonLeadStatus) se
-difiere a F3 — esa tabla no existe todavía. En F2, borrar un estado limpia sus
-aristas de transición (no quedan colgantes) y lo soft-deletea. La matriz SÍ es
-construible en F2 (FKs a lead_status, que ya existe).
+El delete-guard `LEAD_STATUS_IN_USE` (que mira PersonLeadStatus) se activa en F4 (la
+tabla person_lead_status ya existe desde F3): no se puede borrar un estado en uso por
+un lead vivo (409). Además, borrar un estado limpia sus aristas de transición (no
+quedan colgantes) y lo soft-deletea.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import (
     AlreadyExistsException,
     BadRequestException,
+    ConflictException,
     NotFoundException,
 )
 from app.modules.admin.models.user import User
@@ -31,6 +32,7 @@ from app.modules.crm.repositories.lead_status import (
     lead_status_repository,
     lead_status_transition_repository,
 )
+from app.modules.crm.repositories.person_lead_status import person_lead_status_repository
 from app.modules.crm.schemas.lead_status import (
     LeadStatusCreate,
     LeadStatusItem,
@@ -191,9 +193,14 @@ async def remove(db: AsyncSession, status_id: str, *, actor_id: str) -> None:
     status = await lead_status_repository.get_by_id(db, status_id)
     if status is None:
         raise NotFoundException("Estado de lead no encontrado", code="LEAD_STATUS_NOT_FOUND")
-    # F2: LEAD_STATUS_IN_USE (PersonLeadStatus) se difiere a F3. Limpiamos las aristas
-    # de transición que tocan el estado (sin SD → DELETE real) para no dejar la matriz
-    # colgando, y soft-deleteamos el catálogo.
+    # F4: guard de uso — no borrar un estado referenciado por un lead vivo.
+    if await person_lead_status_repository.count_using_status(db, status_id) > 0:
+        raise ConflictException(
+            "No se puede eliminar: hay leads en este estado",
+            code="LEAD_STATUS_IN_USE",
+        )
+    # Limpiamos las aristas de transición que tocan el estado (sin SD → DELETE real)
+    # para no dejar la matriz colgando, y soft-deleteamos el catálogo.
     await lead_status_transition_repository.delete_referencing(db, status_id)
     status.updated_by = actor_id
     status.updated_on = utc_now()

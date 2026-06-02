@@ -7,10 +7,10 @@ que el frontend puede filtrar/ordenar dinámicamente vía `QueryRequest`.
 `BaseRepository` (todo read filtra `deleted_at IS NULL`).
 
 ⚠ F1 subset: `get_full` carga SOLO `identifiers` (filtrando soft-deleted vía
-`with_loader_criteria`). Las relaciones lead_status/customer_status/assignment
-NO existen en F1 — se agregan a este eager-load en F3/F4 cuando sus modelos
-existan. `get_by_identifier`/`search`/`list_active` solo tocan person +
-identifier.
+`with_loader_criteria`). Los estados lead/customer/assignment NO se cargan por
+relationship (Person quedó intacto, sin rel a los hijos de lifecycle): se
+denormalizan vía batch maps en el service (status_map). `get_by_identifier`/
+`search`/`list_active` solo tocan person + identifier.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from sqlalchemy.orm import selectinload, with_loader_criteria
 from app.modules.crm.models.lead_assignment import LeadAssignment
 from app.modules.crm.models.person import Person
 from app.modules.crm.models.person_contact_identifier import PersonContactIdentifier
+from app.modules.crm.models.person_customer_status import PersonCustomerStatus
 from app.modules.crm.models.person_lead_status import PersonLeadStatus
 from app.shared.base_repository import BaseRepository
 from app.shared.base_schemas import QueryRequest
@@ -124,13 +125,15 @@ class PersonRepository(BaseRepository[Person]):
         query_request: QueryRequest,
         *,
         lead_status_id: str | None = None,
+        customer_status_id: str | None = None,
         advisor_user_id: str | None = None,
         has_active_lead: bool | None = None,
     ) -> tuple[list[Person], int]:
         """Igual que `BaseRepository.get_paginated` pero traduce los deep-links de
-        estado/asesor/"lead activo" a EXISTS correlados sobre person_lead_status /
-        lead_assignment (patrón staff `?branch_id=`). Los deep-links NO son columnas
-        de `person` → no van en ALLOWED_FIELDS (lección cd10c78)."""
+        estado lead/cliente/asesor/"lead activo" a EXISTS correlados sobre
+        person_lead_status / person_customer_status / lead_assignment (patrón staff
+        `?branch_id=`). Los deep-links NO son columnas de `person` → no van en
+        ALLOWED_FIELDS (lección cd10c78)."""
         conditions: list[ColumnElement[bool]] = []
         if lead_status_id is not None:
             conditions.append(
@@ -139,6 +142,16 @@ class PersonRepository(BaseRepository[Person]):
                     PersonLeadStatus.person_id == Person.id,
                     PersonLeadStatus.lead_status_id == lead_status_id,
                     PersonLeadStatus.deleted_at.is_(None),
+                )
+                .exists()
+            )
+        if customer_status_id is not None:
+            conditions.append(
+                select(PersonCustomerStatus.id)
+                .where(
+                    PersonCustomerStatus.person_id == Person.id,
+                    PersonCustomerStatus.customer_status_id == customer_status_id,
+                    PersonCustomerStatus.deleted_at.is_(None),
                 )
                 .exists()
             )

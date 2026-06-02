@@ -1,8 +1,9 @@
 """
 Router del ciclo de vida del hilo lead de una Person: estado actual, crear lead,
-transicionar (matriz F2) y el historial. `promote-to-customer` llega en F4 (necesita
-PersonCustomerStatus). Permisos: leer estado = PERSONS_READ; crear/transicionar =
-LEAD_ACTIVITIES_WRITE; historial = LEAD_STATUS_HISTORY_READ.
+transicionar (matriz F2), el historial y `promote-to-customer` (F4 — promueve el lead
+a cliente, cerrándolo como ganado si la matriz lo permite). Permisos: leer estado =
+PERSONS_READ; crear/transicionar/promover = LEAD_ACTIVITIES_WRITE; historial =
+LEAD_STATUS_HISTORY_READ.
 """
 
 from __future__ import annotations
@@ -12,12 +13,17 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, status
 
 from app.core.dependencies import CurrentAuth, DBSession, RequirePermission
+from app.modules.crm.schemas.customer_lifecycle import (
+    PersonCustomerStatusDetail,
+    PromoteToCustomerRequest,
+)
 from app.modules.crm.schemas.lead_lifecycle import (
     LeadStatusCreateRequest,
     LeadStatusHistoryItem,
     LeadStatusTransitionRequest,
     PersonLeadStatusDetail,
 )
+from app.modules.crm.services import person_customer_status as person_customer_status_service
 from app.modules.crm.services import person_lead_status as person_lead_status_service
 from app.shared.base_schemas import SingleResponse
 
@@ -77,3 +83,20 @@ async def get_lead_status_history(
     person_id: PersonIdPath, db: DBSession
 ) -> SingleResponse[list[LeadStatusHistoryItem]]:
     return await person_lead_status_service.get_history(db, person_id)
+
+
+@router.post(
+    "/{person_id}/promote-to-customer",
+    response_model=SingleResponse[PersonCustomerStatusDetail],
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(RequirePermission("LEAD_ACTIVITIES_WRITE"))],
+)
+async def promote_to_customer(
+    person_id: PersonIdPath,
+    payload: PromoteToCustomerRequest,
+    db: DBSession,
+    actor: CurrentAuth,
+) -> SingleResponse[PersonCustomerStatusDetail]:
+    return await person_customer_status_service.promote_from_lead(
+        db, person_id, actor_id=actor.id, reason=payload.reason
+    )

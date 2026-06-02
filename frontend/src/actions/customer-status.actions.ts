@@ -80,7 +80,7 @@ export async function deleteCustomerStatus(id: string): Promise<MutationResult<n
     revalidateTag(TAG, "max");
     return { ok: true };
   } catch (e) {
-    // 409 CUSTOMER_STATUS_IN_USE si hay PersonCustomerStatus/History referenciándolo.
+    // 409 CUSTOMER_STATUS_IN_USE si hay un cliente vivo (PersonCustomerStatus) en ese estado.
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
   }
 }
