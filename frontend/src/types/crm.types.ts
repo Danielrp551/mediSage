@@ -409,8 +409,10 @@ export interface PromoteToCustomerPayload {
 export interface LeadStatusHistoryItem {
   id: string;
   person_id: string;
-  from_lead_status: LeadStatusSummary | null; // null al crear (NULL→initial)
-  to_lead_status: LeadStatusSummary;
+  // El backend (schemas/lead_lifecycle.py) emite LeadStatusOption en el history,
+  // igual que PersonLeadStatusDetail.lead_status (incluye is_initial). null al crear.
+  from_lead_status: LeadStatusOption | null; // null al crear (NULL→initial)
+  to_lead_status: LeadStatusOption;
   source_campaign_id: string | null;
   changed_at: string; // timestamptz ISO 8601
   changed_by: string | null; // FK lógica → user (null/SYSTEM si automático)

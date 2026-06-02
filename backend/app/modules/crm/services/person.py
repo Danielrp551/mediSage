@@ -9,13 +9,15 @@ Creación de Person + identifiers nested en UNA transacción, con dedup proactiv
 (`get_by_identifier` → 409 IDENTIFIER_TAKEN) y `is_primary` único por canal. NO
 crea lead automáticamente.
 
-⚠ F1 subset: lead_status/customer_status/assigned_advisor/last_activity_at de
-PersonItem/PersonDetail son SIEMPRE None (no hay tabla fuente hasta F3/F4). Los
-query params deep-link (lead_status_id/customer_status_id/advisor_user_id/
-has_active_lead) se ACEPTAN en la firma pero son NO-OP en F1.
+⚠ F3 subset: `lead_status`/`assigned_advisor`/`last_activity_at` YA se pueblan vía
+batch maps (person_lead_status / lead_assignment). `customer_status` sigue SIEMPRE
+None hasta F4 (PersonCustomerStatus no existe). Deep-links `lead_status_id`/
+`advisor_user_id`/`has_active_lead` → EXISTS; `customer_status_id` sigue NO-OP (F4).
 """
 
 from __future__ import annotations
+
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,11 +26,15 @@ from app.modules.admin.models.user import User
 from app.modules.admin.repositories.user import user_repository
 from app.modules.admin.schemas.audit import UserAuditInfo
 from app.modules.crm.enums import ChannelType
+from app.modules.crm.models.lead_status import LeadStatus
 from app.modules.crm.models.person import Person
 from app.modules.crm.models.person_contact_identifier import PersonContactIdentifier
+from app.modules.crm.repositories.lead_assignment import lead_assignment_repository
 from app.modules.crm.repositories.person import person_repository
+from app.modules.crm.repositories.person_lead_status import person_lead_status_repository
 from app.modules.crm.schemas.contact_identifier import ContactIdentifierItem
 from app.modules.crm.schemas.person import (
+    LeadStatusSummary,
     PersonCreate,
     PersonDetail,
     PersonItem,
@@ -64,6 +70,9 @@ def _to_item(
     audit_users: dict[str, User],
     *,
     primary_identifier: PersonContactIdentifier | None = None,
+    lead_status: LeadStatus | None = None,
+    assigned_advisor: User | None = None,
+    last_activity_at: datetime | None = None,
 ) -> PersonItem:
     return PersonItem(
         id=person.id,
@@ -79,11 +88,16 @@ def _to_item(
             if primary_identifier is not None
             else None
         ),
-        # F1: sin tabla fuente — siempre None (se pueblan en F3/F4).
-        lead_status=None,
+        # F3: lead_status/assigned_advisor/last_activity_at denormalizados vía batch
+        # maps. customer_status sigue None hasta F4 (PersonCustomerStatus no existe).
+        lead_status=(
+            LeadStatusSummary.model_validate(lead_status, from_attributes=True)
+            if lead_status is not None
+            else None
+        ),
         customer_status=None,
-        assigned_advisor=None,
-        last_activity_at=None,
+        assigned_advisor=_audit_info(assigned_advisor),
+        last_activity_at=last_activity_at,
         created_on=person.created_on,
         created_by=person.created_by,
         created_by_user=_audit_info(audit_users.get(person.created_by)),
@@ -93,17 +107,33 @@ def _to_item(
     )
 
 
-def _to_detail(person: Person, audit_users: dict[str, User]) -> PersonDetail:
+def _to_detail(
+    person: Person,
+    audit_users: dict[str, User],
+    *,
+    lead_status: LeadStatus | None = None,
+    assigned_advisor: User | None = None,
+    last_activity_at: datetime | None = None,
+) -> PersonDetail:
     # `person.identifiers` debe venir eager (get_full) — es `lazy="raise"` y ya
     # filtra soft-deleted por el with_loader_criteria de get_full. El principal de
     # la cabecera se toma de esa misma colección (sin query extra).
     # Orden determinista (created_on desc): la cabecera toma el principal más
     # reciente —mismo desempate que `primary_identifier_map` del listado— y la
     # lista del detalle queda igual que el sub-recurso /identifiers (list_for_person).
+    # lead_status/assigned_advisor/last_activity_at = denormalizados vía batch maps
+    # (F3); customer_status sigue None hasta F4.
     sorted_identifiers = sorted(person.identifiers, key=lambda i: i.created_on, reverse=True)
     primary = next((i for i in sorted_identifiers if i.is_primary), None)
     return PersonDetail(
-        **_to_item(person, audit_users, primary_identifier=primary).model_dump(),
+        **_to_item(
+            person,
+            audit_users,
+            primary_identifier=primary,
+            lead_status=lead_status,
+            assigned_advisor=assigned_advisor,
+            last_activity_at=last_activity_at,
+        ).model_dump(),
         birth_date=person.birth_date,
         gender=person.gender,
         address=person.address,
@@ -189,10 +219,24 @@ async def get_by_id(db: AsyncSession, person_id: str) -> SingleResponse[PersonDe
     person = await person_repository.get_full(db, person_id)
     if person is None:
         raise NotFoundException("Persona no encontrada", code="PERSON_NOT_FOUND")
-    audit_users = await user_repository.get_audit_info_map(
-        db, {person.created_by, person.updated_by}
+    # Denormalizados F3 vía batch maps (single person).
+    lead_status_map = await person_lead_status_repository.status_map(db, [person_id])
+    advisor_id_map = await lead_assignment_repository.advisor_map(db, [person_id])
+    last_activity_map = await person_lead_status_repository.last_activity_map(db, [person_id])
+    advisor_id = advisor_id_map.get(person_id)
+    actor_ids = {person.created_by, person.updated_by}
+    if advisor_id is not None:
+        actor_ids.add(advisor_id)
+    audit_users = await user_repository.get_audit_info_map(db, actor_ids)
+    return SingleResponse(
+        data=_to_detail(
+            person,
+            audit_users,
+            lead_status=lead_status_map.get(person_id),
+            assigned_advisor=(audit_users.get(advisor_id) if advisor_id is not None else None),
+            last_activity_at=last_activity_map.get(person_id),
+        )
     )
-    return SingleResponse(data=_to_detail(person, audit_users))
 
 
 async def list_paginated(
@@ -204,14 +248,35 @@ async def list_paginated(
     advisor_user_id: str | None = None,
     has_active_lead: bool | None = None,
 ) -> PaginatedResponse[PersonItem]:
-    # TODO F3/F4: traducir lead_status_id/customer_status_id/advisor_user_id/
-    # has_active_lead a EXISTS sub-selects sobre person_lead_status/lead_assignment
-    # antes de delegar en get_paginated. En F1 esas tablas no existen → no-op.
-    items, total = await person_repository.get_paginated(db, query_request)
+    # F3: lead_status_id / advisor_user_id / has_active_lead → EXISTS correlados en el
+    # repo (person_lead_status / lead_assignment). customer_status_id sigue no-op
+    # hasta F4 (PersonCustomerStatus no existe).
+    items, total = await person_repository.list_paginated_filtered(
+        db,
+        query_request,
+        lead_status_id=lead_status_id,
+        advisor_user_id=advisor_user_id,
+        has_active_lead=has_active_lead,
+    )
     person_ids = [p.id for p in items]
-    audit_users = await user_repository.get_audit_info_map(db, _collect_actor_ids(items))
     primary_map = await person_repository.primary_identifier_map(db, person_ids)
-    rows = [_to_item(p, audit_users, primary_identifier=primary_map.get(p.id)) for p in items]
+    lead_status_map = await person_lead_status_repository.status_map(db, person_ids)
+    last_activity_map = await person_lead_status_repository.last_activity_map(db, person_ids)
+    advisor_id_map = await lead_assignment_repository.advisor_map(db, person_ids)
+    actor_ids = _collect_actor_ids(items)
+    actor_ids.update(advisor_id_map.values())
+    audit_users = await user_repository.get_audit_info_map(db, actor_ids)
+    rows = [
+        _to_item(
+            p,
+            audit_users,
+            primary_identifier=primary_map.get(p.id),
+            lead_status=lead_status_map.get(p.id),
+            assigned_advisor=audit_users.get(advisor_id_map.get(p.id) or ""),
+            last_activity_at=last_activity_map.get(p.id),
+        )
+        for p in items
+    ]
     return PaginatedResponse(
         data=PaginatedData(
             items=rows,

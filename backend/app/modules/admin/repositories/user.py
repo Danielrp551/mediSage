@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.modules.admin.models.associations import user_role
+from app.modules.admin.models.role import Role
 from app.modules.admin.models.user import User
 from app.shared.base_repository import BaseRepository
 
@@ -53,6 +55,36 @@ class UserRepository(BaseRepository[User]):
             return {}
         result = await db.execute(select(User).where(User.id.in_(user_ids)))
         return {u.id: u for u in result.scalars().all()}
+
+    async def list_active_by_role(self, db: AsyncSession, role_name: str) -> list[User]:
+        """Usuarios activos (no borrados) que tienen el rol `role_name`, ordenados por
+        nombre. Helper aditivo usado por crm (`GET /advisors/active`) — el rol ASESOR
+        tiene LEAD_ASSIGNMENTS_READ pero no USERS_VIEW, así que crm no puede ir a
+        /admin/users (mismo criterio aditivo que `branch_repository.get_by_ids`)."""
+        result = await db.execute(
+            select(User)
+            .join(user_role, user_role.c.user_id == User.id)
+            .join(Role, Role.id == user_role.c.role_id)
+            .where(
+                Role.name == role_name,
+                User.active.is_(True),
+                User.deleted_at.is_(None),
+            )
+            .order_by(User.first_name.asc(), User.last_name.asc())
+        )
+        return list(result.scalars().all())
+
+    async def has_role(self, db: AsyncSession, user_id: str, role_name: str) -> bool:
+        """True si el usuario tiene el rol `role_name`. Usado por crm para validar
+        que un advisor sea ASESOR (ADVISOR_NOT_ASESOR)."""
+        result = await db.execute(
+            select(User.id)
+            .join(user_role, user_role.c.user_id == User.id)
+            .join(Role, Role.id == user_role.c.role_id)
+            .where(User.id == user_id, Role.name == role_name)
+            .limit(1)
+        )
+        return result.scalars().first() is not None
 
 
 user_repository = UserRepository()

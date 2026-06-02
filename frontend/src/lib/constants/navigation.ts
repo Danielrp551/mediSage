@@ -129,9 +129,14 @@ export const NAV_ITEMS: NavItem[] = [
         url: "/crm/estados-cliente",
         permissions: ["CUSTOMER_STATUSES_READ"],
       },
-      // F3 agregará "Mis leads" (/crm/mis-leads, MY_LEADS_READ). Se suma recién
-      // cuando exista su página (mismo patrón que staff, que añadió los me/*
-      // recién en F3).
+      // F3 — bandeja del asesor logueado (sus leads asignados).
+      {
+        key: "my-leads",
+        label: "Mis leads",
+        icon: "PersonRegular",
+        url: "/crm/mis-leads",
+        permissions: ["MY_LEADS_READ"],
+      },
     ],
   },
   {

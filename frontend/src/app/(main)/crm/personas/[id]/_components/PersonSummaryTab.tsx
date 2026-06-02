@@ -2,6 +2,7 @@
 
 import {
   Button,
+  Divider,
   Dropdown,
   Input,
   MessageBar,
@@ -22,7 +23,11 @@ import { FormField } from "@/components/ui/Form/FormField";
 import { usePermissions } from "@/hooks/usePermissions";
 import { personUpdateSchema, type PersonUpdateInput } from "@/lib/schemas/person.schema";
 import { DOCUMENT_TYPES } from "@/lib/schemas/user.schema";
+import { appTokens } from "@/lib/theme/brand";
 import type { PersonDetail } from "@/types/crm.types";
+
+import { AssignmentControl } from "./AssignmentControl";
+import { StatusBadge } from "./StatusBadge";
 
 const useStyles = makeStyles({
   panel: {
@@ -32,6 +37,14 @@ const useStyles = makeStyles({
     maxWidth: "720px",
   },
   twoCol: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: tokens.spacingHorizontalM },
+  statusBlock: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXL,
+    alignItems: "flex-start",
+  },
+  statusField: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalXS },
+  statusLabel: { fontSize: tokens.fontSizeBase200, color: appTokens.chromeTextMuted },
   switchRow: { display: "flex", alignItems: "center", gap: tokens.spacingHorizontalS },
   actions: {
     display: "flex",
@@ -90,6 +103,30 @@ export function PersonSummaryTab({ person }: Props) {
           <MessageBarBody>{serverError}</MessageBarBody>
         </MessageBar>
       ) : null}
+
+      {/* Bloque de estado (solo lectura para lead/customer aquí; se gestiona en
+          los tabs Lead/Cliente). El AssignmentControl sí permite (re)asignar el
+          asesor si el viewer tiene LEAD_ASSIGNMENTS_WRITE. */}
+      <div className={styles.statusBlock}>
+        <div className={styles.statusField}>
+          <span className={styles.statusLabel}>Estado lead</span>
+          <StatusBadge status={person.lead_status} fallback="Sin lead" />
+        </div>
+        <div className={styles.statusField}>
+          <span className={styles.statusLabel}>Estado cliente</span>
+          <StatusBadge status={person.customer_status} fallback="Sin cliente" />
+        </div>
+        <div className={styles.statusField}>
+          <span className={styles.statusLabel}>Asesor</span>
+          <AssignmentControl
+            personId={person.id}
+            currentAdvisor={person.assigned_advisor}
+            canWrite={hasPermission("LEAD_ASSIGNMENTS_WRITE")}
+          />
+        </div>
+      </div>
+
+      <Divider />
 
       <div className={styles.twoCol}>
         <FormField label="Nombres" required error={form.formState.errors.first_name?.message}>

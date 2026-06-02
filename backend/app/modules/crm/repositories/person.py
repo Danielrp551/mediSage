@@ -15,13 +15,22 @@ identifier.
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, with_loader_criteria
 
+from app.modules.crm.models.lead_assignment import LeadAssignment
 from app.modules.crm.models.person import Person
 from app.modules.crm.models.person_contact_identifier import PersonContactIdentifier
+from app.modules.crm.models.person_lead_status import PersonLeadStatus
 from app.shared.base_repository import BaseRepository
+from app.shared.base_schemas import QueryRequest
+from app.shared.query_builder import (
+    apply_filters,
+    apply_pagination,
+    apply_sorting,
+    build_count_query,
+)
 
 
 class PersonRepository(BaseRepository[Person]):
@@ -108,6 +117,67 @@ class PersonRepository(BaseRepository[Person]):
             .order_by(Person.created_on.desc())
         )
         return list(result.scalars().all())
+
+    async def list_paginated_filtered(
+        self,
+        db: AsyncSession,
+        query_request: QueryRequest,
+        *,
+        lead_status_id: str | None = None,
+        advisor_user_id: str | None = None,
+        has_active_lead: bool | None = None,
+    ) -> tuple[list[Person], int]:
+        """Igual que `BaseRepository.get_paginated` pero traduce los deep-links de
+        estado/asesor/"lead activo" a EXISTS correlados sobre person_lead_status /
+        lead_assignment (patrón staff `?branch_id=`). Los deep-links NO son columnas
+        de `person` → no van en ALLOWED_FIELDS (lección cd10c78)."""
+        conditions: list[ColumnElement[bool]] = []
+        if lead_status_id is not None:
+            conditions.append(
+                select(PersonLeadStatus.id)
+                .where(
+                    PersonLeadStatus.person_id == Person.id,
+                    PersonLeadStatus.lead_status_id == lead_status_id,
+                    PersonLeadStatus.deleted_at.is_(None),
+                )
+                .exists()
+            )
+        if advisor_user_id is not None:
+            conditions.append(
+                select(LeadAssignment.id)
+                .where(
+                    LeadAssignment.person_id == Person.id,
+                    LeadAssignment.advisor_user_id == advisor_user_id,
+                    LeadAssignment.deleted_at.is_(None),
+                )
+                .exists()
+            )
+        if has_active_lead is not None:
+            has_lead = (
+                select(PersonLeadStatus.id)
+                .where(
+                    PersonLeadStatus.person_id == Person.id,
+                    PersonLeadStatus.deleted_at.is_(None),
+                )
+                .exists()
+            )
+            conditions.append(has_lead if has_active_lead else ~has_lead)
+
+        q = select(Person).where(Person.deleted_at.is_(None))
+        for cond in conditions:
+            q = q.where(cond)
+        q = apply_filters(q, Person, query_request.filters, self.ALLOWED_FIELDS)
+        q = apply_sorting(q, Person, query_request.sorting, self.ALLOWED_FIELDS)
+        q = apply_pagination(q, query_request.pagination)
+        items = list((await db.execute(q)).scalars().all())
+
+        count_q = build_count_query(Person, query_request.filters, self.ALLOWED_FIELDS).where(
+            Person.deleted_at.is_(None)
+        )
+        for cond in conditions:
+            count_q = count_q.where(cond)
+        total = (await db.execute(count_q)).scalar() or 0
+        return items, total
 
     async def primary_identifier_map(
         self, db: AsyncSession, person_ids: list[str]

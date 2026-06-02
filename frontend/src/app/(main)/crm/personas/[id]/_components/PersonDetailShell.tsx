@@ -18,10 +18,13 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { appTokens } from "@/lib/theme/brand";
 import type { PersonDetail } from "@/types/crm.types";
 
+import { ActivityTimeline } from "./ActivityTimeline";
 import { IdentifiersTab } from "./IdentifiersTab";
+import { LeadTab } from "./LeadTab";
 import { PersonAuditTab } from "./PersonAuditTab";
 import { PersonPlaceholderTab } from "./PersonPlaceholderTab";
 import { PersonSummaryTab } from "./PersonSummaryTab";
+import { StatusBadge } from "./StatusBadge";
 
 const useStyles = makeStyles({
   root: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalL },
@@ -73,7 +76,8 @@ export function PersonDetailShell({ person, initialTab }: Props) {
 
   // Actividad sólo se renderiza con LEAD_ACTIVITIES_READ (ui.md). Resumen /
   // Identificadores / Lead / Cliente / Auditoría se ven con PERSONS_READ (que el
-  // RSC ya garantizó). En F1, Lead / Cliente / Actividad son placeholders.
+  // RSC ya garantizó). F3 funcionaliza Lead (estado + transición + history) y
+  // Actividad (feed read-only); Cliente sigue placeholder hasta F4.
   const canReadActivity = hasPermission("LEAD_ACTIVITIES_READ");
 
   const [tabParam, setTabParam] = useQueryState("tab", { defaultValue: initialTab });
@@ -115,30 +119,11 @@ export function PersonDetailShell({ person, initialTab }: Props) {
       <header className={styles.header}>
         <div className={styles.titleRow}>
           <h1 className={styles.title}>{person.full_name}</h1>
-          {/* F1: lead_status/customer_status/assigned_advisor llegan null del
-              backend → no se renderiza badge. Se poblarán en F3/F4. */}
-          {person.lead_status ? (
-            <Badge
-              appearance="filled"
-              style={{
-                backgroundColor: person.lead_status.color ?? tokens.colorNeutralBackground3,
-                color: tokens.colorNeutralForegroundOnBrand,
-              }}
-            >
-              {person.lead_status.name}
-            </Badge>
-          ) : null}
-          {person.customer_status ? (
-            <Badge
-              appearance="filled"
-              style={{
-                backgroundColor: person.customer_status.color ?? tokens.colorNeutralBackground3,
-                color: tokens.colorNeutralForegroundOnBrand,
-              }}
-            >
-              {person.customer_status.name}
-            </Badge>
-          ) : null}
+          {/* F3/F4: lead_status/customer_status/assigned_advisor ya se pueblan. Los
+              badges de estado usan StatusBadge (contraste por luminancia sobre el
+              color del catálogo); el de cliente llega con F4. */}
+          {person.lead_status ? <StatusBadge status={person.lead_status} /> : null}
+          {person.customer_status ? <StatusBadge status={person.customer_status} /> : null}
           {person.assigned_advisor ? (
             <span className={styles.advisorBadge}>
               <Avatar size={20} name={person.assigned_advisor.full_name} color="colorful" />
@@ -171,9 +156,10 @@ export function PersonDetailShell({ person, initialTab }: Props) {
       ) : activeTab === "identifiers" ? (
         <IdentifiersTab personId={person.id} canWrite={hasPermission("PERSONS_UPDATE")} />
       ) : activeTab === "lead" ? (
-        <PersonPlaceholderTab
-          title="Lead"
-          message="La gestión del lead (estado, transiciones, historial y promoción a cliente) estará disponible en una próxima fase."
+        <LeadTab
+          personId={person.id}
+          canWrite={hasPermission("LEAD_ACTIVITIES_WRITE")}
+          canReadHistory={hasPermission("LEAD_STATUS_HISTORY_READ")}
         />
       ) : activeTab === "customer" ? (
         <PersonPlaceholderTab
@@ -181,10 +167,7 @@ export function PersonDetailShell({ person, initialTab }: Props) {
           message="La gestión del estado de cliente estará disponible en una próxima fase."
         />
       ) : activeTab === "activity" ? (
-        <PersonPlaceholderTab
-          title="Actividad"
-          message="El historial de actividad del contacto (notas, llamadas y seguimientos) estará disponible en una próxima fase."
-        />
+        <ActivityTimeline personId={person.id} canWrite={hasPermission("LEAD_ACTIVITIES_WRITE")} />
       ) : (
         <PersonAuditTab person={person} />
       )}
