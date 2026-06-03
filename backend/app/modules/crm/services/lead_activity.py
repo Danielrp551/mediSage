@@ -94,10 +94,17 @@ async def log(
     completed_at: datetime | None = None,
     outcome: ActivityOutcome | None = None,
     payload: dict[str, Any] | None = None,
+    related_conversation_id: str | None = None,
 ) -> LeadActivity:
     """Helper interno: inserta una LeadActivity y, si la persona tiene lead activo,
     actualiza su `last_activity_at` (denormalizado). NO hace flush/commit (lo decide
-    el caller / el request)."""
+    el caller / el request).
+
+    `related_conversation_id` (cambio cross-módulo #2, conversations): FK forward
+    (ADR-009, varchar sin constraint) que conversations setea al emitir
+    CONVERSATION_TAKEN/RELEASED — liga el evento del timeline a la conversación. Esos
+    tipos NO están en ADVISOR_ACTIVITY_TYPES → `_get_editable_owned` los rechaza (404)
+    → audit trail inmutable para el asesor. Backward-compatible (default None)."""
     now = utc_now()
     activity = LeadActivity(
         id=generate_uuid(),
@@ -109,6 +116,7 @@ async def log(
         completed_at=completed_at,
         outcome=outcome.value if outcome else None,
         payload=payload,
+        related_conversation_id=related_conversation_id,
         active=True,
         created_by=actor_id,
         created_on=now,

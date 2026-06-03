@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     WHATSAPP_ACCESS_TOKEN: str = ""
     WHATSAPP_APP_SECRET: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""
+    # Versión de la Graph API de Meta para el outbound (F3). Configurable por env para
+    # subir de versión sin redeploy de código (reconciliación #11). Default a una versión
+    # GA estable; el endpoint de mensajes (`/{ver}/{phone_number_id}/messages`) es estable
+    # entre versiones. No es secreto.
+    WHATSAPP_GRAPH_API_VERSION: str = "v22.0"
     # Forzar el fallback a env (saltarse Secret Manager) aun fuera de dev — útil para
     # una cuenta única local o tests de integración sin GCP.
     USE_LOCAL_SECRETS: bool = False

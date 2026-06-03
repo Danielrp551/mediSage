@@ -5,9 +5,11 @@ este `router` una sola vez. El orden importa solo dentro de cada sub-router
 webhooks es TOP-LEVEL (sin JWT) y vive en `app/routers/webhooks.py` — NO acá.
 
 F1 expone `channel_account` (/channel-accounts/*). F2 agrega `conversation`
-(/list, /{id}, take/release/close/reopen/mark-read, /messages/*), `realtime`
-(/realtime/token, declarado ANTES de /{id} para no chocar con su captura) y `me`
-(/me/conversations/list).
+(/list, /{id}, /messages/list), `realtime` (/realtime/token, declarado ANTES de /{id}
+para no chocar con su captura). F3 agrega las mutaciones en `conversation`
+(/{id}/messages, take/release/close/reopen/mark-read) y el sub-router `me`
+(/me/conversations/list), declarado ANTES de `conversation` para que `/me/...` no lo
+capture el `/{conversation_id}` del conversation_router.
 """
 
 from fastapi import APIRouter
@@ -16,11 +18,13 @@ from app.modules.conversations.routers.channel_account import (
     router as channel_account_router,
 )
 from app.modules.conversations.routers.conversation import router as conversation_router
+from app.modules.conversations.routers.me import router as me_router
 from app.modules.conversations.routers.realtime import router as realtime_router
 
 router = APIRouter(prefix="/conversations")
 router.include_router(channel_account_router)  # /channel-accounts/*
 router.include_router(realtime_router)  # /realtime/token (antes de /{id} — defensivo)
-router.include_router(conversation_router)  # /list, /{id}, /{id}/messages/list
+router.include_router(me_router)  # /me/conversations/list (antes de /{id} — defensivo)
+router.include_router(conversation_router)  # /list, /{id}, mutaciones, /messages/*
 
 __all__ = ["router"]

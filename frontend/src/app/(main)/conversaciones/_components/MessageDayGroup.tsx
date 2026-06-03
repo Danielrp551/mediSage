@@ -33,6 +33,8 @@ export interface DayGroupData {
 
 interface Props {
   group: DayGroupData;
+  // F3: se propaga a cada burbuja para ofrecer "Reintentar" en outbound fallidos.
+  onRetry?: (message: MessageItem) => void;
 }
 
 /**
@@ -42,7 +44,7 @@ interface Props {
  * (UTC-5). Las burbujas van ascendentes por `sent_at` (lo más nuevo abajo, orden
  * natural de chat).
  */
-export function MessageDayGroup({ group }: Props) {
+export function MessageDayGroup({ group, onRetry }: Props) {
   const styles = useStyles();
   return (
     <div className={styles.group}>
@@ -50,7 +52,7 @@ export function MessageDayGroup({ group }: Props) {
         <span className={styles.separator}>{group.label}</span>
       </div>
       {group.items.map((m) => (
-        <MessageBubble key={m.id} message={m} />
+        <MessageBubble key={m.id} message={m} onRetry={onRetry} />
       ))}
     </div>
   );

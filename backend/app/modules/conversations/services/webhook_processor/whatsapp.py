@@ -1,11 +1,13 @@
 """
-Procesador del webhook de WhatsApp Cloud API. `verify_signature` valida la firma de Meta
+Adaptador de WhatsApp Cloud API (in + out). `verify_signature` valida la firma de Meta
 (HMAC-SHA256 del body RAW con el app_secret, comparación en tiempo constante).
 `process_inbound` parsea `entry[].changes[].value.{messages[], statuses[], contacts[]}`,
 resuelve/crea la Person vía crm (hardened con advisory lock), abre/encuentra el hilo
-(auto-asignación al dueño del lead) y encola cada mensaje en el outbox. Flujo SÍNCRONO
-(MVP, sin bot lento); texto primero (media diferida a F4). El relay a Firestore corre tras
-el 200 (BackgroundTasks).
+(auto-asignación al dueño del lead) y encola cada mensaje en el outbox. `send_text` (F3)
+es el thin client del OUTBOUND: POST a la Graph API. Texto primero (media diferida a F4).
+El relay a Firestore lo dispara el ENTRYPOINT de forma SÍNCRONA (el webhook tras parsear,
+el router tras la acción) — ver `webhooks.py` / `routers/conversation.py` y el análisis de
+relay-síncrono en la memoria del módulo.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.conversations.enums import ContentType
@@ -49,6 +52,48 @@ def verify_signature(*, raw_body: bytes, signature_header: str | None, app_secre
         return False
     expected = hmac.new(app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest("sha256=" + expected, signature_header)
+
+
+async def send_text(
+    *,
+    access_token: str,
+    phone_number_id: str,
+    to: str,
+    body: str,
+    graph_api_version: str,
+    timeout: float = 15.0,
+) -> str:
+    """OUTBOUND (F3): envía un mensaje de texto vía WhatsApp Cloud API y devuelve el `wamid`.
+    `POST https://graph.facebook.com/{ver}/{phone_number_id}/messages` con
+    `Authorization: Bearer {access_token}` y body
+    `{messaging_product:"whatsapp", to, type:"text", text:{body}}`. `to` = el identificador
+    WhatsApp del contacto (E.164 sin '+', tal cual lo entrega Meta en `wa_id`). Levanta si
+    falta el `phone_number_id` o si Meta responde 4xx/5xx (`raise_for_status`); el caller
+    (`message.send_outbound`) captura el error y persiste el mensaje como fallido (200 al
+    cliente, NO 502). Timeout corto: el envío corre síncrono en el request del asesor."""
+    if not phone_number_id:
+        raise ValueError("Falta phone_number_id de la cuenta de canal para el envío")
+    url = f"https://graph.facebook.com/{graph_api_version}/{phone_number_id}/messages"
+    request_body = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": body},
+    }
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            url,
+            json=request_body,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        response.raise_for_status()
+        data = response.json()
+    # Respuesta: {messaging_product, contacts:[...], messages:[{id: "wamid..."}]}.
+    messages = data.get("messages") or []
+    wamid = messages[0].get("id") if messages and isinstance(messages[0], dict) else None
+    if not wamid:
+        raise ValueError(f"Respuesta de Meta sin wamid: {data}")
+    return str(wamid)
 
 
 def _ts(timestamp: Any) -> datetime:

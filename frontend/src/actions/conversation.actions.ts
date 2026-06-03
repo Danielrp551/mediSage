@@ -1,7 +1,7 @@
 "use server";
 
 /**
- * Server Actions del inbox de `conversations` (F2 — SOLO LECTURA).
+ * Server Actions del inbox de `conversations`.
  *
  * El browser NUNCA habla directo con el backend ni con Firestore para escribir:
  * - Las lecturas del inbox (`listConversations` / `listMyConversations` / `getConversation`)
@@ -11,10 +11,19 @@
  * - `listMessages` es el FALLBACK server-side del hilo (lee Firestore vía Admin SDK);
  *   el path PRIMARIO es el cliente Firestore real-time (`onSnapshot` — ver useThreadMessages).
  *
- * Las mutaciones (enviar/tomar/liberar/cerrar/reabrir/marcar-leída) son F3 — NO van acá.
+ * Las MUTACIONES (F3) — enviar / tomar / liberar / cerrar / reabrir / marcar-leída —
+ * viven al final del archivo: validan con Zod (defensa en profundidad), llaman al
+ * backend client y revalidan los tags del listado + del hilo tras el éxito.
  */
 
+import { revalidateTag } from "next/cache";
+
 import { ENDPOINTS } from "@/lib/constants/endpoints";
+import {
+  releaseConversationSchema,
+  sendMessageSchema,
+  takeConversationSchema,
+} from "@/lib/schemas/conversation.schema";
 import { backendClient } from "@/services/backend.client";
 import { HttpError, type ApiPaginated, type ApiSingle } from "@/types/api.types";
 import type {
@@ -110,4 +119,140 @@ export async function listMessages(
     query,
     { tags: [threadTag(conversationId)] },
   );
+}
+
+// ── Mutaciones (F3): enviar / tomar / liberar / cerrar / reabrir / marcar-leída ──
+
+// Revalida los caches del listado + del hilo tras una mutación con éxito. Next 16
+// exige el 2º argumento "max" en revalidateTag.
+function revalidateThread(conversationId: string): void {
+  revalidateTag(LIST_TAG, "max");
+  revalidateTag(threadTag(conversationId), "max");
+}
+
+/**
+ * Envía un mensaje OUTBOUND (real, vía Meta Graph API en el backend). El backend
+ * SIEMPRE responde 200 con el `MessageItem` persistido: si el envío a Meta falló, el
+ * mensaje viene con `external_status:"failed"` (NO es un error de la action — la UI
+ * pinta el estado del mensaje). Solo devolvemos `ok:false` ante un HttpError real
+ * (403 NOT_CONVERSATION_ASSIGNEE, 400 CONVERSATION_NOT_OPEN/UNSUPPORTED_CONTENT_TYPE…).
+ */
+export async function sendMessage(
+  conversationId: string,
+  input: unknown,
+): Promise<MutationResult<MessageItem>> {
+  const parsed = sendMessageSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+  try {
+    const res = await backendClient.post<ApiSingle<MessageItem>>(
+      ENDPOINTS.CONVERSATIONS_API.SEND_MESSAGE(conversationId),
+      parsed.data,
+    );
+    revalidateThread(conversationId);
+    return { ok: true, data: res.data };
+  } catch (e) {
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
+}
+
+/**
+ * Toma la conversación (assignee = actor). `reason?` opcional queda en el log de
+ * handoff. Devuelve el `ConversationDetail` actualizado para refrescar el header.
+ */
+export async function takeConversation(
+  conversationId: string,
+  input: unknown,
+): Promise<MutationResult<ConversationDetail>> {
+  const parsed = takeConversationSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+  try {
+    const res = await backendClient.post<ApiSingle<ConversationDetail>>(
+      ENDPOINTS.CONVERSATIONS_API.TAKE(conversationId),
+      parsed.data,
+    );
+    revalidateThread(conversationId);
+    return { ok: true, data: res.data };
+  } catch (e) {
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
+}
+
+/**
+ * Libera la conversación. En el MVP la UI solo libera a `unassigned` (release a
+ * `advisor` → INVALID_ASSIGNEE en el backend). `reason?` opcional queda en el log.
+ */
+export async function releaseConversation(
+  conversationId: string,
+  input: unknown,
+): Promise<MutationResult<ConversationDetail>> {
+  const parsed = releaseConversationSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+  try {
+    const res = await backendClient.post<ApiSingle<ConversationDetail>>(
+      ENDPOINTS.CONVERSATIONS_API.RELEASE(conversationId),
+      parsed.data,
+    );
+    revalidateThread(conversationId);
+    return { ok: true, data: res.data };
+  } catch (e) {
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
+}
+
+/** Cierra la conversación (soft, vía status). Sin body. */
+export async function closeConversation(
+  conversationId: string,
+): Promise<MutationResult<ConversationDetail>> {
+  try {
+    const res = await backendClient.post<ApiSingle<ConversationDetail>>(
+      ENDPOINTS.CONVERSATIONS_API.CLOSE(conversationId),
+      {},
+    );
+    revalidateThread(conversationId);
+    return { ok: true, data: res.data };
+  } catch (e) {
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
+}
+
+/**
+ * Reabre la conversación. Puede dar 409 CONVERSATION_ALREADY_OPEN si ya existe otra
+ * conversación abierta para el mismo contacto en el mismo canal — el mensaje del
+ * backend ("Ya hay una conversación abierta…") se propaga tal cual en `error`.
+ */
+export async function reopenConversation(
+  conversationId: string,
+): Promise<MutationResult<ConversationDetail>> {
+  try {
+    const res = await backendClient.post<ApiSingle<ConversationDetail>>(
+      ENDPOINTS.CONVERSATIONS_API.REOPEN(conversationId),
+      {},
+    );
+    revalidateThread(conversationId);
+    return { ok: true, data: res.data };
+  } catch (e) {
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
+}
+
+/** Marca la conversación como leída (resetea `unread_count`). Sin body. */
+export async function markRead(
+  conversationId: string,
+): Promise<MutationResult<ConversationDetail>> {
+  try {
+    const res = await backendClient.post<ApiSingle<ConversationDetail>>(
+      ENDPOINTS.CONVERSATIONS_API.MARK_READ(conversationId),
+      {},
+    );
+    revalidateThread(conversationId);
+    return { ok: true, data: res.data };
+  } catch (e) {
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
 }

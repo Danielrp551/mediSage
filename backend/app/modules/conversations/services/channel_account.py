@@ -97,9 +97,7 @@ async def get_by_id(
 ) -> SingleResponse[ChannelAccountDetail]:
     ca = await channel_account_repository.get_by_id(db, channel_account_id)
     if ca is None:
-        raise NotFoundException(
-            "Cuenta de canal no encontrada", code="CHANNEL_ACCOUNT_NOT_FOUND"
-        )
+        raise NotFoundException("Cuenta de canal no encontrada", code="CHANNEL_ACCOUNT_NOT_FOUND")
     audit_users = await user_repository.get_audit_info_map(db, {ca.created_by, ca.updated_by})
     return SingleResponse(data=_to_detail(ca, audit_users))
 
@@ -161,9 +159,7 @@ async def update(
 ) -> SingleResponse[ChannelAccountDetail]:
     ca = await channel_account_repository.get_by_id(db, channel_account_id)
     if ca is None:
-        raise NotFoundException(
-            "Cuenta de canal no encontrada", code="CHANNEL_ACCOUNT_NOT_FOUND"
-        )
+        raise NotFoundException("Cuenta de canal no encontrada", code="CHANNEL_ACCOUNT_NOT_FOUND")
 
     changes = payload.model_dump(exclude_unset=True)
     # Un null EXPLÍCITO en un campo NOT NULL (name/external_identifier) es válido-por-tipo
@@ -196,9 +192,7 @@ async def update(
 async def soft_delete(db: AsyncSession, channel_account_id: str, *, actor_id: str) -> None:
     ca = await channel_account_repository.get_by_id(db, channel_account_id)
     if ca is None:
-        raise NotFoundException(
-            "Cuenta de canal no encontrada", code="CHANNEL_ACCOUNT_NOT_FOUND"
-        )
+        raise NotFoundException("Cuenta de canal no encontrada", code="CHANNEL_ACCOUNT_NOT_FOUND")
     ca.updated_by = actor_id
     ca.updated_on = utc_now()
     await channel_account_repository.soft_delete(db, ca)

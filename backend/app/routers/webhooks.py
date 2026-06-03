@@ -7,10 +7,14 @@ WhatsApp Cloud API:
 - GET  /api/v1/webhooks/whatsapp/{channel_account_id} → Meta verification challenge.
 - POST /api/v1/webhooks/whatsapp/{channel_account_id} → inbound messages + status callbacks.
 
-CQRS (ADR-011): la TX de control plane (Postgres) corre SÍNCRONA y se commitea ANTES del
-200 (durabilidad garantizada por el outbox); la proyección a Firestore (data plane) se
-dispara con BackgroundTasks DESPUÉS del 200. El cleanup de `get_db` (commit) precede al
-envío de la respuesta, así que el background task ve los outbox rows ya commiteados.
+CQRS (ADR-011): la TX de control plane (Postgres) y la proyección a Firestore (data plane)
+corren AMBAS SÍNCRONAS en el request, con la MISMA sesión, ANTES del 200: tras parsear y
+persistir el inbound en el outbox, `message_service.relay_outbox(db)` lee esos rows
+(read-your-writes en la tx) y los escribe a Firestore con el Admin SDK. El relay vía
+BackgroundTasks fue DESCARTADO (no proyectaba en Cloud Run: la sesión nueva del task no veía
+los rows del request por el timing del commit de `get_db` + cpu-throttling). El outbox sigue
+dando durabilidad + idempotencia (id=mid); un sweep/Cloud Task que reintente filas `failed`
+queda para infra (entry-point `relay_outbox_in_new_session`).
 """
 
 from __future__ import annotations

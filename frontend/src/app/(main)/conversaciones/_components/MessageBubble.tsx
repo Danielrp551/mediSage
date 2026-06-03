@@ -1,8 +1,8 @@
 "use client";
 
-import { Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
-import { AttachRegular } from "@fluentui/react-icons";
-import { memo } from "react";
+import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { ArrowClockwiseRegular, AttachRegular } from "@fluentui/react-icons";
+import { memo, useCallback } from "react";
 
 import { formatDate, formatTime } from "@/lib/utils/date";
 import type { MessageItem } from "@/types/conversations.types";
@@ -49,6 +49,16 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     opacity: 0.85,
   },
+  // Acción "Reintentar" bajo una burbuja outbound fallida.
+  retryRow: {
+    display: "flex",
+    justifyContent: "flex-end",
+    marginTop: tokens.spacingVerticalXXS,
+  },
+  retryButton: {
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorPaletteRedForeground1,
+  },
   attachment: {
     display: "inline-flex",
     alignItems: "center",
@@ -73,6 +83,9 @@ const useStyles = makeStyles({
 
 interface Props {
   message: MessageItem;
+  // F3: reintentar un OUTBOUND fallido (envía un mensaje NUEVO con el mismo texto;
+  // el fallido queda inmutable). Opcional: si no se pasa, no se muestra el botón.
+  onRetry?: (message: MessageItem) => void;
 }
 
 /**
@@ -84,13 +97,18 @@ interface Props {
  * `content_type=text` → render del content. Otros (image/audio/…) → placeholder
  * "📎 Adjunto (no disponible aún)" (F4 cablea el render real). El timestamp usa
  * hora local (`formatTime`, client-only) — nunca toISOString para render.
+ *
+ * Para un OUTBOUND fallido (con `onRetry`) se muestra una acción "Reintentar" que
+ * crea un mensaje nuevo con el mismo texto (F3).
  */
-function MessageBubbleImpl({ message }: Props) {
+function MessageBubbleImpl({ message, onRetry }: Props) {
   const styles = useStyles();
 
   const isSystem =
     message.sender_type === "system" || message.content_type === "system_notification";
   const isOutbound = message.direction === "outbound";
+
+  const handleRetry = useCallback(() => onRetry?.(message), [onRetry, message]);
 
   // ── Notificación de sistema (centrada) ──
   if (isSystem) {
@@ -110,6 +128,10 @@ function MessageBubbleImpl({ message }: Props) {
   // guardar contra undefined.
   const attachments = message.attachments ?? [];
   const hasAttachments = attachments.length > 0;
+
+  // Outbound de texto fallido + handler → ofrecemos "Reintentar" (mensaje nuevo).
+  const isFailed = message.failed_at != null || message.external_status === "failed";
+  const canRetry = isOutbound && isText && isFailed && Boolean(message.content) && Boolean(onRetry);
 
   return (
     <div className={isOutbound ? styles.rowEnd : styles.rowStart}>
@@ -144,6 +166,20 @@ function MessageBubbleImpl({ message }: Props) {
           </Tooltip>
           {isOutbound ? <MessageStatusTicks message={message} /> : null}
         </span>
+
+        {canRetry ? (
+          <div className={styles.retryRow}>
+            <Button
+              className={styles.retryButton}
+              appearance="transparent"
+              size="small"
+              icon={<ArrowClockwiseRegular />}
+              onClick={handleRetry}
+            >
+              Reintentar
+            </Button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

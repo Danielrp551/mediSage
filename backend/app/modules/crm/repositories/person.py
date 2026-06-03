@@ -227,5 +227,27 @@ class PersonRepository(BaseRepository[Person]):
             out.setdefault(ident.person_id, ident)
         return out
 
+    async def get_channel_identifier(
+        self, db: AsyncSession, person_id: str, channel_type: str
+    ) -> PersonContactIdentifier | None:
+        """Identificador VIVO de una persona en un canal dado (read aditivo, molde
+        `primary_identifier_map`). Lo consume `conversations.message.send_outbound` para
+        resolver el `to` de WhatsApp del destinatario sin N+1. Prefiere el `is_primary`;
+        a igualdad, el más reciente (created_on desc). None si la persona no tiene un
+        identificador vivo en ese canal."""
+        result = await db.execute(
+            select(PersonContactIdentifier)
+            .where(
+                PersonContactIdentifier.person_id == person_id,
+                PersonContactIdentifier.channel_type == channel_type,
+                PersonContactIdentifier.deleted_at.is_(None),
+            )
+            .order_by(
+                PersonContactIdentifier.is_primary.desc(),
+                PersonContactIdentifier.created_on.desc(),
+            )
+        )
+        return result.scalars().first()
+
 
 person_repository = PersonRepository()

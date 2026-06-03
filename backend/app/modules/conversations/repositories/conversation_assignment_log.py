@@ -7,7 +7,9 @@ consulta por `conversation_id` (`ALLOWED_FIELDS = set()`, no filtrable desde el 
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.conversations.models.conversation_assignment_log import (
@@ -46,6 +48,22 @@ class ConversationAssignmentLogRepository(BaseRepository[ConversationAssignmentL
             )
         )
         return result.scalars().first()
+
+    async def close_current(
+        self, db: AsyncSession, conversation_id: str, *, ended_at: datetime, actor_id: str
+    ) -> None:
+        """Cierra la(s) fila(s) vigente(s) (`ended_at IS NULL`) de la conversación con un
+        UPDATE en bloque (sin cargar). Materializa el invariante "una sola fila vigente"
+        antes de abrir la nueva (take/release) o al cerrar/reabrir el hilo (close/reopen).
+        Idempotente: si no hay vigente, no afecta filas."""
+        await db.execute(
+            update(ConversationAssignmentLog)
+            .where(
+                ConversationAssignmentLog.conversation_id == conversation_id,
+                ConversationAssignmentLog.ended_at.is_(None),
+            )
+            .values(ended_at=ended_at, updated_by=actor_id, updated_on=ended_at)
+        )
 
 
 conversation_assignment_log_repository = ConversationAssignmentLogRepository()

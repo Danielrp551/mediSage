@@ -22,7 +22,7 @@ import {
   type QueryDocumentSnapshot,
   type QuerySnapshot,
 } from "firebase/firestore";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { listMessages } from "@/actions/conversation.actions";
 import { signInWithToken } from "@/lib/firebase/client";
@@ -42,6 +42,44 @@ export function useThreadMessages(conversationId: string, realtimeToken: string 
   // Token monotónico: descarta listeners/fetches viejos al cambiar de conversación
   // rápido (una respuesta vieja no pisa la nueva).
   const reqIdRef = useRef(0);
+  // El status vigente, accesible desde `refetch` sin re-crear el callback (evita
+  // re-render del composer/thread por cambios de identidad de la función).
+  const statusRef = useRef<ThreadStatus>("loading");
+  statusRef.current = status;
+
+  // Carga FALLBACK server-side: sin token (sign-in falló / sin Firebase) leemos
+  // Firestore vía Admin SDK por /messages/list. El hilo se ve, sin real-time.
+  // `reqId` permite descartar respuestas viejas; en `refetch` se reusa el actual.
+  const fetchFallback = useCallback(
+    async (reqId: number) => {
+      try {
+        // El fallback lee Firestore vía Admin SDK; el campo de orden del doc es
+        // `created_at` (brief §1), igual que el listener real-time.
+        const res = await listMessages(conversationId, {
+          pagination: { skip: 0, limit: 100 },
+          sorting: { sort_by: "created_at", sort_order: "asc" },
+          filters: null,
+        });
+        if (reqId !== reqIdRef.current) return;
+        setMessages(indexById(res.data.items));
+        setStatus("fallback");
+      } catch {
+        if (reqId !== reqIdRef.current) return;
+        setStatus("error");
+      }
+    },
+    [conversationId],
+  );
+
+  /**
+   * Re-fetch manual del hilo. En modo "live" el `onSnapshot` ya trae el doc nuevo
+   * (no-op aquí). En "fallback"/"error" (sin real-time) re-ejecuta `listMessages`
+   * para reflejar de inmediato un mensaje recién enviado por el composer (F3).
+   */
+  const refetch = useCallback(() => {
+    if (statusRef.current === "live") return; // el listener real-time lo trae solo
+    void fetchFallback(reqIdRef.current);
+  }, [fetchFallback]);
 
   useEffect(() => {
     const reqId = ++reqIdRef.current;
@@ -50,25 +88,8 @@ export function useThreadMessages(conversationId: string, realtimeToken: string 
     let unsubscribe: (() => void) | undefined;
 
     void (async () => {
-      // Fallback server-side: sin token (sign-in falló / sin Firebase) leemos
-      // Firestore vía Admin SDK por /messages/list. El hilo se ve, sin real-time.
-      const fallback = async () => {
-        try {
-          // El fallback lee Firestore vía Admin SDK; el campo de orden del doc es
-          // `created_at` (brief §1), igual que el listener real-time.
-          const res = await listMessages(conversationId, {
-            pagination: { skip: 0, limit: 100 },
-            sorting: { sort_by: "created_at", sort_order: "asc" },
-            filters: null,
-          });
-          if (reqId !== reqIdRef.current) return;
-          setMessages(indexById(res.data.items));
-          setStatus("fallback");
-        } catch {
-          if (reqId !== reqIdRef.current) return;
-          setStatus("error");
-        }
-      };
+      // Variante que cierra sobre el `reqId` de este efecto (degradación interna).
+      const fallback = () => fetchFallback(reqId);
 
       if (!realtimeToken) {
         await fallback();
@@ -114,7 +135,7 @@ export function useThreadMessages(conversationId: string, realtimeToken: string 
     return () => {
       unsubscribe?.(); // cleanup del listener anterior al cambiar de conversación
     };
-  }, [conversationId, realtimeToken]);
+  }, [conversationId, realtimeToken, fetchFallback]);
 
-  return { messages, status };
+  return { messages, status, refetch };
 }

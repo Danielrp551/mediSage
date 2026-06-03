@@ -278,6 +278,10 @@ export function InboxShell({
             key={activeSelectedId}
             conversationId={activeSelectedId}
             realtimeToken={realtimeToken}
+            // Refetch SILENCIOSO (load(true)) tras handoff/envío/mark-read: actualiza
+            // preview/orden/estado de la lista sin pintar el skeleton (evita el flash; el
+            // skeleton se reserva para la carga inicial, el cambio de filtro y "Actualizar").
+            onConversationChanged={() => load(true)}
           />
         ) : (
           <div className={styles.placeholder}>
