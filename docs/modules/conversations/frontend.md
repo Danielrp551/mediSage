@@ -158,20 +158,17 @@ export type MessageExternalStatus = "sent" | "delivered" | "read" | "failed";
 
 // ── ChannelAccount ──────────────────────────────────────
 
-// Fila de listado (tabla de Canales). El secreto NUNCA viaja (spec §8): Detail/Item
-// exponen `secret_name` (solo el nombre del secreto en GCP Secret Manager) y un flag
-// `credentials_configured` derivado server-side — el token/app_secret jamás salen.
+// Fila de listado (tabla de Canales) — espeja ChannelAccountItem del backend. El secreto
+// NUNCA viaja: el Item solo trae flags derivados (`credentials_configured` = secret_name
+// is not None; `has_verify_token`). `secret_name` (el NOMBRE) y el resto viven en Detail.
 export interface ChannelAccountItem {
   id: string;
   channel_type: ChannelType;
   name: string; // nombre humano ("WhatsApp Estética")
   external_identifier: string; // número WA Business (ej. "51999111222")
-  secret_name: string | null; // nombre del secreto en Secret Manager (NO el secreto)
-  credentials_configured: boolean; // derivado: secret_name set || fallback env disponible
   phone_number_id: string | null; // id del número en WhatsApp Cloud API (para la URL de envío)
-  // Forward FKs (bots #6 / marketing #8 — varchar opaco, solo lectura; ADR-009).
-  bot_configuration_id: string | null; // hoy SIEMPRE null
-  default_campaign_id: string | null; // hoy null
+  credentials_configured: boolean; // derivado server-side: = secret_name is not None (per-canal)
+  has_verify_token: boolean; // derivado: = webhook_verify_token is not None
   active: boolean;
   created_on: string;
   created_by: string;
@@ -181,10 +178,15 @@ export interface ChannelAccountItem {
   updated_by_user: UserAuditInfo | null;
 }
 
-// Detalle = Item + el webhook_verify_token (editable; NO es secreto duro — lo envía
-// Meta y se compara). El secreto SIGUE sin exponerse (solo secret_name + flag).
+// Detalle = Item + `secret_name` (solo el NOMBRE del secreto), `webhook_verify_token`
+// (editable; NO es secreto duro) y las forward FKs. El secreto (access_token/app_secret)
+// SIGUE sin exponerse jamás.
 export interface ChannelAccountDetail extends ChannelAccountItem {
+  secret_name: string | null; // nombre del secreto en Secret Manager (NO el valor)
   webhook_verify_token: string | null;
+  // Forward FKs (bots #6 / marketing #8 — varchar opaco; ADR-009). Hoy null.
+  bot_configuration_id: string | null;
+  default_campaign_id: string | null;
 }
 
 // Para dropdowns/filtros (selección de canal en el inbox). Lista CRUDA (sin envelope).

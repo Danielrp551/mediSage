@@ -166,21 +166,22 @@ async def update(
         )
 
     changes = payload.model_dump(exclude_unset=True)
-    # Normalizar el enum a su slug antes de persistir (la columna es varchar plana).
-    if changes.get("channel_type") is not None:
-        changes["channel_type"] = changes["channel_type"].value
-    # `channel_type`/`external_identifier` son editables pero re-disparan el guard de
-    # unicidad: el par vivo (channel_type, external_identifier) debe seguir siendo único.
-    if "channel_type" in changes or "external_identifier" in changes:
-        new_channel_type = changes.get("channel_type", ca.channel_type)
-        new_external = changes.get("external_identifier", ca.external_identifier)
+    # Un null EXPLÍCITO en un campo NOT NULL (name/external_identifier) es válido-por-tipo
+    # en el Update parcial pero blanquearía la columna (IntegrityError/500) → se descarta
+    # (None = "no cambiar"). `channel_type` es INMUTABLE (no está en el schema Update).
+    for required in ("name", "external_identifier"):
+        if required in changes and changes[required] is None:
+            changes.pop(required)
+    # `external_identifier` editable → re-dispara el guard de unicidad sobre el par vivo
+    # (channel_type [inmutable, el de la fila], external_identifier).
+    if "external_identifier" in changes:
         clash = await channel_account_repository.get_by_external_id(
-            db, new_channel_type, new_external
+            db, ca.channel_type, changes["external_identifier"]
         )
         if clash is not None and clash.id != ca.id:
             raise AlreadyExistsException(
-                f"Ya existe una cuenta de canal '{new_channel_type}' con el "
-                f"identificador '{new_external}'",
+                f"Ya existe una cuenta de canal '{ca.channel_type}' con el "
+                f"identificador '{changes['external_identifier']}'",
                 code="CHANNEL_ACCOUNT_EXTERNAL_TAKEN",
             )
 

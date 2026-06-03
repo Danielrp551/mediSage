@@ -35,10 +35,12 @@ class ChannelAccountCreate(BaseModel):
 
 
 class ChannelAccountUpdate(BaseModel):
-    """Partial. `channel_type`/`external_identifier` SON editables (corregir un
-    alta) pero re-disparan el guard de unicidad. El SECRETO no se gestiona acá."""
+    """Partial. `channel_type` es INMUTABLE (un número no cambia de canal; el front lo
+    deshabilita en edición). `external_identifier` SÍ es editable (corregir un alta) y
+    re-dispara el guard de unicidad. El SECRETO no se gestiona acá. NOTA: los campos
+    requeridos (`name`/`external_identifier`) son `T | None` solo para indicar "ausente";
+    un null EXPLÍCITO se DESCARTA en el service (no blanquea la columna NOT NULL)."""
 
-    channel_type: ChannelType | None = None
     name: str | None = Field(default=None, min_length=1, max_length=120)
     external_identifier: str | None = Field(default=None, min_length=1, max_length=255)
     secret_name: str | None = Field(default=None, max_length=255)

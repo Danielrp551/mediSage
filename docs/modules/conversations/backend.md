@@ -1042,12 +1042,12 @@ async def get_credentials(db, ca: ChannelAccount) -> dict:
     if not creds or not creds.get("access_token") or not creds.get("app_secret"):
         raise BadRequestException(
             "Faltan las credenciales del canal (Secret Manager / env)",
-            code="CHANNEL_CREDENTIALS_MISSING",  # ver §9: el handler lo emite 500 o 400 según contexto
+            code="CHANNEL_CREDENTIALS_MISSING",  # BadRequestException → 400 (ver §9; server-side, no se surface directo)
         )
     return creds
 ```
 
-> **`CHANNEL_CREDENTIALS_MISSING`**: la spec §9 lo lista como **500** (es una mala config del operador, no del request). En el flujo de webhook (verificación de firma) se trata como 500/403 según donde falte; en el flujo outbound se persiste el mensaje fallido. Detalle en §9. `phone_number_id` se prefiere de la columna `ca.phone_number_id` (practicidad de la URL) y cae al env solo en fallback.
+> **`CHANNEL_CREDENTIALS_MISSING`**: el código lo emite como **`BadRequestException` (400)** (el template no tiene excepción de dominio 500; `BadRequestException` lleva el `code`). Conceptualmente es una mala config del operador, pero el status es **secundario**: `get_credentials` se invoca SOLO server-side (F2/F3) y NUNCA se surface directo — en el webhook la verificación de firma decide 403/200 a Meta; en el outbound se persiste el mensaje fallido. `phone_number_id` se prefiere de la columna `ca.phone_number_id` (practicidad de la URL) y cae al env solo en fallback.
 
 ### `services/conversation.py` — `find_or_create_open` (auto-asignación) + handoff
 
@@ -1925,7 +1925,7 @@ async def inbound_whatsapp(
 |---|---|---|---|
 | `CHANNEL_ACCOUNT_NOT_FOUND` | 404 | "Cuenta de canal no encontrada" | channel_account get/update/delete; webhook router |
 | `CHANNEL_ACCOUNT_EXTERNAL_TAKEN` | 409 | "Ya existe una cuenta de canal '{type}' con el identificador '{ext}'" | channel_account.create/update (guard unicidad) |
-| `CHANNEL_CREDENTIALS_MISSING` | 500 | "Faltan las credenciales del canal (Secret Manager / env)" | `get_credentials` / `secrets.resolve` (mala config del operador; 500. En outbound NO se levanta — el mensaje se persiste fallido) |
+| `CHANNEL_CREDENTIALS_MISSING` | 400 | "No se pudo resolver el secreto del canal" | `get_credentials` / `secrets.resolve` vía `BadRequestException` (el template no tiene excepción de dominio 500). Server-side (F2/F3): NO se surface directo — en outbound NO se levanta (mensaje persiste fallido); en webhook la firma decide 403/200 |
 | `CONVERSATION_NOT_FOUND` | 404 | "Conversación no encontrada" | conversation get/take/release/close/reopen/mark-read; message send/list |
 | `CONVERSATION_NOT_OPEN` | 400 | "La conversación está cerrada" | `send_outbound` (status != open) |
 | `CONVERSATION_ALREADY_OPEN` | 409 | "Ya hay una conversación abierta para este contacto en este canal" | `reopen` (otra open para el mismo person+channel) |
