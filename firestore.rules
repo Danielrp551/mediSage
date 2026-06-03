@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// Security Rules del read-model de `conversations` (ADR-011, CQRS).
+// Gobiernan SOLO al cliente Web (browser con Firebase Auth via custom token minteado
+// por el backend). Las escrituras del Admin SDK (backend) BYPASSAN estas reglas.
+// Principio: el browser SOLO LEE el stream que está autorizado a ver; toda escritura
+// (enviar/tomar/liberar) va por el backend (Next server → FastAPI → Meta + Admin SDK).
+//
+// Se despliega a las databases NOMBRADAS de medisage (medisage-qa / medisage), NO a la
+// (default) ni a la de chatbot-sofia. Ver firebase.json.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // El custom token del backend trae estos claims (ver app/core/firestore.py:mint_custom_token):
+    //   scope == 'conversations', is_advisor: bool, can_read_all: bool (= tiene CONVERSATIONS_READ).
+    function signedIn() {
+      return request.auth != null && request.auth.token.scope == 'conversations';
+    }
+
+    // Lee una conversación si: es supervisor (can_read_all) o está en allowed_reader_ids
+    // (= assignee + admins; lo mantiene el backend vía el outbox `conversation_upsert`).
+    function canReadConversation(cid) {
+      return signedIn() && (
+        request.auth.token.can_read_all == true ||
+        request.auth.uid in get(/databases/$(database)/documents/conversations/$(cid)).data.allowed_reader_ids
+      );
+    }
+
+    match /conversations/{cid} {
+      allow read: if signedIn() && (
+        request.auth.token.can_read_all == true ||
+        request.auth.uid in resource.data.allowed_reader_ids
+      );
+      allow write: if false; // SOLO el Admin SDK del backend escribe (bypassa rules).
+
+      match /messages/{mid} {
+        allow read: if canReadConversation(cid);
+        allow write: if false; // SOLO el Admin SDK.
+      }
+    }
+
+    // Default deny: nada más es accesible por el cliente.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

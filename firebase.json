@@ -1,0 +1,7 @@
+{
+  "$comment": "Config de Firebase CLI para deployar las Security Rules del read-model de conversations (ADR-011, CQRS). Apunta el MISMO firestore.rules a las dos databases NOMBRADAS de medisage (qa/prod). NO toca la (default) ni la de chatbot-sofia. Deploy: firebase deploy --only firestore:rules --project proyecto-ifc-497317 (requiere Firebase agregado al proyecto + firebase login / CI token).",
+  "firestore": [
+    { "database": "medisage-qa", "rules": "firestore.rules" },
+    { "database": "medisage", "rules": "firestore.rules" }
+  ]
+}
