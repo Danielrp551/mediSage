@@ -1,9 +1,12 @@
 @startuml class-backend-conversations
-' Propósito: jerarquía OO del módulo conversations (modelo FINAL, 5 entidades) — pipe de mensajería
-'            multicanal: ChannelAccount + Conversation + Message/MessageAttachment + ConversationAssignmentLog,
+' Propósito: jerarquía OO del módulo conversations bajo el rediseño CQRS — control plane Postgres
+'            (ChannelAccount + Conversation + ConversationAssignmentLog + MessageOutbox) + data plane
+'            Firestore (stream de mensajes via Firebase Admin SDK). Los modelos Message/MessageAttachment
+'            Postgres SE ELIMINAN: el mensaje pasa a ser doc Firestore. +app/core/firestore.py (Admin SDK),
+'            +MessageOutbox model+repo, +relay del outbox, +router realtime (POST /realtime/token).
 '            secret_resolver en app.core, webhook processors por canal y enganche aditivo con crm.
-' Última actualización: 2026-06-02
-' Código de referencia: backend/app/modules/conversations/, backend/app/core/secrets.py, app/routers/webhooks.py
+' Última actualización: 2026-06-03 (REDISEÑO CQRS — brief conversations_firestore_redesign.md §4/§10. ADR-011.)
+' Código de referencia: backend/app/modules/conversations/, backend/app/core/firestore.py, backend/app/core/secrets.py, app/routers/webhooks.py
 
 !theme plain
 skinparam classAttributeIconSize 0
@@ -13,7 +16,7 @@ skinparam ranksep 65
 skinparam defaultFontSize 13
 hide empty members
 
-title Class — Backend · Conversations module
+title Class — Backend · Conversations module (CQRS: Postgres control plane + Firestore data plane)
 
 ' ─────────────────────────────────────────────────────────────
 ' Shared layer — mixins y base genérica
@@ -51,6 +54,7 @@ package "app.shared" <<Frame>> {
 
 ' ─────────────────────────────────────────────────────────────
 ' Enums conversations-owned (en código, NO en BD — varchar plano)
+' Validan en el SERVICE antes de escribir el doc Firestore.
 ' ChannelType NO vive aquí: se REUSA de crm.enums (single source of truth).
 ' ─────────────────────────────────────────────────────────────
 package "app.modules.conversations.enums" <<Frame>> {
@@ -99,10 +103,21 @@ package "app.modules.conversations.enums" <<Frame>> {
     read
     failed
   }
+  enum OutboxOp <<enum>> {
+    message_create
+    message_status
+    conversation_upsert
+  }
+  enum OutboxStatus <<enum>> {
+    pending
+    done
+    failed
+  }
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Domain models — SQLAlchemy 2.0 ORM (5 entidades)
+' Domain models — SQLAlchemy 2.0 ORM (4 entidades Postgres / control plane)
+' Message + MessageAttachment YA NO son modelos Postgres → son docs Firestore (ver paquete data plane).
 ' ─────────────────────────────────────────────────────────────
 package "app.modules.conversations.models" <<Frame>> {
   class ChannelAccount <<entity>> {
@@ -136,46 +151,23 @@ package "app.modules.conversations.models" <<Frame>> {
     '   WHERE status='open' AND deleted_at IS NULL
     ' Invariantes (service): advisor⟺assignee_user_id set,
     '   cerrar/reasignar cierra+abre ConversationAssignmentLog.
+    ' Control plane / fuente de verdad — se proyecta a Firestore
+    '   (doc espejo conversations/{cid}) vía MessageOutbox.
   }
 
-  class Message <<entity, immutable>> {
+  class MessageOutbox <<entity>> {
+    +id: str  ' = mid del mensaje (wamid inbound / uuid outbound) <<unique>>
     +conversation_id: str <<FK>>
-    +direction: str  ' MessageDirection
-    +sender_type: str  ' SenderType
-    +sender_user_id: str? <<FK>>
-    +bot_configuration_id: str? <<FK>>
-    +content_type: str  ' ContentType
-    +content: str?
-    +external_id: str?  ' WA wamid / Telegram message_id
-    +external_status: str?  ' MessageExternalStatus (varchar libre)
-    +sent_at: datetime
-    +delivered_at: datetime?
-    +read_at: datetime?
-    +failed_at: datetime?
-    +failure_reason: str?
-    +provider_payload: JSONB?
+    +op: str  ' OutboxOp: message_create / message_status / conversation_upsert
+    +payload: JSONB  ' el doc a escribir en Firestore (shape contrato API, snake_case)
+    +status: str  ' OutboxStatus: pending / done / failed
+    +attempts: int = 0
+    +last_error: str?
+    +processed_on: datetime?
     --
-    ' UNIQUE PARTIAL (conversation_id, external_id)
-    '   WHERE external_id IS NOT NULL → idempotencia reenvío Meta
-    ' PK·A·T — SIN SoftDeleteMixin (audit inmutable)
-  }
-
-  class MessageAttachment <<entity, immutable>> {
-    +message_id: str <<FK>>
-    +attachment_type: str  ' AttachmentType
-    +url: str?  ' storage en F4 (lazy proxy vs GCS por confirmar)
-    +mime_type: str?
-    +size_bytes: int?
-    +duration_sec: int?
-    +latitude: Decimal?
-    +longitude: Decimal?
-    +address_label: str?
-    +original_filename: str?
-    +external_media_id: str?
-    +metadata: JSONB?
-    --
-    ' PK·A·T — SIN SoftDeleteMixin
-    ' Modelado en F2; processing diferido a F4 (texto-primero).
+    ' INDEX (status, created_on) → el relay barre los pending.
+    ' INSERT ... ON CONFLICT (id) DO NOTHING → dedup real (idempotencia).
+    ' PK·A·T — SIN SoftDeleteMixin (cola operativa, no audit de negocio).
   }
 
   class ConversationAssignmentLog <<entity, immutable>> {
@@ -194,7 +186,56 @@ package "app.modules.conversations.models" <<Frame>> {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Repositories — un repo por entidad
+' Data plane — Firestore (Native mode): el stream de mensajes (NO Postgres).
+' Los antiguos modelos Message/MessageAttachment ahora son DOCS Firestore.
+' ─────────────────────────────────────────────────────────────
+package "Firestore (Native mode — data plane)" <<Frame, External>> #E6F2FF {
+  class "conversations/{cid}" as fs_conv <<Firestore doc>> {
+    ' Doc espejo liviano del Conversation de Postgres (reglas + inbox live)
+    +status
+    +assignee_user_id
+    +allowed_reader_ids: [uid...]
+    +channel_account_id
+    +person_id
+    +person_name
+    +last_message_at
+    +last_message_preview
+    +unread_count
+    +updated_at
+  }
+  class "conversations/{cid}/messages/{mid}" as fs_msg <<Firestore doc>> {
+    ' (antes: modelo Message Postgres) — mid = wamid / uuid → doc-id idempotente
+    +direction  ' MessageDirection
+    +sender_type  ' SenderType
+    +sender_user_id?
+    +bot_configuration_id?
+    +content_type  ' ContentType
+    +content?
+    +external_id?  ' wamid / message_id
+    +external_status?  ' MessageExternalStatus
+    +sent_at
+    +delivered_at?
+    +read_at?
+    +failed_at?
+    +failure_reason?
+    +attachments: [...]  ' (antes: modelo MessageAttachment Postgres) — F4: binarios→GCS, url firmada
+    +provider_payload?
+    +created_at
+  }
+  note bottom of fs_msg
+    **Mensajes = docs Firestore (ya NO Postgres)**
+    Los modelos ORM ""Message"" / ""MessageAttachment""
+    se ELIMINARON. El shape lo siguen definiendo los
+    enums + los Pydantic (""MessageItem"" / ""MessageAttachmentItem"")
+    como contrato de API + shape del doc (snake_case).
+    Escritos SOLO por el backend (Admin SDK, bypassa rules);
+    el browser solo LEE vía ""onSnapshot"" (Custom Token). ADR-011.
+  end note
+}
+
+' ─────────────────────────────────────────────────────────────
+' Repositories — un repo por entidad Postgres
+' (MessageRepository / MessageAttachmentRepository ELIMINADOS — el mensaje es doc Firestore)
 ' ─────────────────────────────────────────────────────────────
 package "app.modules.conversations.repositories" <<Frame>> {
   class ChannelAccountRepository {
@@ -211,17 +252,13 @@ package "app.modules.conversations.repositories" <<Frame>> {
     +get_full(db, conversation_id): Conversation?
     +list_inbox(db, query, assignee_user_id?, unassigned?): tuple<list, int>
   }
-  class MessageRepository {
-    +ALLOWED_FIELDS: set  ' sent_at, direction, content_type,
-    '   sender_type, external_status
+  class MessageOutboxRepository {
+    +ALLOWED_FIELDS: set  ' status, op, created_on
     --
-    +list_for_conversation(db, conversation_id, query): tuple<list, int>
-    +get_by_external_id(db, conversation_id, external_id): Message?
-    +append(db, message, attachments?): Message
-  }
-  class MessageAttachmentRepository {
-    +list_for_message(db, message_id): list
-    +attachments_map(db, message_ids): dict  ' batch inline en MessageItem
+    +enqueue(db, *, id, conversation_id, op, payload): MessageOutbox  ' ON CONFLICT(id) DO NOTHING → bool insertó
+    +list_pending(db, limit): list<MessageOutbox>  ' (status='pending', orderBy created_on)
+    +mark_done(db, outbox_id, processed_on): None
+    +mark_failed(db, outbox_id, error): None  ' attempts++, last_error
   }
   class ConversationAssignmentLogRepository {
     +list_for_conversation(db, conversation_id): list
@@ -232,7 +269,7 @@ package "app.modules.conversations.repositories" <<Frame>> {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Secret resolver — cross-cutting, en app.core (ADR-010), reusable
+' Core cross-cutting (app.core, reusable) — secrets + Firebase Admin (ADR-010 / ADR-011)
 ' ─────────────────────────────────────────────────────────────
 package "app.core" <<Frame>> #lightyellow {
   class "secrets.py" as secrets_mod <<module>> {
@@ -244,6 +281,20 @@ package "app.core" <<Frame>> #lightyellow {
     --
     ' google-cloud-secret-manager (async si la versión lo expone,
     ' sino sync en threadpool). Cache TTL para no golpear SM por webhook.
+  }
+  class "firestore.py" as fs_mod <<module>> {
+    -_app: firebase_admin.App?  ' lazy (no al import → smoke sin GCP no rompe)
+    -_db: firestore.Client?  ' por env (medisage-qa / medisage)
+    --
+    +get_db(): firestore.Client  ' Native mode DB por ENV_NAME (named DB)
+    +mint_custom_token(uid, claims): str  ' admin.auth.create_custom_token(...)
+    +write_message_doc(cid, mid, payload): None  ' set(doc_id=mid) create-if-absent
+    +upsert_conversation_doc(cid, payload): None  ' doc espejo conversations/{cid}
+    +update_message_status(cid, mid, patch): None  ' delivered/read/failed (directo)
+    --
+    ' Firebase Admin SDK (firebase-admin). Init ADC (SA Cloud Run, sin key file
+    ' en prod) — roles datastore.user + iam.serviceAccountTokenCreator (signBlob).
+    ' Lazy import de firebase_admin → el path de test usa fallback/mocks/emulador.
   }
 }
 
@@ -263,20 +314,23 @@ package "app.modules.conversations.services" <<Frame>> {
     +get_by_id / list_inbox / get_my_inbox
     +take(db, conversation_id, actor_id, reason?)  ' reset unread + log
     '   + emite CONVERSATION_TAKEN a crm.lead_activity.log
+    '   + enqueue(op=conversation_upsert) → refleja assignee/allowed_reader_ids
     +release(db, conversation_id, to_type, actor_id, reason?)  ' MVP: unassigned
-    '   + emite CONVERSATION_RELEASED a crm.lead_activity.log
-    +close(db, conversation_id, actor_id)  ' status=closed, cierra log vigente
-    +reopen(db, conversation_id, actor_id)  ' guard CONVERSATION_ALREADY_OPEN
-    +mark_read(db, conversation_id, actor_id)  ' unread_count=0
+    '   + emite CONVERSATION_RELEASED + enqueue(conversation_upsert)
+    +close(db, conversation_id, actor_id)  ' status=closed, cierra log + upsert
+    +reopen(db, conversation_id, actor_id)  ' guard CONVERSATION_ALREADY_OPEN + upsert
+    +mark_read(db, conversation_id, actor_id)  ' unread_count=0 + upsert
   }
   class "message.py" as msg_svc <<module>> {
-    +list(db, conversation_id, query)
-    +persist_inbound(db, conversation, payload)  ' dedup external_id,
-    '   unread++, last_message_at/preview (texto-primero, sin attachments)
-    +send_outbound(db, conversation_id, content, actor_id)  ' real Meta Graph API:
-    '   persiste Message → core.secrets vía ca.get_credentials → POST /messages;
-    '   falla → failed_at/failure_reason, devuelve 200 (NO 502). NO emite MESSAGE_SENT.
-    +apply_status(db, external_id, status)  ' delivered_at/read_at/failed_at
+    +persist_inbound(db, conversation, payload)  ' TX: enqueue(message_create) +
+    '   conversation_upsert + unread++/last_message (SOLO si el outbox insertó)
+    +relay_outbox(db)  ' barre pending → core.firestore.write_message_doc /
+    '   upsert_conversation_doc; mark_done/mark_failed (backoff). RELAY del outbox.
+    +send_outbound(db, conversation_id, content, actor_id)  ' TX enqueue(pending) +
+    '   relay a Firestore (status=pending, asesor lo ve instantáneo) → Meta Graph API
+    '   → update doc Firestore {external_id, sent/failed}. 200 (NO 502). NO MESSAGE_SENT.
+    +apply_status(db, cid, mid, status)  ' core.firestore.update_message_status (directo)
+    +list_messages(db, conversation_id, query)  ' FALLBACK: lee Firestore via Admin SDK (SSR)
   }
 }
 
@@ -286,19 +340,30 @@ package "app.modules.conversations.services" <<Frame>> {
 package "app.modules.conversations.services.webhook_processor" <<Frame>> {
   class "whatsapp.py" as wpw <<module>> {
     +verify_signature(headers, raw_body, app_secret): bool  ' HMAC SHA256
-    +process_inbound(payload, channel_account, db): list<Message>  ' síncrono
-    +process_status(payload, channel_account, db): None
+    +process_inbound(payload, channel_account, db): None  ' síncrono (TX + outbox)
+    +process_status(payload, channel_account, db): None  ' apply_status (Firestore directo)
   }
   class "telegram.py" as wpt <<module, future>> {
     ' DIFERIDO — modelo/enum ya lo soportan, falta el processor
     +verify_secret_token(headers, expected_token): bool
-    +process_inbound(payload, channel_account, db): list<Message>
+    +process_inbound(payload, channel_account, db): None
   }
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Top-level webhook router (FUERA de modules/, sin JWT)
+' Routers — realtime/token (NUEVO) + top-level webhook router
 ' ─────────────────────────────────────────────────────────────
+package "app.modules.conversations.routers" <<Frame>> {
+  class "realtime.py" as rt_router <<module>> {
+    +POST /api/v1/conversations/realtime/token  ' gated CONVERSATIONS_READ | MY_CONVERSATIONS_READ
+    --
+    ' JWT/RBAC = fuente de verdad. mint_custom_token(uid=user.id,
+    ' claims={scope:'conversations', is_advisor, can_read_all}).
+    ' can_read_all=true ⟺ CONVERSATIONS_READ (bandeja global/supervisor).
+    ' Devuelve { token, firebase_config? }. El browser → signInWithCustomToken.
+  }
+}
+
 package "app.routers" <<Frame, External>> #lightyellow {
   class "webhooks.py" as wh_router <<module>> {
     +GET  /api/v1/webhooks/whatsapp/{channel_account_id}  ' verify challenge
@@ -359,22 +424,21 @@ ActiveMixin     <|-- Conversation
 SoftDeleteMixin <|-- Conversation
 TimestampMixin  <|-- Conversation
 
-PrimaryKeyMixin <|-- Message
-PrimaryKeyMixin <|-- MessageAttachment
+PrimaryKeyMixin <|-- MessageOutbox
 PrimaryKeyMixin <|-- ConversationAssignmentLog
 
 note bottom of TimestampMixin
-  **Mixins por entidad (modelo final)**
+  **Mixins por entidad (modelo CQRS)**
   • Los 4 mixins (con ""SoftDeleteMixin""):
     ""ChannelAccount"", ""Conversation""
     (datos de negocio vivos).
   • PK·A·T (SIN ""SoftDeleteMixin""):
-    ""Message"", ""MessageAttachment"",
-    ""ConversationAssignmentLog""
-    (audit trail inmutable — un mensaje
-    recibido/enviado es un hecho).
+    ""MessageOutbox"" (cola operativa) y
+    ""ConversationAssignmentLog"" (audit handoff).
+  • ""Message"" / ""MessageAttachment"" YA NO son
+    modelos Postgres → docs Firestore (sin mixins).
   (Sólo se dibujan las herencias completas;
-  los logs/mensajes muestran solo ""PrimaryKeyMixin"".)
+  el outbox/log muestran solo ""PrimaryKeyMixin"".)
 end note
 
 ' ─────────────────────────────────────────────────────────────
@@ -382,22 +446,19 @@ end note
 ' ─────────────────────────────────────────────────────────────
 BaseRepository <|-- ChannelAccountRepository            : "<ChannelAccount>"
 BaseRepository <|-- ConversationRepository              : "<Conversation>"
-BaseRepository <|-- MessageRepository                   : "<Message>"
-BaseRepository <|-- MessageAttachmentRepository         : "<MessageAttachment>"
+BaseRepository <|-- MessageOutboxRepository             : "<MessageOutbox>"
 BaseRepository <|-- ConversationAssignmentLogRepository : "<ConversationAssignmentLog>"
 
 ' ─────────────────────────────────────────────────────────────
-' Relaciones de dominio (FK + relationship reales)
+' Relaciones de dominio (FK + relationship reales — Postgres)
 ' ─────────────────────────────────────────────────────────────
 ChannelAccount "1" -- "0..*" Conversation : "abre"
-Conversation   "1" -- "0..*" Message
-Message        "1" -- "0..*" MessageAttachment
+Conversation   "1" -- "0..*" MessageOutbox : "encola ops"
 Conversation   "1" -- "0..*" ConversationAssignmentLog : "handoff"
 
 ' FKs reales hacia user (admin.user ya existe) y person (crm existe)
 Conversation              "*" -- "0..1" Person : "person_id (FK)"
 Conversation              "*" -- "0..1" User   : "advisor (assignee, FK)"
-Message                   "*" -- "0..1" User   : "sender (si advisor, FK)"
 ConversationAssignmentLog "*" -- "0..1" User   : "from/to/by (FK)"
 
 ' Forward FKs (ADR-009): SOLO columna varchar(36), SIN FK/relationship.
@@ -405,15 +466,18 @@ ConversationAssignmentLog "*" -- "0..1" User   : "from/to/by (FK)"
 ChannelAccount ..> BotConfiguration : "bot_configuration_id (default)\n<<forward FK, ADR-009>>"
 ChannelAccount ..> Campaign         : "default_campaign_id (atribución)\n<<forward FK, ADR-009>>"
 Conversation   ..> BotConfiguration : "bot_configuration_id (efectivo)\n<<forward FK, ADR-009>>"
-Message        ..> BotConfiguration : "bot_configuration_id\n<<forward FK, ADR-009>>"
+
+' ── Proyección CQRS (Postgres → Firestore vía outbox + Admin SDK) ──
+Conversation  ..> fs_conv : "proyección (doc espejo)\nvia outbox + Admin SDK"
+MessageOutbox ..> fs_msg  : "relay materializa\nset(doc_id=mid)"
+fs_conv "1" -- "0..*" fs_msg : "subcolección messages/{mid}"
 
 ' ─────────────────────────────────────────────────────────────
 ' Repos manejan su modelo
 ' ─────────────────────────────────────────────────────────────
 ChannelAccountRepository            ..> ChannelAccount
 ConversationRepository              ..> Conversation
-MessageRepository                   ..> Message
-MessageAttachmentRepository         ..> MessageAttachment
+MessageOutboxRepository             ..> MessageOutbox
 ConversationAssignmentLogRepository ..> ConversationAssignmentLog
 
 ' ─────────────────────────────────────────────────────────────
@@ -430,19 +494,23 @@ wpt ..> conv_svc
 wpt ..> msg_svc
 
 ' ─────────────────────────────────────────────────────────────
-' Services usan repos
+' Services usan repos + core (Firestore Admin SDK)
 ' ─────────────────────────────────────────────────────────────
 ca_svc   ..> ChannelAccountRepository
 conv_svc ..> ConversationRepository
 conv_svc ..> ConversationAssignmentLogRepository
-msg_svc  ..> MessageRepository
-msg_svc  ..> MessageAttachmentRepository
+conv_svc ..> MessageOutboxRepository : enqueue(conversation_upsert)
+msg_svc  ..> MessageOutboxRepository : enqueue / list_pending / mark_*
+msg_svc  ..> fs_mod : write_message_doc / update_message_status (relay + status)
+
+' realtime router mintea el Custom Token
+rt_router ..> fs_mod : mint_custom_token(uid, claims)
 
 ' Secret resolver consumido por channel_account.get_credentials (+ webhook firma + outbound)
-ca_svc      ..> secrets_mod : resolve(secret_name)
+ca_svc   ..> secrets_mod : resolve(secret_name)
 
 ' ─────────────────────────────────────────────────────────────
-' Enganche aditivo con crm (3 helpers consumidos + 2 cambios aditivos)
+' Enganche aditivo con crm (4 helpers consumidos + 2 cambios aditivos)
 ' ─────────────────────────────────────────────────────────────
 conv_svc ..> crm_person_svc  : find_by_identifier_or_create\n(resolver Person en inbound)
 conv_svc ..> crm_la_repo     : advisor_map\n(auto-asignar al dueño del lead)
@@ -472,27 +540,58 @@ note right of Conversation
   Las cerradas viven como historial (reabrir tras cerrar).
   Auto-asignada al dueño del lead al nacer
   (fallback ""unassigned""); el asesor toma/libera/cierra.
+  **Control plane** — queda en Postgres (preserva FK crm,
+  UNIQUE 1-open y filtros SQL del inbox); se proyecta a
+  Firestore (doc espejo) vía ""MessageOutbox"". ADR-011.
 end note
 
-note bottom of secrets_mod
-  **ADR-010 — secretos por-cuenta en runtime**
-  El template inyecta secretos fijos por env (deploy-time,
-  ""--set-secrets"" → ""Settings""). Para credenciales por
-  ""ChannelAccount"" se introduce el SDK
-  ""google-cloud-secret-manager"" + cache TTL + fallback env
-  (local/test). Patrón reusable (bots lo consumirá).
-  Cliente lazy → no rompe el boot sin GCP (smoke/sqlite).
+note bottom of MessageOutbox
+  **Transactional Outbox (resuelve el dual-write)**
+  En la MISMA TX que el cambio de negocio se inserta la
+  fila → consistencia sin transacción distribuida y sin
+  pérdida (vive en el outbox tras el COMMIT). ""id = mid""
+  UNIQUE → ""ON CONFLICT (id) DO NOTHING"" deduplica; el
+  ""unread_count++"" solo corre si el INSERT fue nuevo.
+  El relay (""msg_svc.relay_outbox"": BackgroundTasks MVP /
+  Cloud Tasks prod) materializa cada op como doc Firestore
+  (""set(doc_id=mid)"", create-if-absent). Reemplaza el
+  UNIQUE parcial de la vieja tabla ""message"". ADR-011.
+end note
+
+note bottom of fs_mod
+  **ADR-011 — Firebase Admin SDK (data plane Firestore)**
+  Init lazy vía ADC (la SA de Cloud Run, sin key file en
+  prod) — roles ""datastore.user"" + ""iam.serviceAccount
+  TokenCreator"" (signBlob para Custom Tokens). Lazy import
+  de ""firebase_admin"" → no rompe el boot sin GCP (smoke/
+  sqlite usa fallback/mocks/emulador). Una DB Firestore por
+  entorno (""medisage-qa"" / ""medisage"", Native mode,
+  us-central1), elegida por ""ENV_NAME"". Dep nueva:
+  ""firebase-admin"" en pyproject. ADC, NO Secret Manager.
+end note
+
+note bottom of rt_router
+  **Custom Token + Security Rules (browser read-only)**
+  El JWT/RBAC gatea quién recibe token y con qué claims;
+  ""mint_custom_token"" lo firma (scope='conversations',
+  ""can_read_all"" ⟺ ""CONVERSATIONS_READ""). El browser
+  ""signInWithCustomToken"" → abre listeners READ-ONLY; las
+  Security Rules (""firestore.rules"", versionadas + CI)
+  espejan el RBAC vía ""allowed_reader_ids"". TODA escritura
+  sigue server-side (browser → Next → backend → Firestore
+  Admin SDK). Logout → ""revoke_refresh_tokens(uid)"". ADR-011.
 end note
 
 note bottom of msg_svc
-  **Outbound real (Meta Graph API)**
-  ""send_outbound"" persiste el ""Message"", resuelve
-  ""access_token"" + ""phone_number_id"" vía
-  ""ca.get_credentials"" → ""POST /{phone_number_id}/messages"".
-  Falla → ""failed_at""/""failure_reason"", **200** con el
-  message fallido (UI reintenta), NO 502. Reintento =
-  ""Message"" nuevo (el fallido queda inmutable).
-  **NO** emite ""MESSAGE_SENT"" por-mensaje (decisión §1).
+  **Outbound real (Meta Graph API) + outbox/Firestore**
+  ""send_outbound"": TX ""enqueue(message_create, pending)"" +
+  ""conversation_upsert"" + denorm → relay escribe el doc
+  Firestore (el asesor lo ve instantáneo vía su listener) →
+  ""POST /{phone_number_id}/messages"" → update doc Firestore
+  ""{external_id, external_status: sent}"" / ""{failed_at,
+  failure_reason}"". 200 con el mensaje fallido (UI reintenta),
+  NO 502. Reintento = ""mid"" nuevo. **NO** emite ""MESSAGE_SENT""
+  por-mensaje (decisión §1). El stream vive en Firestore.
 end note
 
 note bottom of conv_svc
@@ -503,13 +602,17 @@ note bottom of conv_svc
   NO ""MESSAGE_SENT"". Estos tipos NO están en
   ""ADVISOR_ACTIVITY_TYPES"" → el composer de crm
   no puede editarlos/borrarlos (audit inmutable).
+  Take/release/close/reopen/mark-read además encolan
+  ""conversation_upsert"" al outbox (refleja assignee/
+  allowed_reader_ids/unread en el doc Firestore).
 end note
 
 note bottom of wh_router
   **Sin JWT — validación por firma del provider**
   WhatsApp: HMAC SHA256 del body RAW con ""app_secret""
   resuelto de Secret Manager (mismatch → 403).
-  Procesamiento **síncrono** antes del 200 (MVP sin bot).
+  Procesamiento **síncrono** antes del 200 (MVP sin bot);
+  el relay del outbox corre aparte (BackgroundTasks).
   Vive top-level (""app/routers/""), no en ""modules/"".
 end note
 
@@ -524,6 +627,7 @@ note bottom of crm_act_svc
   + FK aditiva ""lead_activity.related_conversation_id
      → conversation.id"" en la migración 0016 (Postgres-only).
   Sin ""relationship"" ORM cross-módulo (modelo crm intacto).
+  Sigue válido: Conversation queda en Postgres.
 end note
 
 @enduml

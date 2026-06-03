@@ -1,7 +1,9 @@
 # Módulo `conversations` — Frontend (Next.js) deep-dive
 
-> **Última actualización**: 2026-06-02
+> **Última actualización**: 2026-06-03
 > **Audiencia**: developer implementando `frontend/src/.../conversaciones/`.
+
+> ⚠ **REDISEÑO de arquitectura (2026-06-03, brief `C:/tmp/conversations_firestore_redesign.md`, confirmado por el usuario)**: el **stream de mensajes** pasa de Postgres a **Cloud Firestore** con arquitectura **CQRS** (Postgres = control plane / fuente de verdad: `ChannelAccount`, `Conversation`, `ConversationAssignmentLog`, `message_outbox`; Firestore = data plane / read-model real-time del stream). Impacto en el **frontend**: el **hilo de la conversación (right pane) se lee en TIEMPO REAL vía Firestore `onSnapshot` (READ-ONLY)** — reemplaza el polling del hilo. El **inbox LIST (left pane) sigue por polling Postgres** (opcionalmente también live vía la colección `conversations`). El **path de escritura NO cambia**: todo write (enviar, tomar, liberar, cerrar, reabrir) sigue siendo `browser → Next server action → backend → Meta + Firestore (Admin SDK)`; **el cliente NUNCA escribe Firestore**, solo abre listeners read-only autorizados por **Custom Token minteado por el backend + Security Rules** (espejan el RBAC). Esto **preserva** el principio del template (el browser solo LEE lo que está autorizado a ver; el backend muta; JWT server-side; RBAC fuente de verdad). Todo lo NO relacionado a la lectura real-time del hilo (canales CRUD, nav, types, polling del listado, perf rules, TZ, handoff por server actions) **se mantiene** como ya estaba. Ver [ConversationThread](#conversationthreadtsx-panel-derecho) y [Lectura real-time del hilo (Firestore)](#lectura-real-time-del-hilo-firestore).
 > **Pre-requisito**: leer [`README.md`](./README.md), [`backend.md`](./backend.md), [`ui.md`](./ui.md), [`../../../frontend/CLAUDE.md`](../../../frontend/CLAUDE.md), y como molde de referencia el frontend de [`../crm/frontend.md`](../crm/frontend.md) (módulo completo más reciente del que `conversations` copia patrones — el **timeline rico** de crm es el molde directo del **hilo de la conversación** + el **inbox**) y [`../staff/frontend.md`](../staff/frontend.md) (CRUD/detalle con sub-recursos, la lección `cd10c78`).
 
 > **Contrato autoritativo**: este doc respeta la spec compartida de `conversations` (`C:/tmp/conversations_spec.md`, consolidada en [`README.md`](./README.md)) — nombres de entidades, campos, endpoints, permisos, enums y códigos de error son **vinculantes** y deben coincidir con [`backend.md`](./backend.md) y [`ui.md`](./ui.md). Donde haya tensión, manda la spec. **Decisiones confirmadas con el usuario 2026-06-02** (spec §1) — NO re-litigar.
@@ -10,7 +12,7 @@
 
 > **Decisiones de modelo confirmadas** (spec §1, NO re-litigar):
 > 1. **MVP = WhatsApp entrante + saliente REALES**. El front renderiza inbound (contacto) + outbound (asesor) + system (notificaciones); el composer envía outbound real (el backend habla con Meta Graph API).
-> 2. **Inbox en vivo = polling** (refetch periódico, pausable), NO SSE/WebSocket (Cloud Run con `min-instances 0` + cpu-throttling no los favorece). El front implementa el loop de polling con `setInterval` + pausa + refetch silencioso sin flash.
+> 2. **Listado del inbox en vivo = polling** (refetch periódico, pausable), NO SSE/WebSocket (Cloud Run con `min-instances 0` + cpu-throttling no los favorece). El front implementa el loop de polling de la **lista** con `setInterval` + pausa + refetch silencioso sin flash. **⚠ Rediseño 2026-06-03**: esto aplica al **LISTADO** (left pane, sigue por polling Postgres). El **HILO** (right pane) pasa a **real-time vía Firestore `onSnapshot`** (READ-ONLY) — el stream de mensajes vive en Firestore (CQRS), ver [Lectura real-time del hilo](#lectura-real-time-del-hilo-firestore). No re-litigar el resto de §11 del brief (los 12 permisos, las 4 decisiones de negocio, webhook síncrono, polling del listado, PUT, UI español).
 > 3. **Asignación de conversación nueva = AUTO al dueño del lead** (round-robin de crm), con fallback a `unassigned` (bandeja compartida). El asesor reasigna/toma igual. Continuidad "mis leads = mis chats" (`/me/conversations` + `/me/leads`).
 > 4. **Adjuntos = texto primero**. `MessageAttachment` está MODELADO en el contrato (tipos TS + render placeholder) pero el processing (download/render real de media) es **F4 diferida**. En el MVP el composer solo envía `content_type=text`; el hilo muestra un placeholder "📎 Adjunto (no disponible aún)" si llegara un attachment.
 > 5. **Outbound fallido** se persiste igual (estado `failed`); el endpoint devuelve **200** con el message fallido. La UI muestra un estado ⚠ "Falló el envío" + botón **Reintentar** (re-`POST /messages` con el mismo content).
@@ -34,6 +36,11 @@ frontend/src/
 │                                            AttachmentType/MessageExternalStatus), request bodies.
 │                                            REUSA ChannelType de crm.types + UserAuditInfo de audit.types
 ├── lib/
+│   ├── firebase/
+│   │   └── client.ts                     ← NUEVO (redesign): init Firebase Web SDK (firebase/app
+│   │                                        + firebase/auth + firebase/firestore) con config pública
+│   │                                        NEXT_PUBLIC_FIREBASE_* + signInWithCustomToken(token del
+│   │                                        backend) → getFirestore() para listeners READ-ONLY del hilo
 │   ├── schemas/
 │   │   ├── channel-account.schema.ts     ← channelAccountCreate/Update (channel_type enum,
 │   │   │                                    external_identifier, secret_name?, webhook_verify_token?)
@@ -49,9 +56,13 @@ frontend/src/
 │                                            CONVERSATION_STATUS_META, INBOX_FILTER_PRESETS
 ├── actions/
 │   ├── channel-account.actions.ts        ← list/active/get/create/update/delete (tag conversations:channel-accounts)
-│   └── conversation.actions.ts           ← listConversations/getConversation/listMessages/sendMessage/
-│                                            take/release/close/reopen/markRead/listMyConversations
-│                                            (tags conversations:list, conversations:thread:{id})
+│   ├── realtime.actions.ts               ← NUEVO (redesign): getRealtimeToken() → POST
+│   │                                        /conversations/realtime/token (server-side con el JWT);
+│   │                                        devuelve { token, firebase_config? } para el Web SDK
+│   └── conversation.actions.ts           ← listConversations/getConversation/listMessages(fallback)/
+│                                            sendMessage/take/release/close/reopen/markRead/
+│                                            listMyConversations (tags conversations:list,
+│                                            conversations:thread:{id})
 └── app/(main)/conversaciones/
     ├── canales/
     │   ├── page.tsx                      ← RSC prefetch (ChannelAccount list) — molde Verticals
@@ -67,10 +78,15 @@ frontend/src/
     │   └── _components/
     │       └── (reusa InboxShell, scope="mine")
     └── _components/                       ← compartidos por bandeja + mis-conversaciones (NO rutas)
-        ├── InboxShell.tsx                ← layout 2-paneles; orquesta lista + hilo + polling + URL state
+        ├── InboxShell.tsx                ← layout 2-paneles; orquesta lista (polling) + hilo
+        │                                    (real-time Firestore) + getRealtimeToken + URL state
         ├── ConversationList.tsx          ← panel izquierdo: filtros + búsqueda client-side + filas
         ├── ConversationListItemRow.tsx   ← fila memoizada (avatar, nombre, preview, badge sin-leer, hora)
-        ├── ConversationThread.tsx        ← panel derecho: header + hilo + handoff + composer
+        ├── ConversationThread.tsx        ← panel derecho: header + hilo REAL-TIME (Firestore
+        │                                    onSnapshot READ-ONLY) + handoff + composer
+        ├── useThreadMessages.ts          ← NUEVO (redesign): hook que abre el listener Firestore
+        │                                    (onSnapshot collection conversations/{cid}/messages
+        │                                    orderBy created_at) y expone messages en vivo
         ├── ThreadHeader.tsx              ← contacto + canal + estado + AssigneeBadge + HandoffControls
         ├── MessageDayGroup.tsx           ← sección "Hoy"/"Ayer"/fecha (client-only por TZ)
         ├── MessageBubble.tsx             ← burbuja memoizada (React.memo): in/out/system + estado msg
@@ -522,11 +538,20 @@ export const ENDPOINTS = {
     DELETE: (id: string) => `${CONVERSATIONS}/channel-accounts/${id}`, // soft delete
     ACTIVE: `${CONVERSATIONS}/channel-accounts/active`, // raw ChannelAccountOption list
   },
+  REALTIME: {
+    // NUEVO (redesign Firestore): minta un Firebase Custom Token (server-side, con el JWT)
+    // para que el browser abra listeners READ-ONLY sobre el stream de mensajes. Gated
+    // CONVERSATIONS_READ o MY_CONVERSATIONS_READ (no es un permiso nuevo — reusa los existentes).
+    TOKEN: `${CONVERSATIONS}/realtime/token`, // POST → { token, firebase_config? }
+  },
   CONVERSATIONS_API: {
     LIST: `${CONVERSATIONS}/list`, // inbox global. PaginatedResponse[ConversationListItem]
     GET: (id: string) => `${CONVERSATIONS}/${id}`, // SingleResponse[ConversationDetail]
-    MESSAGES_LIST: (id: string) => `${CONVERSATIONS}/${id}/messages/list`, // POST + QueryRequest
-    SEND_MESSAGE: (id: string) => `${CONVERSATIONS}/${id}/messages`, // POST outbound (real Meta)
+    // MESSAGES_LIST es ahora un FALLBACK server-side (lee Firestore vía Admin SDK). El path
+    // PRIMARIO de lectura del hilo es el cliente Firestore real-time (onSnapshot). Útil para
+    // SSR/degradación si el Web SDK no carga.
+    MESSAGES_LIST: (id: string) => `${CONVERSATIONS}/${id}/messages/list`, // POST + QueryRequest (FALLBACK)
+    SEND_MESSAGE: (id: string) => `${CONVERSATIONS}/${id}/messages`, // POST outbound (real Meta + Firestore via Admin SDK)
     TAKE: (id: string) => `${CONVERSATIONS}/${id}/take`, // POST
     RELEASE: (id: string) => `${CONVERSATIONS}/${id}/release`, // POST
     CLOSE: (id: string) => `${CONVERSATIONS}/${id}/close`, // POST
@@ -599,11 +624,112 @@ export const NAV_ITEMS: NavItem[] = [
 
 > El sidebar (`components/layout/Sidebar/Sidebar.tsx`) ya filtra items por `permissions` vs `useAuth().permissions`. El detalle de la conversación NO está en `NAV_ITEMS` (vive en `?c=` dentro de Bandeja/Mi bandeja) — su gating es el del page contenedor.
 
+## Lectura real-time del hilo (Firestore)
+
+> **Pieza nueva del rediseño 2026-06-03** (brief §3/§4). El **stream de mensajes vive en Cloud Firestore** (read-model CQRS). El **hilo (right pane)** lo lee el browser **en tiempo real** con el Firebase **Web SDK** vía `onSnapshot` — **READ-ONLY** (el cliente NUNCA escribe Firestore). La autorización del listener la da un **Custom Token** que mintea el backend (con el JWT/RBAC como fuente de verdad) + **Security Rules** que espejan el RBAC. Nada de esto rompe el contrato del template: el browser sigue sin mutar el backend; todo write pasa por Next server action → backend.
+
+### Dependencia nueva: `firebase` (Web SDK)
+
+- `npm i firebase` (solo se importan tres sub-paths: `firebase/app`, `firebase/auth`, `firebase/firestore`). **No** se agrega `firebase/storage` ni otros (adjuntos = F4, vía GCS server-side, no Web SDK).
+- **Config pública** del Firebase project en envs `NEXT_PUBLIC_FIREBASE_*` (apiKey, authDomain, projectId, etc.). **NO son secretos** — son config de cliente (el `apiKey` de Firebase Web identifica el proyecto, no autoriza nada por sí solo; la autorización real la dan el Custom Token + las Security Rules). Por eso van con prefijo `NEXT_PUBLIC_` (expuestas al browser, a diferencia de `BACKEND_URL` / el JWT que son server-only). El backend puede además devolver el `firebase_config` en la respuesta del token (campo `firebase_config?`) para no duplicar la config — el cliente puede usar el de env o el del backend.
+- Variables esperadas (espejo de la config del Firebase project linkeado a `proyecto-ifc-497317`): `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_APP_ID`, y `NEXT_PUBLIC_FIREBASE_DATABASE_ID` (= `medisage-qa` / `medisage` — named DB por entorno, brief §1; `getFirestore(app, databaseId)`).
+
+### `lib/firebase/client.ts` (init + sign-in)
+
+Init **lazy + singleton** del Firebase app (un solo `initializeApp` por sesión del browser; `getApps()` evita doble init con HMR). Hace `signInWithCustomToken` con el token que mintó el backend → un `User` de Firebase Auth cuyo ID token (1h, auto-refresh) porta los `developer_claims` (`scope: "conversations"`, `is_advisor`, `can_read_all`) que las Security Rules evalúan. Expone `getFirestore(app, databaseId)` para los listeners.
+
+```ts
+"use client";
+
+import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
+import { getAuth, signInWithCustomToken, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
+
+// Config PÚBLICA (no secreta) — viene de NEXT_PUBLIC_FIREBASE_* (o del firebase_config
+// que devuelve el backend en /realtime/token). El apiKey identifica el proyecto; NO
+// autoriza por sí mismo (la autorización la dan el Custom Token + las Security Rules).
+const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
+};
+// named DB por entorno (medisage-qa / medisage) — brief §1.
+const DATABASE_ID = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID!;
+
+function getFirebaseApp(): FirebaseApp {
+  // Singleton: un único initializeApp por sesión (getApps() evita doble init con HMR).
+  return getApps().length ? getApp() : initializeApp(firebaseConfig);
+}
+
+let signInPromise: Promise<Firestore> | null = null;
+
+// Idempotente: la primera llamada hace signInWithCustomToken; las siguientes reusan la
+// promesa (un solo sign-in por sesión del browser). El token lo trae getRealtimeToken().
+export async function getRealtimeDb(token: string): Promise<Firestore> {
+  if (signInPromise) return signInPromise;
+  signInPromise = (async () => {
+    const app = getFirebaseApp();
+    const auth: Auth = getAuth(app);
+    await signInWithCustomToken(auth, token); // ID token 1h, auto-refresh mientras la sesión viva
+    return getFirestore(app, DATABASE_ID); // listeners READ-ONLY (Security Rules: write=false)
+  })();
+  return signInPromise;
+}
+```
+
+> **El cliente Firebase NUNCA escribe** (brief §3): no se exponen helpers de `setDoc`/`addDoc`/`updateDoc` desde `client.ts` — solo lectura (`onSnapshot`/`getDocs`). Las Security Rules ya bloquean todo write (`allow write: if false`), pero la **disciplina del front es no llamarlas** — todo write pasa por server action → backend (Admin SDK). Si el ID token expira o las Security Rules niegan (ej. cambió la asignación y el `uid` ya no está en `allowed_reader_ids`), el `onSnapshot` emite un error `permission-denied` → el componente cae al fallback (ver [ConversationThread](#conversationthreadtsx-panel-derecho)).
+
+### Server action `getRealtimeToken()` — `actions/realtime.actions.ts`
+
+Mintea el Custom Token **server-side** (con el JWT del usuario en la cookie httpOnly). Es el único punto donde el front obtiene credencial de Firebase; el browser jamás llama directo al endpoint (igual que todo el resto — pasa por Next server). Gated por el backend con `CONVERSATIONS_READ` **o** `MY_CONVERSATIONS_READ` (no es un permiso nuevo; reusa los existentes — brief §3/§5). Los `developer_claims` (`is_advisor`, `can_read_all`) los decide el backend según el RBAC del actor (`can_read_all=true` para quien tiene `CONVERSATIONS_READ` = bandeja global/supervisor; los demás solo sus conversaciones asignadas).
+
+```ts
+"use server";
+
+import { ENDPOINTS } from "@/lib/constants/endpoints";
+import { backendClient } from "@/services/backend.client";
+import { HttpError, type ApiSingle } from "@/types/api.types";
+import type { MutationResult } from "./user.actions";
+
+// Shape del token de Firebase. firebase_config es opcional (el cliente puede usar los
+// NEXT_PUBLIC_FIREBASE_* en su lugar). El token es de un solo uso para signInWithCustomToken.
+export interface RealtimeToken {
+  token: string;
+  firebase_config?: {
+    apiKey: string;
+    authDomain: string;
+    projectId: string;
+    appId: string;
+    databaseId: string;
+  } | null;
+}
+
+// NO se taggea ni se cachea — es una credencial efímera (custom token, ~1h de validez del
+// ID token resultante). El cliente la pide al montar el inbox y reusa el sign-in (idempotente).
+export async function getRealtimeToken(): Promise<MutationResult<RealtimeToken>> {
+  try {
+    const res = await backendClient.post<ApiSingle<RealtimeToken>>(ENDPOINTS.REALTIME.TOKEN, {});
+    return { ok: true, data: res.data };
+  } catch (e) {
+    // 403 si el actor no tiene CONVERSATIONS_READ ni MY_CONVERSATIONS_READ (en español).
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
+}
+```
+
+> **El token se obtiene una vez por sesión de inbox** (`InboxShell` lo pide al montar y lo pasa al `ConversationThread`/`useThreadMessages`). El `signInWithCustomToken` produce un ID token con auto-refresh (mientras la sesión medisage viva) → no hace falta re-pedir el custom token en cada conversación. Si el sign-in falla (token inválido/expirado, o el backend lo niega), el hilo cae al **fallback** `listMessages` (lectura server-side de Firestore vía Admin SDK) — el inbox sigue funcionando, sin real-time.
+
+> **Logout / revocación**: al cerrar sesión en medisage (o si se revocan permisos), el backend hace `revoke_refresh_tokens(uid)` (brief §3) → el ID token de Firebase deja de refrescarse → los listeners se cierran/niegan. El front no necesita lógica extra de logout de Firebase más allá de no re-mintar el token; opcionalmente `signOut(auth)` en el cleanup del inbox.
+
 ## Server Actions
 
 Mismo molde que clinic/catalog/staff/crm: validar con Zod en el action → llamar backend client → `revalidateTag(TAG, "max")`. Reusa el `MutationResult<T>` exportado por `user.actions.ts` (no se redefine). **Next 16 exige el 2º argumento de `revalidateTag`** (`"max"`) — lección del template ([feedback Next.js 16](../_seed-and-roles.md)); omitirlo es error de tipos/runtime.
 
-> **Polling vs cache de Server Actions** (clave en este módulo): el inbox refetcha periódicamente (polling, spec §1 default). Las lecturas (`listConversations`, `getConversation`, `listMessages`, `listMyConversations`) llevan `tags` para que las **mutaciones** (send/take/release/close/reopen/mark-read) las invaliden con `revalidateTag`. Pero el **polling** no depende del tag — re-invoca la action cada ~10 s con un `cache: "no-store"` efectivo (o re-fetch que ignora el cache RSC) para traer datos frescos del backend, no del cache de Next. Documentar: las actions de lectura del inbox aceptan un flag o usan `next: { tags: [...] }` **y** el cliente las llama en el loop de polling (el polling es el mecanismo de "tiempo real"; el tag es el mecanismo de invalidación tras una mutación propia). Si el backend client cachea agresivamente, el polling pasa `{ revalidate: 0 }` / `{ cache: "no-store" }` para esa llamada (confirmar el contrato del `backendClient` con el template).
+> **Polling (LISTA) vs real-time Firestore (HILO) vs cache de Server Actions** (clave en este módulo, redesign 2026-06-03):
+> - **El HILO (right pane) NO se poléa** — se lee en **tiempo real vía Firestore `onSnapshot`** (ver [Lectura real-time del hilo](#lectura-real-time-del-hilo-firestore) y [ConversationThread](#conversationthreadtsx-panel-derecho)). `getConversation` (el detail/handoff/header) se carga al seleccionar y se refetcha tras una mutación propia (handoff). `listMessages` queda como **fallback** server-side, no como loop de polling.
+> - **La LISTA (left pane / inbox) sigue por polling Postgres** (`listConversations` / `listMyConversations`, spec §1 default). El polling re-invoca esas actions cada ~10 s con un `cache: "no-store"` efectivo (o re-fetch que ignora el cache RSC) para traer datos frescos del backend, no del cache de Next. (Opción futura: también live vía la colección `conversations` de Firestore — mismo mecanismo del hilo; el listado live es secundario, el hilo es lo prioritario.)
+> - Las lecturas (`listConversations`, `getConversation`, `listMyConversations`, y el fallback `listMessages`) llevan `tags` para que las **mutaciones** (send/take/release/close/reopen/mark-read) las invaliden con `revalidateTag`. El tag es el mecanismo de invalidación tras una mutación propia; el polling (lista) y el listener Firestore (hilo) son los mecanismos de "tiempo real". Si el backend client cachea agresivamente, el polling de la lista pasa `{ revalidate: 0 }` / `{ cache: "no-store" }` para esa llamada (confirmar el contrato del `backendClient` con el template).
 
 ### Tags
 
@@ -613,7 +739,7 @@ Mismo molde que clinic/catalog/staff/crm: validar con Zod en el action → llama
 | `conversations:list` | inbox global + mi bandeja (listas de conversaciones) | enviar mensaje, take/release/close/reopen/mark-read (afectan preview/unread/assignee/status denormalizados en la lista) |
 | `conversations:thread:{conversationId}` | detalle + mensajes de UNA conversación | enviar mensaje, take/release/close/reopen/mark-read de esa conversación |
 
-> **Por qué tag por-conversación** (`conversations:thread:{id}`): el hilo de una conversación es independiente del de otra; taggear por id evita invalidar el cache de todas al mutar una (mismo criterio que `crm:lead:{id}` / `staff:availability:{doctorId}`). **Cross-tag**: enviar un mensaje o tomar una conversación afecta **tanto** `conversations:thread:{id}` (el hilo: nuevo mensaje, nuevo log de handoff) **como** `conversations:list` (el inbox: `last_message_preview`/`last_message_at`/`unread_count`/`assignee` denormalizados). Cada action de mutación revalida los dos. **No hay** tag por-mensaje (los mensajes son inmutables; el único "cambio" de un mensaje es el `external_status` que llega por webhook/status-callback y se ve en el próximo polling, no por una mutación del front).
+> **Por qué tag por-conversación** (`conversations:thread:{id}`): el tag `conversations:thread:{id}` cubre el **`ConversationDetail`** (header/handoff/`assignment_history`) y el **fallback** `listMessages` — **NO** el stream real-time de mensajes (ese vive en Firestore y se actualiza por el listener, no por el cache de Next; redesign 2026-06-03). El hilo de una conversación es independiente del de otra; taggear por id evita invalidar el cache del detail de todas al mutar una (mismo criterio que `crm:lead:{id}` / `staff:availability:{doctorId}`). **Cross-tag**: enviar un mensaje o tomar una conversación afecta **tanto** `conversations:thread:{id}` (el detail: nuevo log de handoff, assignee) **como** `conversations:list` (el inbox: `last_message_preview`/`last_message_at`/`unread_count`/`assignee` denormalizados). Cada action de mutación revalida los dos. **No hay** tag por-mensaje (los mensajes son inmutables): el mensaje nuevo aparece en el hilo por el **listener Firestore** (no por revalidación del tag), y los cambios de `external_status` (sent→delivered→read→failed, que el backend escribe al doc Firestore vía Admin SDK) llegan **en vivo** por el mismo listener — **ya no** por el próximo polling.
 
 ### `actions/channel-account.actions.ts`
 
@@ -714,7 +840,7 @@ export async function deleteChannelAccount(id: string): Promise<MutationResult<n
 
 ### `actions/conversation.actions.ts`
 
-El corazón del módulo: lecturas del inbox/hilo (taggeadas + polleadas) + las acciones de handoff/outbound (mutaciones que cruzan `conversations:list` + `conversations:thread:{id}`).
+El corazón del módulo: lecturas del inbox (taggeadas + polleadas por la lista) + el `detail` de la conversación (`getConversation`) + el **fallback** `listMessages` (el path primario del hilo es el listener Firestore — ver [Lectura real-time del hilo](#lectura-real-time-del-hilo-firestore)) + las acciones de handoff/outbound (mutaciones que cruzan `conversations:list` + `conversations:thread:{id}`).
 
 ```ts
 "use server";
@@ -768,6 +894,10 @@ export async function getConversation(id: string): Promise<ApiSingle<Conversatio
   });
 }
 
+// FALLBACK (redesign Firestore): el path PRIMARIO de lectura del hilo es el cliente
+// Firestore real-time (onSnapshot — ver `useThreadMessages`). Esta action lee Firestore
+// vía Admin SDK server-side y se usa solo como degradación (SSR / si el Web SDK no carga /
+// si el custom token falla). El backend devuelve el mismo shape MessageItem (snake_case).
 export async function listMessages(
   conversationId: string,
   query: QueryRequest,
@@ -1092,12 +1222,31 @@ const [selectedId, setSelectedId] = useQueryState("c", { defaultValue: initialSe
 const [statusFilter, setStatusFilter] = useQueryState("status");
 const [channelFilter, setChannelFilter] = useQueryState("channel_account_id");
 const [search, setSearch] = useState(""); // client-side; NO va al server ni a la URL
-// Polling pausable (pausa al perder foco / cuando el composer tiene texto sin enviar).
+// Polling pausable de la LISTA (pausa al perder foco). El HILO ya no se poléa (Firestore).
 const [pollingPaused, setPollingPaused] = useState(false);
+// Token de Firebase para los listeners real-time del hilo (redesign). Se pide UNA vez al
+// montar el inbox (con getRealtimeToken — server action) y se pasa al ConversationThread.
+// null mientras carga o si falla (→ el hilo cae a fallback listMessages, sin real-time).
+const [realtimeToken, setRealtimeToken] = useState<string | null>(null);
+```
+
+```ts
+// Mintar el Custom Token al montar el inbox (una sola vez por sesión de inbox). El
+// signInWithCustomToken interno es idempotente (lib/firebase/client.ts) — no hace falta
+// re-pedirlo por conversación. Si falla, el hilo degrada a fallback (no rompe el inbox).
+useEffect(() => {
+  let cancelled = false;
+  void getRealtimeToken().then((res) => {
+    if (cancelled) return;
+    if (res.ok) setRealtimeToken(res.data.token);
+    // si !res.ok: realtimeToken queda null → ConversationThread usa el fallback server-side.
+  });
+  return () => { cancelled = true; };
+}, []);
 ```
 
 - **Lista (panel izquierdo)**: usa `useTableQuery` (o un fetch propio si la lista es scroll-infinito en vez de paginada) con `fetcher = scope === "mine" ? listMyConversations : listConversations`, `defaultSort: { field: "last_message_at", order: "desc" }` (**columna real**, coincide con el prefetch RSC — lección `cd10c78`), `searchFields` vacío (la búsqueda es client-side, ver abajo), `initialData`. Los filtros de estado/canal se traducen a `FilterCondition` (columnas reales) y van al server; la búsqueda por nombre/identificador filtra **client-side** sobre la página cargada.
-- **Polling** (ver [Polling](#polling)): un `useEffect` con `setInterval` re-fetcha la lista (y el hilo abierto) cada ~10 s, **refetch silencioso** (no muestra spinner, no descarta el scroll, no parpadea — actualiza el estado solo si cambió). Pausable.
+- **Polling de la LISTA** (ver [Polling de la lista](#polling-de-la-lista)): un `useEffect` con `setInterval` re-fetcha **solo la lista** cada ~10 s, **refetch silencioso** (no muestra spinner, no descarta el scroll, no parpadea — actualiza el estado solo si cambió). Pausable. **El hilo abierto NO se poléa** — se actualiza en vivo por el listener Firestore del `ConversationThread` (redesign 2026-06-03).
 - **Selección**: clic en una fila → `setSelectedId(conv.id)` (actualiza `?c=`) → `ConversationThread` carga ese hilo. Al seleccionar una conversación con `unread_count > 0`, dispara `markRead(conv.id)` (resetea el badge) — opcional/configurable: marcar leído al abrir.
 
 ### `ConversationList.tsx` (panel izquierdo)
@@ -1131,10 +1280,10 @@ export const ConversationListItemRow = React.memo(function ConversationListItemR
 
 ### `ConversationThread.tsx` (panel derecho)
 
-El hilo de la conversación seleccionada. Carga en cliente al cambiar `selectedId` (con fetch-token, como el `ActivityTimeline` de crm). Estructura:
+El hilo de la conversación seleccionada. **Redesign 2026-06-03**: los **mensajes** se leen **en tiempo real desde Firestore** vía `onSnapshot` (READ-ONLY) — **ya NO por polling/refetch del hilo**. El **`ConversationDetail`** (header/handoff/`assignment_history`) sí se carga por server action (`getConversation`) al seleccionar y se refetcha tras una mutación de handoff. Estructura:
 
 ```
-ConversationThread          (orquesta: carga detail + mensajes, polling del hilo, estado)
+ConversationThread          (orquesta: detail por action + mensajes REAL-TIME por Firestore listener)
 ├── ThreadHeader            (contacto + canal + estado + AssigneeBadge + HandoffControls)
 ├── (scroll de mensajes)
 │   └── MessageDayGroup[]   (una sección por día: "Hoy"/"Ayer"/"12 may" — client-only)
@@ -1142,57 +1291,134 @@ ConversationThread          (orquesta: carga detail + mensajes, polling del hilo
 └── Composer                (textarea + enviar; gated MESSAGES_SEND + ser el assignee)
 ```
 
-**Props**: `{ conversationId: string; scope: "all" | "mine"; onMutated: () => void }` (`onMutated` lo provee `InboxShell` para refrescar la lista tras una mutación que cambia el preview/unread/assignee).
+**Props**: `{ conversationId: string; scope: "all" | "mine"; realtimeToken: string | null; onMutated: () => void }` (`realtimeToken` lo provee `InboxShell` desde `getRealtimeToken()`; `onMutated` refresca la lista tras una mutación que cambia el preview/unread/assignee).
 
-**Estado** (central, molde del `ActivityTimeline`):
+**Estado del detail** (molde del `ActivityTimeline`; SOLO el detail, NO los mensajes):
 
 ```ts
 const [detail, setDetail] = useState<ConversationDetail | null>(null);
-// Mensajes indexados por id (para merge incremental del polling sin re-render total).
-const [messages, setMessages] = useState<Record<string, MessageItem>>({});
 const [loading, setLoading] = useState(true);
-const [listError, setListError] = useState<string | null>(null);
+const [detailError, setDetailError] = useState<string | null>(null);
 // Token monotónico: al cambiar de conversación rápido, una respuesta vieja no pisa la nueva
 // (idéntico a OfficeClosuresTab / ActivityTimeline de crm).
 const reqIdRef = useRef(0);
-```
 
-**Carga + polling del hilo** (fetch-token + `load` reutilizable):
-
-```ts
-const load = useCallback((silent = false) => {
+// Carga del DETAIL (header/handoff) por server action. Reutilizable tras un handoff.
+const loadDetail = useCallback((silent = false) => {
   const reqId = ++reqIdRef.current;
   if (!silent) setLoading(true);
-  setListError(null);
-  void Promise.all([
-    getConversation(conversationId),
-    listMessages(conversationId, {
-      pagination: { skip: 0, limit: 50 },
-      sorting: { sort_by: "sent_at", sort_order: "asc" }, // columna REAL; orden cronológico
-      filters: null,
-    }),
-  ])
-    .then(([detailRes, msgsRes]) => {
+  setDetailError(null);
+  void getConversation(conversationId)
+    .then((detailRes) => {
       if (reqId !== reqIdRef.current) return; // respuesta superada → descartar
       setDetail(detailRes.data);
-      // Merge por id: las burbujas existentes conservan su referencia (memo); solo
-      // las nuevas/cambiadas (external_status) se reemplazan → refetch silencioso sin flash.
-      setMessages((prev) => mergeById(prev, msgsRes.data.items, reqId === 1 /* first load = replace */));
       setLoading(false);
     })
     .catch(() => {
       if (reqId !== reqIdRef.current) return;
-      setListError("No se pudo cargar la conversación. Intenta de nuevo.");
+      setDetailError("No se pudo cargar la conversación. Intenta de nuevo.");
       setLoading(false);
     });
 }, [conversationId]);
 
-useEffect(() => { setMessages({}); load(); }, [load]); // reset al cambiar de conversación
+useEffect(() => { loadDetail(); }, [loadDetail]); // reset al cambiar de conversación
 ```
 
-> **El polling del hilo es silencioso** (`load(true)`): cada ~10 s re-pide el detail + los mensajes; el merge por id conserva la referencia de las burbujas que no cambiaron (no re-render, no flash, no pierde el scroll). Solo se re-renderizan las burbujas nuevas (mensaje entrante del contacto) o las que cambiaron de `external_status` (sent→delivered→read por el status callback de Meta). El scroll se mantiene al fondo solo si el usuario ya estaba al fondo (no arrastra al usuario que está leyendo arriba — patrón "stick to bottom" condicional).
+**Mensajes en vivo** (Firestore listener — el cambio sustancial del rediseño). Los mensajes vienen del hook `useThreadMessages` (ver abajo), **no** del `getConversation` ni de `listMessages`:
 
-> **`sent_at asc`** (orden cronológico, más antiguo arriba — como un chat): el `defaultSort` de mensajes es `sent_at asc` (**columna real**). El inbox lista por `last_message_at desc` (lo más reciente arriba); el hilo lista por `sent_at asc` (cronológico). Confirmar que `sent_at` está en `ALLOWED_FIELDS` de `message` (spec §7 lista los de `conversation`; el de `message` debe whitelistar al menos `sent_at` para este sort).
+```ts
+const { messages, status: msgStatus } = useThreadMessages(conversationId, realtimeToken);
+// messages: Record<string, MessageItem> (indexado por id = mid). El listener Firestore
+// los entrega en vivo: un inbound nuevo, un outbound recién enviado, o un cambio de
+// external_status (sent→delivered→read→failed) aparece SIN polling, SIN refetch.
+// msgStatus: "live" | "loading" | "fallback" | "error" (ver useThreadMessages).
+```
+
+### `useThreadMessages.ts` (hook del listener Firestore — pieza nueva)
+
+Abre el listener real-time sobre `conversations/{cid}/messages` y expone los mensajes indexados por id. **READ-ONLY** — el hook solo lee; cualquier write pasa por las server actions (composer/handoff). Maneja el sign-in (idempotente, vía `lib/firebase/client.ts`), el cleanup del listener al cambiar de conversación, y la **degradación a fallback** (`listMessages` server-side) si Firebase no está disponible o el custom token falla.
+
+```ts
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
+
+import { getRealtimeDb } from "@/lib/firebase/client";
+import { listMessages } from "@/actions/conversation.actions";
+import type { MessageItem } from "@/types/conversations.types";
+
+type ThreadStatus = "loading" | "live" | "fallback" | "error";
+
+export function useThreadMessages(conversationId: string, realtimeToken: string | null) {
+  const [messages, setMessages] = useState<Record<string, MessageItem>>({});
+  const [status, setStatus] = useState<ThreadStatus>("loading");
+  const reqIdRef = useRef(0); // descarta listeners viejos al cambiar de conversación
+
+  useEffect(() => {
+    const reqId = ++reqIdRef.current;
+    setMessages({}); // reset al cambiar de conversación
+    setStatus("loading");
+    let unsubscribe: (() => void) | undefined;
+
+    (async () => {
+      // Fallback server-side si no hay token (sign-in falló / sin Firebase): lee Firestore
+      // vía Admin SDK por el endpoint /messages/list. El inbox sigue, sin real-time.
+      if (!realtimeToken) {
+        const res = await listMessages(conversationId, {
+          pagination: { skip: 0, limit: 50 },
+          sorting: { sort_by: "created_at", sort_order: "asc" },
+          filters: null,
+        });
+        if (reqId !== reqIdRef.current) return;
+        setMessages(indexById(res.data.items));
+        setStatus("fallback");
+        return;
+      }
+      try {
+        const db = await getRealtimeDb(realtimeToken); // signInWithCustomToken (idempotente)
+        if (reqId !== reqIdRef.current) return;
+        // READ-ONLY: collection messages del doc de la conversación, orden cronológico.
+        const q = query(
+          collection(db, "conversations", conversationId, "messages"),
+          orderBy("created_at", "asc"),
+        );
+        unsubscribe = onSnapshot(
+          q,
+          (snap) => {
+            if (reqId !== reqIdRef.current) return;
+            // Cada doc = un MessageItem (mismo shape snake_case, brief §6). Indexa por id.
+            const next: Record<string, MessageItem> = {};
+            snap.forEach((d) => { next[d.id] = { id: d.id, ...d.data() } as MessageItem; });
+            setMessages(next);
+            setStatus("live");
+          },
+          () => {
+            // permission-denied (asignación cambió / token expiró) o red → degradar.
+            if (reqId !== reqIdRef.current) return;
+            setStatus("error");
+          },
+        );
+      } catch {
+        if (reqId !== reqIdRef.current) return;
+        setStatus("error"); // sign-in falló → el componente puede caer a listMessages
+      }
+    })();
+
+    return () => { unsubscribe?.(); }; // cleanup del listener al cambiar de conversación/desmontar
+  }, [conversationId, realtimeToken]);
+
+  return { messages, status };
+}
+```
+
+> **El listener Firestore reemplaza el polling del hilo** (brief §4): el inbound nuevo del contacto, el outbound recién escrito por el backend (status `pending` → el asesor lo ve **instantáneo**), y los cambios de `external_status` (sent→delivered→read→failed, que el backend escribe al doc Firestore vía Admin SDK al recibir el status callback de Meta) llegan **en vivo** — sin `setInterval`, sin refetch, sin latencia de ~10 s. El `onSnapshot` entrega el set completo de la colección (o solo los `docChanges()` si se optimiza); indexar por id conserva el merge incremental (las burbujas que no cambiaron mantienen su referencia → `React.memo` evita re-render — ver [MessageBubble](#messagebubbletsx-memoizada)). El scroll "stick to bottom" condicional se mantiene igual (no arrastra al usuario que lee arriba).
+
+> **El cliente NUNCA escribe Firestore** (brief §3): `useThreadMessages` solo usa `onSnapshot`/`query`/`collection` (lectura). Enviar un mensaje = `Composer` → `sendMessage` server action → backend (Admin SDK escribe el doc) → el listener lo ve aparecer. No hay `setDoc`/`addDoc` en el front. Las Security Rules además bloquean todo write del cliente (`allow write: if false`).
+
+> **Orden por `created_at`** (campo del doc Firestore, brief §1): el listener ordena por `created_at asc` (cronológico, más antiguo arriba — como un chat). **Nota de mapeo**: en el modelo previo el sort del hilo era `sent_at asc` sobre la tabla Postgres; en el doc Firestore el campo de orden es **`created_at`** (el timestamp de creación del mensaje en el read-model). El shape del resto de campos del doc (`direction`, `sender_type`, `content`, `external_status`, `sent_at`, `delivered_at`, `read_at`, `failed_at`, …) es **el mismo `MessageItem`** (snake_case, brief §6) que devolvía la API — el render de las burbujas no cambia. El **fallback** `listMessages` usa el mismo `created_at asc` (el backend lee Firestore vía Admin SDK y respeta el mismo orden). Confirmar el nombre exacto del campo de orden con [`backend.md`](./backend.md) (brief §1 lo nombra `created_at`).
+
+> **Degradación a fallback sin real-time**: si `getRealtimeToken()` falla, el Web SDK no carga, o el `onSnapshot` emite `permission-denied` (la asignación cambió y el `uid` ya no está en `allowed_reader_ids`), `useThreadMessages` cae a `listMessages` (lectura server-side de Firestore vía Admin SDK). El hilo sigue mostrándose (snapshot puntual, sin updates en vivo); un `MessageBar` informativo opcional ("Sin actualización en vivo — recarga para ver mensajes nuevos") avisa el modo degradado. El inbox **nunca** queda inutilizable por un fallo de Firebase.
 
 ### `ThreadHeader.tsx`
 
@@ -1215,6 +1441,8 @@ const dayGroups = useMemo(() => {
 ```
 
 El separador de día es una píldora centrada y atenuada ("Hoy", "Ayer", "12 may 2026"). Reusa `groupByDay` del timeline de crm (si se promovió a `lib/utils/date.ts`) o lo replica.
+
+> **El day-grouping NO cambia con el rediseño**: `messages` ahora proviene del listener Firestore (`useThreadMessages`), pero sigue siendo el mismo `Record<string, MessageItem>` (shape idéntico, snake_case). La agrupación por día y la hora de cada burbuja se computan **client-only** sobre `sent_at` (timestamp del mensaje, campo del doc) — el orden de llegada del listener es por `created_at`, pero el render agrupa/ordena por `sent_at` igual que antes (la lección TZ se mantiene intacta).
 
 ### `MessageBubble.tsx` (memoizada)
 
@@ -1241,7 +1469,7 @@ export const MessageBubble = React.memo(function MessageBubble({
 });
 ```
 
-> **`MessageBubble` memoizada + estado por id** (regla vercel-react): el hilo se re-fetcha en cada polling; `React.memo` + el merge por id (las burbujas que no cambiaron conservan su referencia) evita re-renderizar todo el hilo. Solo la burbuja nueva o la que cambió de `external_status` se re-renderiza. `onRetry` se pasa como callback estable.
+> **`MessageBubble` memoizada + estado por id** (regla vercel-react): el hilo recibe updates **en vivo del listener Firestore** (`onSnapshot`); `React.memo` + el estado indexado por id (las burbujas que no cambiaron conservan su referencia entre snapshots) evita re-renderizar todo el hilo. Solo la burbuja nueva (inbound/outbound recién llegado) o la que cambió de `external_status` (sent→delivered→read→failed, escrito al doc por el backend) se re-renderiza. `onRetry` se pasa como callback estable.
 
 > **Burbujas de sistema** (`sender_type=system`, `content_type=system_notification`): los eventos de handoff (tomar/liberar/cerrar/reabrir) pueden materializarse como mensajes de sistema en el hilo (centrados, atenuados) — confirmar con backend.md si el backend inserta un `Message(sender_type=system)` por handoff o si solo emite a la timeline de crm. Si el backend NO inserta mensajes de sistema por handoff, el hilo se entera del cambio por el `assignment_history` del detail (popover), no por una burbuja. Anotar en deviations.
 
@@ -1266,7 +1494,7 @@ function deriveStatus(m: MessageItem): MessageExternalStatus | "pending" {
 - **read** ✓✓ "Leído" (azul, `tokens.colorPaletteBlueForeground2`).
 - **failed** ⚠ "Falló el envío" (rojo) + botón **"Reintentar"** (gated `canRetry`) → `onRetry(m)` → re-`sendMessage(conversationId, { content: m.content })`. El mensaje fallido queda en el hilo (audit inmutable); el reintento crea un mensaje nuevo. Si `failure_reason` viene, mostrarlo en un tooltip ("Número no válido", "Fuera de la ventana de 24h", etc.).
 
-> **El estado `read` (✓✓ azul) y `delivered` llegan por el status callback de Meta** (webhook `statuses[]`, spec §5 paso 5) → el backend actualiza `delivered_at`/`read_at`/`external_status` → el **polling** del hilo trae el cambio en el próximo ciclo (~10 s) → la burbuja se re-renderiza con el tick actualizado. No es instantáneo (no hay SSE); es eventual vía polling. Documentar esta latencia esperada.
+> **El estado `read` (✓✓ azul) y `delivered` llegan por el status callback de Meta** (webhook `statuses[]`, spec §5 paso 5) → el backend actualiza el **doc Firestore** del mensaje (`delivered_at`/`read_at`/`external_status`) vía Admin SDK → el **listener `onSnapshot`** del hilo trae el cambio **en vivo** (no hay polling de ~10 s) → la burbuja se re-renderiza con el tick actualizado. Latencia ms–seg (proyección eventual Postgres→Firestore + push del listener), no el ciclo de ~10 s del polling previo — pero sigue siendo eventual (depende de cuándo Meta envía el callback), no instantáneo en el sentido de "garantizado al toque".
 
 ### Composer.tsx (enviar outbound)
 
@@ -1295,16 +1523,17 @@ const handleSend = () => {
     }
     // result.ok aunque Meta haya fallado: el MessageItem puede venir failed.
     setContent(""); // limpia el textarea (el mensaje ya está en el hilo, fallido o no)
-    load(true); // refetch silencioso del hilo (trae el nuevo mensaje + su estado)
-    onMutated(); // refresca la lista (preview/last_message_at)
+    // NO hace falta refetch del hilo: el backend escribió el doc Firestore y el listener
+    // onSnapshot lo trae en vivo (status pending → sent/failed según el resultado de Meta).
+    onMutated(); // refresca la LISTA del inbox (preview/last_message_at — sigue por polling Postgres)
   });
 };
 ```
 
 - **`useTransition`** para que el envío no congele la UI (el botón muestra spinner via `isPending`; el resto del hilo sigue interactivo). Regla vercel-react.
 - **Enter para enviar / Shift+Enter para nueva línea** (textarea con `onKeyDown`). Botón "Enviar" deshabilitado si `!content.trim() || isPending`.
-- **Optimismo opcional** (mejora): insertar una burbuja `pending` localmente antes del 200 y reconciliarla con el `MessageItem` real del retorno — MVP puede omitirlo (el `load(true)` tras el envío trae el mensaje real; latencia ~1 fetch). Documentar como TODO si se omite.
-- **Pausa del polling mientras se escribe**: cuando el textarea tiene texto sin enviar, pausar el polling (o seguir polleando la lista pero no resetear el textarea) — para no interferir con el tipeo. `InboxShell` expone `setPollingPaused`.
+- **Optimismo opcional** (mejora): insertar una burbuja `pending` localmente antes del 200 y reconciliarla con el `MessageItem` real — MVP puede omitirlo: el **listener Firestore** trae el doc real (status `pending` que escribe el backend) casi al instante, sin esperar el 200 del action. Documentar como TODO si se omite.
+- **Pausa del polling de la LISTA mientras se escribe** (menos crítico tras el rediseño): el textarea ya **no** lo afecta el hilo (el listener Firestore no resetea ni toca el composer — solo el listado se poléa). Aun así, `InboxShell` puede pausar el polling de la lista al perder foco (`visibilitychange`) para ahorrar requests; el listener Firestore se mantiene (o se puede pausar en background como mejora). `InboxShell` expone `setPollingPaused` para la lista.
 
 ### Controles de handoff (`HandoffControls.tsx`)
 
@@ -1317,27 +1546,26 @@ Botonera en el `ThreadHeader`, gated por permisos finos. Cada acción hace **ref
 
 > **Todas las acciones de handoff hacen `setDetail(result.data.data)` + `router.refresh()`** (lección crm F3 — el badge "Asignado a X" / "Sin asignar" del header y el estado "Abierta"/"Cerrada" son denormalizados; el refetch local los actualiza al instante, el `router.refresh()` re-pinta cualquier RSC stale). El `onMutated()` refresca la lista del inbox (la conversación cambia de assignee/status → puede salir/entrar de un filtro). Errores de dominio (`INVALID_ASSIGNEE`, `CONVERSATION_NOT_OPEN`, `CONVERSATION_ALREADY_OPEN`, `NOT_CONVERSATION_ASSIGNEE`) en `MessageBar`, en español.
 
-### Polling
+### Polling de la lista
 
-> El mecanismo de "tiempo real" del MVP (spec §1 default: polling, NO SSE/WebSocket — Cloud Run con `min-instances 0` + cpu-throttling no los favorece).
+> **Tras el rediseño 2026-06-03 el polling cubre SOLO el LISTADO** (left pane). El **hilo** (right pane) es **real-time vía Firestore `onSnapshot`** (ver [Lectura real-time del hilo](#lectura-real-time-del-hilo-firestore)) — no se poléa. El polling del listado sigue el default de la spec §1 (polling, NO SSE/WebSocket para la lista — Cloud Run con `min-instances 0` + cpu-throttling no los favorece). Opción futura: el listado también live vía la colección `conversations` de Firestore (mismo mecanismo del hilo); por ahora la lista es polling Postgres.
 
-Implementación en `InboxShell` (lista) + `ConversationThread` (hilo abierto):
+Implementación en `InboxShell` (solo la lista; el `ConversationThread` se actualiza por su listener Firestore, no por este intervalo):
 
 ```ts
-// Intervalo de polling. ~10s es un balance entre frescura y carga (ajustable).
+// Intervalo de polling de la LISTA. ~10s es un balance entre frescura y carga (ajustable).
 const POLL_INTERVAL_MS = 10_000;
 
 useEffect(() => {
-  if (pollingPaused) return; // pausado: textarea con texto, pestaña sin foco, etc.
+  if (pollingPaused) return; // pausado: pestaña sin foco, etc.
   const id = setInterval(() => {
-    // Refetch SILENCIOSO: no muestra spinner, no descarta scroll, merge por id.
-    refetchList({ silent: true }); // la lista del inbox
-    if (selectedId) refetchThread({ silent: true }); // el hilo abierto
+    // Refetch SILENCIOSO de la LISTA: no muestra spinner, no descarta scroll, merge por id.
+    refetchList({ silent: true }); // SOLO la lista del inbox — el hilo va por Firestore listener
   }, POLL_INTERVAL_MS);
   return () => clearInterval(id);
-}, [pollingPaused, selectedId, refetchList, refetchThread]);
+}, [pollingPaused, refetchList]);
 
-// Pausar cuando la pestaña pierde foco (no pollear en background — ahorra requests).
+// Pausar cuando la pestaña pierde foco (no pollear la lista en background — ahorra requests).
 useEffect(() => {
   const onVisibility = () => setPollingPaused(document.hidden);
   document.addEventListener("visibilitychange", onVisibility);
@@ -1345,9 +1573,9 @@ useEffect(() => {
 }, []);
 ```
 
-> **Refetch silencioso = sin flash** (lección crm F5: refetch silencioso sin parpadeo): el polling NO setea `loading=true` (que mostraría skeletons); hace el fetch en segundo plano y reemplaza el estado **solo si cambió** (merge por id que conserva referencias). El usuario no ve el inbox "saltar" cada 10 s — solo aparecen mensajes/conversaciones nuevas suavemente. El primer load (no-polling) SÍ muestra skeletons.
+> **Refetch silencioso = sin flash** (lección crm F5: refetch silencioso sin parpadeo): el polling de la lista NO setea `loading=true` (que mostraría skeletons); hace el fetch en segundo plano y reemplaza el estado **solo si cambió** (merge por id que conserva referencias). El usuario no ve el inbox "saltar" cada 10 s — solo aparecen conversaciones nuevas suavemente. El primer load (no-polling) SÍ muestra skeletons. (Los mensajes nuevos del **hilo** aparecen aún más suavemente — por el listener Firestore, no por este ciclo.)
 
-> **El polling pausa cuando**: (1) la pestaña pierde foco (`document.hidden` → no gastar requests en background); (2) el composer tiene texto sin enviar (para no interferir con el tipeo — o al menos no resetear el textarea); (3) opcional: el usuario está scrolleando el hilo hacia arriba (leyendo histórico) — no arrastrar al fondo. Documentar estas reglas; el detalle de UX vive en [`ui.md`](./ui.md).
+> **El polling de la lista pausa cuando**: (1) la pestaña pierde foco (`document.hidden` → no gastar requests en background). (El composer con texto sin enviar ya **no** obliga a pausar el hilo — el listener Firestore no toca el textarea; ver [Composer](#composertsx-enviar-outbound).) Documentar estas reglas; el detalle de UX vive en [`ui.md`](./ui.md). El **listener Firestore del hilo** se puede pausar/cerrar en background como mejora (desuscribir al ocultar la pestaña), pero el MVP puede mantenerlo abierto (Firestore optimiza listeners ociosos).
 
 > **`new Date()` / relojes en el polling = client-only**: el cálculo de "hace X min" (hora relativa del `last_message_at` en la lista) y "Hoy"/"Ayer" (separadores del hilo) usan `new Date()` (hoy del navegador) → **client-only** (lección TZ recurrente — SSR en UTC desfasa el día en TZ negativas). El `InboxShell`/`ConversationThread` son `"use client"`; estos cálculos NUNCA se hacen en SSR. Para evitar mismatch de hidratación con un "reloj" que cambia, el primer render del relativo puede usar `useState(null) + useEffect` (renderiza la hora absoluta o un placeholder en SSR, el relativo tras montar) — mismo patrón que el timeline de crm.
 
@@ -1355,13 +1583,14 @@ useEffect(() => {
 
 | Regla | Aplicación en conversations |
 |---|---|
-| **Evitar waterfalls de datos** | El RSC de bandeja/mis-conversaciones hace `Promise.all([listConversations, listActiveChannelAccounts])` (paralelo, no secuencial). El `ConversationThread` hace `Promise.all([getConversation, listMessages])` (paralelo). |
-| **Memoizar lo que se re-renderiza con el polling** | `ConversationListItemRow` y `MessageBubble` son `React.memo`. El merge por id conserva referencias → solo lo que cambió se re-renderiza. `onSelect`/`onRetry`/`onMutated` son `useCallback` estables. |
-| **Defer reads (cargar el hilo solo al seleccionar)** | El hilo (detail + mensajes) NO se prefetcha en el RSC para todas las conversaciones — solo se carga en cliente la conversación seleccionada (`?c=`). El RSC solo prefetcha la **lista** (página inicial) + los canales. |
+| **Evitar waterfalls de datos** | El RSC de bandeja/mis-conversaciones hace `Promise.all([listConversations, listActiveChannelAccounts])` (paralelo, no secuencial). El `ConversationThread` carga el `detail` por `getConversation`; los **mensajes** llegan por el listener Firestore (no por un fetch encadenado). El `getRealtimeToken` se mintea una vez al montar el inbox (en paralelo a la carga de la lista, no por conversación). |
+| **Memoizar lo que se re-renderiza con updates en vivo** | `ConversationListItemRow` (polling de la lista) y `MessageBubble` (snapshots del listener Firestore) son `React.memo`. El estado indexado por id conserva referencias → solo lo que cambió se re-renderiza. `onSelect`/`onRetry`/`onMutated` son `useCallback` estables. |
+| **Defer reads (cargar el hilo solo al seleccionar)** | El hilo NO se prefetcha en el RSC para todas las conversaciones — solo se abre el listener Firestore de la conversación seleccionada (`?c=`) y se carga su `detail`. El RSC solo prefetcha la **lista** (página inicial) + los canales. El listener se desuscribe al cambiar de conversación (cleanup del `useEffect` en `useThreadMessages`). |
+| **Un solo sign-in de Firebase por sesión** | `getRealtimeDb` cachea la promesa de `signInWithCustomToken` (singleton) → no re-autentica por conversación. Un único `initializeApp` (`getApps()` guard). |
 | **`useTableQuery` con `defaultPageSize` = `limit` del prefetch** | El RSC prefetcha `limit: 30` (inbox) / `limit: 50` (canales) → el `useTableQuery`/fetch de la lista usa `defaultPageSize: 30`/`50` (lección desync footer de crm: si difieren, el footer desincroniza + flash). |
 | **No definir componentes inline** | `ConversationListItemRow`/`MessageBubble`/`MessageDayGroup`/etc. se definen a nivel de módulo (no dentro del render del padre) — sino se re-crean en cada render y rompen la memoización. |
 | **`useTransition` para el envío** | El composer envía con `startTransition` → no congela el hilo; el botón muestra `isPending`. |
-| **Polling silencioso + pausable** | El polling no muestra spinner (refetch silencioso) y pausa en background (`visibilitychange`) — minimiza re-renders y requests inútiles. |
+| **Polling de la lista silencioso + pausable; listener del hilo desuscribible** | El polling de la lista no muestra spinner (refetch silencioso) y pausa en background (`visibilitychange`). El listener Firestore del hilo se desuscribe al cambiar de conversación/desmontar (y opcionalmente en background) — minimiza re-renders y conexiones inútiles. |
 
 ## Lección TZ (recap, crítica en este módulo)
 
@@ -1376,14 +1605,16 @@ useEffect(() => {
 
 Resumen del ciclo de vida de un mensaje outbound (visto desde el front):
 
-1. **Asesor escribe + Enviar** → `sendMessage(id, { content, content_type: "text" })` con `useTransition`. (Opcional: burbuja optimista `pending` 🕓.)
-2. **Backend persiste el Message** (direction=outbound, sender_type=advisor) + llama Meta Graph API (spec §5 outbound). Devuelve **200** con el `MessageItem`:
-   - **Éxito** → `external_id` (wamid), `external_status="sent"`, `sent_at`. La burbuja muestra ✓ "Enviado".
-   - **Falla de Meta** → `failed_at`, `failure_reason`, `external_status="failed"`. **El endpoint igual devuelve 200** (spec §1.5). La burbuja muestra ⚠ "Falló el envío" + **Reintentar**.
-3. **Status callbacks de Meta** (webhook `statuses[]`, asíncronos) → el backend actualiza `delivered_at`/`read_at`/`external_status`. El **polling** del hilo (~10 s) trae el cambio → la burbuja pasa a ✓✓ "Entregado" → ✓✓ azul "Leído". (No instantáneo — eventual vía polling.)
-4. **Reintento** (mensaje fallido) → botón "Reintentar" → re-`sendMessage` con el mismo `content`. Crea un **nuevo** Message (el fallido queda como audit inmutable; no se borra ni se edita — `Message` es PK·A·T sin SoftDelete, spec §2.3). Gated por `MESSAGES_SEND` + ser el assignee + conversación open.
+1. **Asesor escribe + Enviar** → `sendMessage(id, { content, content_type: "text" })` con `useTransition`. (Optimismo casi innecesario: el backend escribe el doc Firestore con status `pending` y el **listener** lo trae casi al instante — el asesor ve la burbuja aparecer sin esperar el 200.)
+2. **Backend persiste el Message** (escribe outbox + doc Firestore vía Admin SDK, direction=outbound, sender_type=advisor) + llama Meta Graph API (spec §5 / brief §2 outbound). Devuelve **200** con el `MessageItem`; **el doc Firestore se actualiza** con el resultado:
+   - **Éxito** → `external_id` (wamid), `external_status="sent"`, `sent_at` escritos al doc → el listener actualiza la burbuja a ✓ "Enviado".
+   - **Falla de Meta** → `failed_at`, `failure_reason`, `external_status="failed"` escritos al doc. **El endpoint igual devuelve 200** (spec §1.5). La burbuja (vía listener) muestra ⚠ "Falló el envío" + **Reintentar**.
+3. **Status callbacks de Meta** (webhook `statuses[]`, asíncronos) → el backend actualiza el **doc Firestore** del mensaje (`delivered_at`/`read_at`/`external_status`) vía Admin SDK. El **listener `onSnapshot`** del hilo trae el cambio **en vivo** → la burbuja pasa a ✓✓ "Entregado" → ✓✓ azul "Leído". Latencia ms–seg (ya no el ciclo de ~10 s del polling previo); sigue siendo eventual (depende de cuándo Meta envía el callback).
+4. **Reintento** (mensaje fallido) → botón "Reintentar" → re-`sendMessage` con el mismo `content`. Crea un **nuevo** Message con un `mid` nuevo (uuid; el fallido queda como audit inmutable — el doc Firestore se escribe con `set(doc_id=mid)` create-if-absent, sin borrado ni edición destructiva — brief §2 outbound paso 4). El nuevo mensaje aparece por el listener. Gated por `MESSAGES_SEND` + ser el assignee + conversación open.
 
-> **Pre-condiciones de envío** (el backend rechaza con throw, NO 200): conversación cerrada (`CONVERSATION_NOT_OPEN` 400), no soy el assignee (`NOT_CONVERSATION_ASSIGNEE` 403), tipo no soportado (`UNSUPPORTED_CONTENT_TYPE` 400), no existe (`CONVERSATION_NOT_FOUND` 404). El front previene la mayoría gateando el composer (solo visible si open + soy assignee + `MESSAGES_SEND`), pero muestra el error en `MessageBar` si la pre-condición cambió entre el render y el submit (defensa — ej. otro asesor la tomó, o se cerró por polling).
+> **Pre-condiciones de envío** (el backend rechaza con throw, NO 200): conversación cerrada (`CONVERSATION_NOT_OPEN` 400), no soy el assignee (`NOT_CONVERSATION_ASSIGNEE` 403), tipo no soportado (`UNSUPPORTED_CONTENT_TYPE` 400), no existe (`CONVERSATION_NOT_FOUND` 404). El front previene la mayoría gateando el composer (solo visible si open + soy assignee + `MESSAGES_SEND`), pero muestra el error en `MessageBar` si la pre-condición cambió entre el render y el submit (defensa — ej. otro asesor la tomó, o se cerró).
+
+> **El `detail` del hilo (estado/assignee que gatea el composer) NO se poléa tras el rediseño** (el polling cubre solo la lista; el listener Firestore cubre los mensajes). Si **otro** asesor toma/cierra la conversación abierta mientras la tengo en pantalla, mi `detail` queda momentáneamente stale (el badge/gating del composer no se actualiza solo). Mitigación: (a) el backend rechaza el envío con `NOT_CONVERSATION_ASSIGNEE`/`CONVERSATION_NOT_OPEN` → el front muestra el error en `MessageBar` y puede recargar el `detail` (`getConversation`) en ese momento; (b) la **lista** (polleada) refleja el cambio de assignee/status y, si se mantiene el `detail` espejado con la fila seleccionada, se refresca. Opción futura: reflejar el `conversations/{cid}` doc de Firestore (que el backend mantiene vía `conversation_upsert`) con un segundo listener para el header en vivo. **Anotar en deviations** — el MVP acepta el stale del `detail` ajeno (el composer falla de forma controlada).
 
 ## Decisiones del frontend (recap)
 
@@ -1391,23 +1622,25 @@ Resumen del ciclo de vida de un mensaje outbound (visto desde el front):
 |---|---|
 | Inbox 2-paneles compartido (`InboxShell` con `scope`) entre Bandeja y Mi bandeja | Misma UI; solo cambia la action de listado (`listConversations` vs `listMyConversations`) y los presets de filtro. Evita duplicar la pieza más compleja del módulo. Vive en `conversaciones/_components/` (un nivel arriba de las dos rutas). |
 | Conversación seleccionada en `?c=` (URL state, nuqs) — NO sub-ruta | Un solo shell sirve a la lista + el hilo; deep-linkable (`/bandeja?c=abc&status=open`); sobrevive refresh; sin `layout.tsx` extra. Mismo criterio que `?tab=` del detalle de Person en crm. |
-| **Polling, NO SSE/WebSocket** | Spec §1 default: Cloud Run con `min-instances 0` + cpu-throttling no favorece conexiones persistentes. Polling ~10 s, pausable (background/tipeo), refetch silencioso (merge por id, sin flash). SSE/WebSocket diferido a cuando bots agregue auto-reply lento. |
-| Refetch silencioso (merge por id, sin spinner) en el polling | Lección crm F5 (refetch silencioso sin parpadeo): el inbox/hilo no "salta" cada 10 s; solo aparecen mensajes/conversaciones nuevas suavemente. `React.memo` en filas/burbujas conserva referencias. |
+| **Hilo = real-time Firestore; LISTA = polling (NO SSE/WebSocket)** | **Redesign 2026-06-03** (brief §0/§4): el **stream de mensajes vive en Firestore** (CQRS read-model) → el hilo se lee en vivo por `onSnapshot` READ-ONLY (mensajes nuevos + cambios de `external_status` sin polling ni latencia de ~10 s). La **lista** sigue por polling Postgres ~10 s (Cloud Run con `min-instances 0` no favorece conexiones persistentes para el listado SQL; opción futura: lista live vía colección `conversations`). SSE/WebSocket ya no hace falta para el hilo. |
+| Cliente Firebase READ-ONLY + Custom Token + Security Rules | **Brief §3**: el browser solo LEE Firestore (listeners), autorizado por un Custom Token que mintea el backend (JWT/RBAC = fuente de verdad) + Security Rules que espejan el RBAC (`allowed_reader_ids`, `can_read_all`). TODO write (enviar/tomar/liberar/cerrar/reabrir) sigue browser → Next server action → backend → Meta + Firestore (Admin SDK). Preserva el principio del template (browser no muta el backend; JWT server-side). |
+| `getRealtimeToken()` una vez por sesión de inbox; sign-in idempotente | El custom token se mintea al montar el inbox (server action con el JWT); `signInWithCustomToken` produce un ID token con auto-refresh → no se re-pide por conversación. Si falla, el hilo cae a fallback `listMessages` (server-side, sin real-time) — el inbox nunca queda inutilizable. |
+| Refetch silencioso (lista) + listener en vivo (hilo), sin spinner | Lección crm F5 (refetch silencioso sin parpadeo): la **lista** no "salta" cada 10 s (refetch silencioso, merge por id); el **hilo** recibe updates en vivo del listener Firestore (solo lo nuevo/cambiado). `React.memo` en filas/burbujas conserva referencias. |
 | **`defaultSort`/`isSortable`/`searchFields` SOLO sobre columnas reales de `ALLOWED_FIELDS`** | **Lección hotfix `cd10c78` de staff**: ordenar/filtrar server-side por un denormalizado (`person.full_name`, `assignee_user.full_name`, `last_message_preview`) devuelve 400. Inbox `defaultSort = last_message_at` (columna real whitelistada); hilo `sent_at asc`. El `defaultSort` del client DEBE coincidir con el `sorting` del prefetch RSC (sino flash + refetch). |
 | Filtros del inbox (estado/canal/asignación) = columnas REALES (no virtuales) | A diferencia de crm (donde `lead_status_id`/`advisor_user_id` eran campos virtuales → EXISTS), aquí `status`/`channel_account_id`/`assignee_user_id`/`assignee_type` son columnas directas de `conversation` en `ALLOWED_FIELDS` → `FilterCondition` directo, sin traducción. |
 | Búsqueda por nombre/identificador = **client-side** | `person.full_name` y los identificadores son denormalizados (no whitelistados). Filtra sobre la página visible; no genera `FilterCondition` server-side. |
 | **`sendMessage` NO lanza ante fallo de Meta** | Spec §1.5: el endpoint devuelve 200 con el message en estado `failed`. El front inspecciona `external_status==="failed"` → muestra ⚠ + Reintentar. Solo lanza ante pre-condiciones (no-open, no-assignee, etc.). |
 | Outbound fallido → Reintentar crea un mensaje NUEVO | `Message` es audit inmutable (sin SoftDelete); el fallido queda en el hilo. Reintentar = nuevo `POST /messages` con el mismo content. |
-| Estado de mensaje derivado (failed>read>delivered>sent>pending) + ticks WhatsApp | El status llega por callback de Meta (asíncrono) → polling lo trae en el próximo ciclo (eventual, no instantáneo). `pending` 🕓 es optimista (entre submit y 200). |
+| Estado de mensaje derivado (failed>read>delivered>sent>pending) + ticks WhatsApp | El status llega por callback de Meta (asíncrono) → el backend lo escribe al doc Firestore → el **listener `onSnapshot`** lo trae en vivo (latencia ms–seg, ya no el ciclo de ~10 s del polling). `pending` 🕓 lo escribe el backend al doc antes de llamar a Meta (el asesor lo ve casi al instante por el listener). |
 | Handoff (take/release/close/reopen) → `setDetail(result.data)` + `router.refresh()` | **Lección crm F3**: el badge "Asignado a X" / estado "Abierta/Cerrada" son denormalizados; el refetch local los actualiza al instante, `router.refresh()` re-pinta RSC stale, `onMutated()` refresca la lista del inbox. |
 | Composer gated `MESSAGES_SEND` + ser el assignee + open | Espeja la autorización del backend (`NOT_CONVERSATION_ASSIGNEE` 403). Si no, hint "Toma la conversación para responder" + botón Tomar. |
-| **Burbujas + filas memoizadas (`React.memo`) + estado por id** | El polling re-fetcha cada 10 s; sin memo, re-render total + flash. Estado por id (merge incremental) conserva referencias → solo lo nuevo/cambiado se re-renderiza (reglas vercel-react). |
+| **Burbujas + filas memoizadas (`React.memo`) + estado por id** | El listener Firestore entrega snapshots del hilo y el polling re-fetcha la lista; sin memo, re-render total + flash. Estado indexado por id conserva referencias → solo lo nuevo/cambiado se re-renderiza (reglas vercel-react). |
 | **Agrupación "Hoy"/"Ayer" + hora relativa = client-only** | `new Date()` que afecta render = client-only (lección TZ; SSR en UTC desfasa el día en TZ Lima `-05:00`). El inbox es `"use client"`; relativos con `useState(null)+useEffect` para evitar mismatch de hidratación. |
 | Hora de burbuja en LOCAL, nunca `toISOString()` | `toISOString()` muestra UTC → desfase visible. Formatear con `lib/utils/date.ts` en local del navegador. |
 | El secreto del canal NUNCA en el front | Spec §1.2 / ADR-010: las credenciales viven en GCP Secret Manager, se resuelven server-only. El drawer captura solo `secret_name` (nombre) + muestra "Configurado/Sin configurar". |
 | `ChannelType` reusado de crm; demás enums conversations-owned | Spec §3: single source of truth. Importar `ChannelType` de `crm.types`; NO redefinir los 8 valores. |
 | Adjuntos modelados pero render = placeholder (F4 diferida) | Spec §1.4: `MessageAttachment` en el contrato (tipos TS); el processing/render real de media es F4. Hoy `content_type=text` + placeholder para otros tipos. |
-| Tags por-conversación (`conversations:thread:{id}`) + cross-tag con `conversations:list` | El hilo de una conversación es independiente; taggear por id evita invalidar todas. Una mutación (send/handoff) cruza tags (hilo + lista por los denormalizados preview/unread/assignee). |
+| Tags por-conversación (`conversations:thread:{id}`) + cross-tag con `conversations:list` | El tag cubre el `ConversationDetail` (header/handoff) + el fallback `listMessages` — **NO** el stream de mensajes (ese vive en Firestore, se actualiza por el listener). Taggear por id evita invalidar el detail de todas. Una mutación (send/handoff) cruza tags (detail + lista por los denormalizados preview/unread/assignee); el mensaje nuevo aparece por el listener Firestore, no por la revalidación. |
 | `revalidateTag(TAG, "max")` (2º arg) | Next 16 exige el 2º argumento; omitirlo es error (lección del template). Todos los actions lo pasan. |
 | No emite a la timeline de crm desde el front | El backend emite `CONVERSATION_TAKEN`/`RELEASED` server-side (en take/release). El front NO escribe en crm; solo dispara las acciones. (No `MESSAGE_SENT` por-mensaje — spec §1.6.) |
 | Sin bulk actions, sin notas internas, sin plantillas de respuesta | Postergados al MVP+1 (igual que catalog/clinic/staff/crm). |
@@ -1423,6 +1656,7 @@ Resumen del ciclo de vida de un mensaje outbound (visto desde el front):
 - [ ] Registrar íconos `ChatRegular`/`MailInboxRegular`/`PersonMailRegular`/`PlugConnectedRegular` en el `iconMap` del `Sidebar.tsx` (con fallbacks verificados).
 - [ ] Crear `src/types/conversations.types.ts` (TODAS las interfaces + enums conversations-owned; **reusa** `ChannelType` de crm.types + `UserAuditInfo` de audit.types).
 - [ ] Crear `src/lib/constants/conversations.ts` (`MESSAGE_STATUS_META`, `SENDER_TYPE_META`, `ASSIGNEE_TYPE_META`, `CONVERSATION_STATUS_META`, `INBOX_FILTER_PRESETS`; re-export `CHANNEL_TYPE_META` de crm).
+- [ ] **(redesign)** Extender `endpoints.ts` con `REALTIME.TOKEN` (`POST /conversations/realtime/token`). Agregar las envs `NEXT_PUBLIC_FIREBASE_*` (apiKey/authDomain/projectId/appId/databaseId — config pública, NO secretos) a `.env.example` + Vercel (qa/prod). (El cableado del cliente Firebase + el listener = F2.)
 - [ ] **Permisos test (F0)**: como user con `MENU-CONVERSATIONS` (rol ASESOR), el grupo "Conversaciones" aparece con Bandeja + Mi bandeja (NO Canales — sin `CHANNEL_ACCOUNTS_*`). Como ADMIN, aparece también Canales. Sin `MENU-CONVERSATIONS` (DOCTOR), el grupo no aparece. (Los 12 permisos + roles ya están en `seed.py` — ver [`../_seed-and-roles.md`](../_seed-and-roles.md), backend F0.)
 
 ### F1 — ChannelAccount (CRUD de canales)
@@ -1434,25 +1668,27 @@ Resumen del ciclo de vida de un mensaje outbound (visto desde el front):
 - [ ] **Error test (F1)**: crear un canal con el mismo `channel_type`+`external_identifier` de otro → `409 CHANNEL_ACCOUNT_EXTERNAL_TAKEN` en `MessageBar` sin cerrar el drawer.
 - [ ] **Permisos test (F1)**: sin `CHANNEL_ACCOUNTS_CREATE` no aparece "Nuevo canal"; sin `_UPDATE` no aparece Editar; sin `_DELETE` no aparece Eliminar; sin `CHANNEL_ACCOUNTS_READ` el RSC redirige. El ASESOR NO ve esta página.
 
-### F2 — Inbox (recibir + ver, read-only) + polling
+### F2 — Inbox (recibir + ver, read-only) + hilo real-time Firestore
 
-- [ ] Crear `src/actions/conversation.actions.ts` (lecturas: `listConversations`/`listMyConversations`/`getConversation`/`listMessages`; tags `conversations:list`/`conversations:thread:{id}`). (Las mutaciones de envío/handoff = F3.)
+- [ ] Crear `src/actions/conversation.actions.ts` (lecturas: `listConversations`/`listMyConversations`/`getConversation`/`listMessages` **fallback**; tags `conversations:list`/`conversations:thread:{id}`). (Las mutaciones de envío/handoff = F3.)
+- [ ] **(redesign)** `npm i firebase`. Crear `src/lib/firebase/client.ts` (init Firebase Web SDK con `NEXT_PUBLIC_FIREBASE_*` + `signInWithCustomToken` idempotente + `getFirestore(app, databaseId)`; **solo lectura**) + `src/actions/realtime.actions.ts` (`getRealtimeToken()` → `POST /conversations/realtime/token`).
 - [ ] Crear `src/app/(main)/conversaciones/bandeja/page.tsx` (`metadata.title = "Bandeja"`, `requirePermission("CONVERSATIONS_READ")`, prefetch lista `defaultSort = last_message_at desc` + canales activos; deep-link `?status=`/`?channel_account_id=`/`?assignee_user_id=`/`?unassigned=`/`?c=` → `FilterCondition` columnas reales + selección).
 - [ ] Crear `src/app/(main)/conversaciones/mis-conversaciones/page.tsx` (`metadata.title = "Mi bandeja"`, `requirePermission("MY_CONVERSATIONS_READ")`, `listMyConversations`, `scope="mine"`).
-- [ ] Crear `conversaciones/_components/InboxShell.tsx` (2-paneles, `scope`, URL state `?c=`+filtros con nuqs, polling pausable) + `ConversationList.tsx` (filtros preset + canal + búsqueda client-side) + `ConversationListItemRow.tsx` (memoizada) + `ConversationThread.tsx` (carga detail+mensajes, fetch-token, polling silencioso) + `ThreadHeader.tsx` (read-only: contacto/canal/estado/AssigneeBadge) + `MessageDayGroup.tsx` (client-only) + `MessageBubble.tsx` (memoizada: in/out/system) + `MessageStatusTicks.tsx` (ticks de estado, sin reintento aún).
-- [ ] **Smoke test (F2)**: con un canal configurado, enviar un WhatsApp real al número → el webhook persiste → la conversación aparece en `/conversaciones/bandeja` (auto-asignada al dueño del lead o "Sin asignar") con badge sin-leer → seleccionar (`?c=` se setea) → el hilo muestra la burbuja inbound (izquierda) con hora local → enviar otro mensaje → el **polling** (~10 s) lo trae sin flash. `/conversaciones/mis-conversaciones` muestra solo las del asesor logueado.
-- [ ] **Polling test (F2)**: dejar el inbox abierto → un nuevo inbound aparece dentro de ~10 s sin recargar ni parpadear. Cambiar de pestaña → el polling pausa (verificar en Network que no hay requests en background). Volver → reanuda.
+- [ ] Crear `conversaciones/_components/InboxShell.tsx` (2-paneles, `scope`, URL state `?c=`+filtros con nuqs, **polling pausable SOLO de la lista**, mintea `getRealtimeToken` al montar y lo pasa al hilo) + `ConversationList.tsx` (filtros preset + canal + búsqueda client-side) + `ConversationListItemRow.tsx` (memoizada) + `ConversationThread.tsx` (carga `detail` por action; **mensajes en vivo vía `useThreadMessages`**) + `useThreadMessages.ts` (**listener Firestore `onSnapshot` READ-ONLY** + fallback `listMessages`) + `ThreadHeader.tsx` (read-only: contacto/canal/estado/AssigneeBadge) + `MessageDayGroup.tsx` (client-only) + `MessageBubble.tsx` (memoizada: in/out/system) + `MessageStatusTicks.tsx` (ticks de estado, sin reintento aún).
+- [ ] **Smoke test (F2)**: con un canal configurado, enviar un WhatsApp real al número → el webhook persiste (Postgres outbox + relay a Firestore) → la conversación aparece en `/conversaciones/bandeja` (auto-asignada al dueño del lead o "Sin asignar") con badge sin-leer → seleccionar (`?c=` se setea, se abre el listener Firestore) → el hilo muestra la burbuja inbound (izquierda) con hora local → enviar otro WhatsApp real → aparece **en vivo** por el listener (sin recargar, sin flash, sin esperar ~10 s). `/conversaciones/mis-conversaciones` muestra solo las del asesor logueado.
+- [ ] **Real-time test (F2)**: dejar el hilo abierto → un nuevo inbound aparece **al instante** (push del `onSnapshot`, no ~10 s) sin recargar ni parpadear. Verificar en Network/DevTools que la conexión a Firestore está activa y que el cliente NO hace writes a Firestore. La **lista** sigue refrescando por polling (~10 s); al cambiar de pestaña, el polling de la lista pausa.
+- [ ] **(redesign) Auth/Rules test (F2)**: el `getRealtimeToken` devuelve un custom token; un asesor sin `CONVERSATIONS_READ` global solo ve por el listener sus conversaciones asignadas (`allowed_reader_ids` / `can_read_all=false`) — intentar leer una conversación ajena por Firestore da `permission-denied` (Security Rules). Con el token revocado/expirado o sin Firebase, el hilo cae a **fallback** `listMessages` (snapshot sin real-time) y el inbox sigue usable.
 - [ ] **Filtro/deep-link test (F2)**: `/conversaciones/bandeja?status=open` filtra + chip; `?channel_account_id=X` combina; `?unassigned=true` muestra solo sin asignar; búsqueda por nombre/número filtra client-side la página visible; ✕ limpia. **NO ordenar por columna denormalizada** (no rompe a 400).
 - [ ] **TZ test (F2)**: con el reloj cerca de medianoche en TZ Lima (`-05:00`), un mensaje recibido "hoy" aparece bajo "Hoy" (no "Ayer") en el hilo — confirma agrupación client-only.
-- [ ] **Permisos test (F2)**: sin `CONVERSATIONS_READ` la Bandeja redirige; sin `MESSAGES_READ` el hilo no carga mensajes (o el endpoint 403 → estado de error); sin `MY_CONVERSATIONS_READ` Mi bandeja redirige.
+- [ ] **Permisos test (F2)**: sin `CONVERSATIONS_READ` la Bandeja redirige; sin `MY_CONVERSATIONS_READ` Mi bandeja redirige. El `getRealtimeToken` exige `CONVERSATIONS_READ` **o** `MY_CONVERSATIONS_READ` (sin ninguno → 403 → el hilo no abre listener ni fallback). El fallback `listMessages` queda gated `MESSAGES_READ` como antes (lee Firestore vía Admin SDK server-side); el listener real-time queda acotado por las Security Rules (`allowed_reader_ids` / `can_read_all`).
 
 ### F3 — Handoff + outbound (completa el human-inbox MVP, sin migración)
 
 - [ ] Crear `src/lib/schemas/message.schema.ts` (messageSend: content no-vacío + `.trim()` + content_type=text literal).
 - [ ] Completar `src/actions/conversation.actions.ts` con las mutaciones: `sendMessage` (200 con message fallido = ok, NO throw), `takeConversation`/`releaseConversation`/`closeConversation`/`reopenConversation`/`markRead` (devuelven `ConversationDetail`; cross-tag `conversations:thread:{id}` + `conversations:list`).
 - [ ] Implementar `Composer.tsx` (textarea + `useTransition` + Enter/Shift+Enter; gated `MESSAGES_SEND` + ser assignee + open; hint "Toma para responder" si no) + `HandoffControls.tsx` (Tomar/Liberar/Cerrar/Reabrir gated por permisos finos; `setDetail(result.data)` + `router.refresh()` + `onMutated()`) + `MessageStatusTicks.tsx` con **Reintentar** (outbound fallido).
-- [ ] **Smoke test (F3)**: en una conversación open sin asignar → "Tomar" (gated `CONVERSATIONS_TAKE`) → assignee=yo + unread=0 + el header muestra "Asignado a {yo}" → escribir + Enviar → burbuja outbound (derecha) con ✓ "Enviado" → el polling actualiza a ✓✓ "Entregado"/"Leído" cuando llega el status callback de Meta → "Liberar" (devolver a sin asignar) → "Cerrar" → estado "Cerrada", composer reemplazado por "Reabrir" → "Reabrir" → vuelve a open. Verificar en crm que se emitió `CONVERSATION_TAKEN`/`CONVERSATION_RELEASED` en la timeline de la Person.
-- [ ] **Outbound fallido test (F3)**: forzar un fallo de Meta (número inválido / secreto mal) → el mensaje se persiste con ⚠ "Falló el envío" (endpoint devuelve 200) → botón "Reintentar" → re-envía (nuevo mensaje); el fallido queda en el hilo. `failure_reason` en tooltip.
+- [ ] **Smoke test (F3)**: en una conversación open sin asignar → "Tomar" (gated `CONVERSATIONS_TAKE`) → assignee=yo + unread=0 + el header muestra "Asignado a {yo}" → escribir + Enviar → la burbuja outbound (derecha) aparece **en vivo por el listener Firestore** (status `pending` → ✓ "Enviado") → el listener actualiza a ✓✓ "Entregado"/"Leído" cuando el backend escribe el status callback de Meta al doc (en vivo, no ~10 s) → "Liberar" (devolver a sin asignar) → "Cerrar" → estado "Cerrada", composer reemplazado por "Reabrir" → "Reabrir" → vuelve a open. Verificar en crm que se emitió `CONVERSATION_TAKEN`/`CONVERSATION_RELEASED` en la timeline de la Person.
+- [ ] **Outbound fallido test (F3)**: forzar un fallo de Meta (número inválido / secreto mal) → el doc Firestore del mensaje se actualiza a ⚠ "Falló el envío" (endpoint devuelve 200; el listener lo trae en vivo) → botón "Reintentar" → re-envía (nuevo `mid`/doc); el fallido queda en el hilo (audit inmutable). `failure_reason` en tooltip.
 - [ ] **Error test (F3)**: enviar a una conversación que otro asesor tomó (no soy assignee) → `403 NOT_CONVERSATION_ASSIGNEE` en `MessageBar`; enviar a una cerrada → `400 CONVERSATION_NOT_OPEN`; reabrir cuando ya hay otra open para (person, canal) → `409 CONVERSATION_ALREADY_OPEN`. Todos en español.
 - [ ] **Permisos test (F3)**: sin `MESSAGES_SEND` el composer no aparece (solo lectura); sin `CONVERSATIONS_TAKE` no aparece "Tomar"/"Reabrir"; sin `CONVERSATIONS_RELEASE` no aparece "Liberar"; sin `CONVERSATIONS_CLOSE` no aparece "Cerrar".
 
@@ -1475,8 +1711,9 @@ La traducción del template (`navigation.ts`, `DataTable`, `ConfirmDialog`, logi
 ## TODOs deliberados (postergados al MVP+1)
 
 - [ ] **F4 — Adjuntos/media** (render + envío) — modelado en el contrato, processing diferido (spec §1.4 / §12).
-- [ ] **SSE/WebSocket** en vez de polling — cuando bots agregue auto-reply lento y se justifique `--no-cpu-throttling --min-instances 1` (spec §1 defaults). El polling del MVP es suficiente para un human-inbox.
-- [ ] **Optimismo de envío** (burbuja `pending` antes del 200) — el MVP puede traerla con el `load(true)` post-envío; el optimismo reconciliado es una mejora.
+- [ ] **Lista (left pane) también live vía Firestore** (colección `conversations`, mismo mecanismo del hilo) en vez de polling Postgres — opción del brief §4. El MVP deja la lista por polling; el hilo ya es real-time Firestore. (El SSE/WebSocket que se contemplaba para el hilo **ya no hace falta** — el listener Firestore lo cubre.)
+- [ ] **Optimismo de envío** (burbuja `pending` local antes del 200) — casi innecesario tras el rediseño: el backend escribe el doc Firestore con status `pending` y el listener lo trae casi al instante. El optimismo local reconciliado queda como micro-mejora.
+- [ ] **Pausar/cerrar el listener Firestore en background** (desuscribir al ocultar la pestaña, re-suscribir al volver) — micro-optimización de conexiones; el MVP puede mantenerlo abierto (Firestore optimiza listeners ociosos).
 - [ ] **Reasignar a OTRO asesor** (no solo a sin-asignar/bot) en "Liberar" — requeriría un dropdown de asesores (reusar `/crm/advisors/active` si se expone) y `to_assignee_type='advisor'` + `to_assignee_user_id`. MVP libera a `unassigned`.
 - [ ] **Vista responsive del inbox** (master-detail apilado en móvil) — el MVP asume desktop (2-paneles).
 - [ ] **Plantillas de respuesta / respuestas rápidas / notas internas** — refinamientos de productividad del asesor.

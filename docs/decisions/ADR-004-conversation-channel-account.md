@@ -1,6 +1,6 @@
 # ADR-004: Conversation + ChannelAccount como par central de la mensajería multicanal
 
-> **Status**: Accepted (act. 2026-06-02)
+> **Status**: Accepted (act. 2026-06-02, 2026-06-03)
 > **Date**: 2026-05-28
 > **Deciders**: @daniel, @marco
 
@@ -141,9 +141,31 @@ conversations **es el dueño** de la relación (ADR-009): la columna `lead_activ
 
 El handoff (tomar/liberar/cerrar/reabrir) **NO** inserta un `Message(sender_type=system, content_type=system_notification)` en el hilo en el MVP. Se ve vía el `assignment_history` (`ConversationAssignmentLog`) en el header del hilo + el badge "Asignado a X". Los valores de enum `SenderType.system` / `ContentType.system_notification` quedan **reservados** (forward, no se emiten en el MVP).
 
+## Actualización (2026-06-03)
+
+El usuario confirmó (2026-06-03) un **rediseño de la persistencia de mensajes**: los **mensajes dejan de vivir en Postgres y pasan a Cloud Firestore** como read-model en tiempo real, bajo una arquitectura **CQRS** (control plane Postgres = fuente de verdad; data plane Firestore = proyección real-time del stream). El ADR sigue **Accepted**: la decisión central de este ADR-004 (`ChannelAccount` + `Conversation` con FK simple, webhooks top-level que validan firma del provider, handoff como estado plano + log inmutable, multi-cuenta por canal) **se mantiene intacta**. Lo que cambia es **únicamente** la persistencia del `Message`. La arquitectura completa (split de datos, Transactional Outbox, Custom Tokens + Security Rules) vive en su propio ADR → ver **[ADR-011](ADR-011-firestore-message-stream-cqrs.md)**.
+
+### `Message` ya no es entidad Postgres relacional
+
+El texto original de la sección **Decision** describía `Message` (y `MessageAttachment`) como tablas Postgres apuntando a `Conversation`. Eso **se revisa**: `Message`/`MessageAttachment` **dejan de ser tablas Postgres** y pasan a **Firestore** como documentos del read-model (`conversations/{cid}/messages/{mid}`, con `cid` = el UUID del `Conversation` de Postgres). Los **enums y schemas Pydantic** del mensaje (`MessageDirection`, `SenderType`, `ContentType`, `AttachmentType`, `MessageExternalStatus`, `MessageItem`, etc.) **se conservan** como **contrato de API** + **shape del doc** Firestore; lo que desaparece es su materialización como tablas/`relationship` en Postgres. El `provider_payload: jsonb` mencionado en la Opción A pasa a ser un campo del doc Firestore.
+
+### Lo que SÍ se queda en Postgres (control plane)
+
+`ChannelAccount`, `Conversation` (con sus denormalizados `last_message_at`/`last_message_preview`/`unread_count` y el UNIQUE parcial "una abierta por par") y `ConversationAssignmentLog` **siguen en Postgres** — `Conversation` **no** se va a Firestore. Esto **preserva** la FK aditiva `lead_activity.related_conversation_id → conversation` (sección "FK aditiva" de la actualización 2026-06-02 — sigue válida), las invariantes relacionales y los filtros del inbox (SQL). Se agrega una tabla **`message_outbox`** (Postgres) como cola transaccional durable Postgres→Firestore.
+
+### Idempotencia: outbox-unique + doc-id, no el UNIQUE parcial de `message`
+
+La sección "Lo que esto nos obliga a hacer" original pedía una *"migration que cree los UNIQUE partial indexes sobre `Conversation` (`status='open'`) y `Message` (`external_id IS NOT NULL`)"*. El del `Conversation` **se mantiene**; el del **`Message` se elimina** (ya no hay tabla `message`). La idempotencia del mensaje pasa a ser **`message_outbox.id` UNIQUE = `mid`** (`ON CONFLICT (id) DO NOTHING`, da el dedup real en la TX) + **doc-id = `mid` en Firestore** (`set` create-if-absent) — doble dedup. Ver ADR-011 §2/§7.
+
+### El test de "doble webhook no duplica" se reubica
+
+El test que la sección "Lo que esto nos obliga a hacer" original pedía sobre la tabla `message` (*"doble webhook con el mismo `external_id` no duplica `Message`"*) ahora se valida contra el **`message_outbox`** (el `ON CONFLICT DO NOTHING` no inserta la segunda vez y `unread_count` no se infla) + el `set(doc_id=mid)` idempotente en Firestore. El resto de los tests listados (UNIQUE 1-open, take/release/close, `find_or_create_open`) **siguen válidos** (son del control plane Postgres, intacto).
+
 ## Referencias
 
 - Ficha del módulo: [`docs/modules/conversations/README.md`](../modules/conversations/README.md) (overview consolidado; ver también `backend.md`/`ui.md`/`frontend.md`)
+- ADR relacionado: [ADR-011](ADR-011-firestore-message-stream-cqrs.md) — el stream de mensajes pasa a Firestore (CQRS read-model) con Transactional Outbox + Custom Tokens; `Conversation`/`ChannelAccount`/assignment/outbox quedan en Postgres (control plane). Es la revisión 2026-06-03 de este ADR sobre la persistencia del `Message`.
+- ADR relacionado: [ADR-010](ADR-010-runtime-secret-resolution.md) — resolución de secretos por-cuenta (WhatsApp) en runtime; el Firebase Admin de ADR-011, en cambio, init por ADC.
 - ADR relacionado: [ADR-003](ADR-003-person-with-separated-lifecycle-statuses.md) — `Conversation.person_id` apunta a `Person`, no a lead/customer; coherente con el modelo de identidad única acordado en CRM.
 - Patrón en código futuro: `backend/app/modules/conversations/`, `backend/app/routers/webhooks.py`.
 - Sobre Meta WhatsApp Cloud API webhook signature: el handler valida `X-Hub-Signature-256` con HMAC SHA256 sobre el body raw, usando `app_secret` resuelto desde el secret apuntado por `channel_account.secret_name`. Documentación: <https://developers.facebook.com/docs/graph-api/webhooks/getting-started#validating-payloads>.
