@@ -58,6 +58,7 @@ jobs:
             --platform managed \
             --service-account "${{ secrets.DEPLOY_SA }}" \
             --execution-environment gen2 \
+            --no-cpu-throttling \
             --ingress all \
             --add-cloudsql-instances "${{ secrets.CLOUD_SQL_INSTANCE }}" \
             --set-env-vars "^@@^USE_UNIX_SOCKET=True@@CLOUD_SQL_INSTANCE=${{ secrets.CLOUD_SQL_INSTANCE }}@@ENV_NAME=${ENV_NAME}@@DEBUG=False@@LOG_LEVEL=INFO@@JWT_ISSUER=medisage-${ENV_NAME}@@JWT_AUDIENCE=medisage-${ENV_NAME}@@RATE_LIMIT_TRUST_FORWARDED=True@@CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}@@GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}" \
