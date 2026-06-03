@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, BackgroundTasks, Query, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 
 from app.core.dependencies import DBSession
 from app.core.exceptions import ForbiddenException, NotFoundException
@@ -51,10 +51,10 @@ async def verify_whatsapp(
 
 @router.post("/whatsapp/{channel_account_id}", status_code=status.HTTP_200_OK)
 async def inbound_whatsapp(
-    channel_account_id: str, request: Request, db: DBSession, background: BackgroundTasks
+    channel_account_id: str, request: Request, db: DBSession
 ) -> dict[str, bool]:
-    """Valida la firma `X-Hub-Signature-256` sobre el body RAW, procesa el inbound (TX
-    Postgres síncrona) y agenda el relay del outbox → Firestore tras el 200."""
+    """Valida la firma `X-Hub-Signature-256` sobre el body RAW, procesa el inbound y
+    relaya el outbox → Firestore, todo SÍNCRONO antes del 200."""
     ca = await channel_account_repository.get_by_id(db, channel_account_id)
     if ca is None or not ca.active:
         raise NotFoundException("Cuenta de canal no encontrada", code="CHANNEL_ACCOUNT_NOT_FOUND")
@@ -67,8 +67,15 @@ async def inbound_whatsapp(
     ):
         raise ForbiddenException("Firma del webhook inválida", code="WEBHOOK_SIGNATURE_INVALID")
     payload = json.loads(raw or b"{}")
-    # TX Postgres (control plane), síncrona, antes del 200.
+    # TX Postgres (control plane) → relay a Firestore, AMBOS síncronos en el request, con la
+    # MISMA sesión. El relay lee los outbox rows recién flushed (read-your-writes en la tx) y
+    # los proyecta a Firestore con el Admin SDK. SÍNCRONO a propósito: el relay vía
+    # BackgroundTasks NO funcionaba en Cloud Run (la sesión nueva del task no veía los rows
+    # del request por el timing del commit de get_db; + cpu-throttling) → el doc nunca llegaba
+    # a Firestore (cazado por el QA E2E). El outbox sigue dando durabilidad + idempotencia
+    # (id=mid); un sweep/Cloud Task que reintente filas `failed` queda para F3
+    # (`relay_outbox_in_new_session`). El relay es rápido (writes Firestore ms) y tolera fallos
+    # por-fila (marca `failed` y sigue) → el 200 a Meta no se bloquea por un blip de Firestore.
     await wa.process_inbound(db, payload=payload, channel_account=ca)
-    # Relay del outbox → Firestore tras el 200 (data plane). El outbox es durable.
-    background.add_task(message_service.relay_outbox_in_new_session)
+    await message_service.relay_outbox(db)
     return {"success": True}
