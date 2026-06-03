@@ -123,3 +123,27 @@ def RequirePermission(*codes: str):  # noqa: N802 — class-like factory used as
         return auth
 
     return _check
+
+
+def RequireAnyPermission(*codes: str):  # noqa: N802 — class-like factory, igual que RequirePermission
+    """
+    Dependency factory: enforce that the caller's token carries AT LEAST ONE of `codes`
+    (any-of, complemento del all-of de `RequirePermission`).
+
+    Usado por endpoints accesibles desde más de un permiso, p.ej. el real-time token de
+    conversations (`CONVERSATIONS_READ` **o** `MY_CONVERSATIONS_READ`):
+
+        @router.post("/token",
+            dependencies=[Depends(RequireAnyPermission("CONVERSATIONS_READ", "MY_CONVERSATIONS_READ"))])
+    """
+    allowed = frozenset(codes)
+
+    async def _check(auth: CurrentAuth) -> AuthContext:
+        if allowed.isdisjoint(auth.permissions):
+            raise ForbiddenException(
+                f"Missing any of required permission(s): {', '.join(sorted(allowed))}",
+                code="PERMISSION_DENIED",
+            )
+        return auth
+
+    return _check

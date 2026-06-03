@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import (
@@ -424,7 +425,21 @@ async def find_by_identifier_or_create(
       2) PersonLeadStatus en el estado `is_initial` + LeadStatusHistory(NULL→initial).
       3) LeadAssignment por round-robin (si hay asesores; concurrency-safe FOR UPDATE).
       4) LeadActivity(CAMPAIGN_ATTRIBUTION) si `campaign_id` originó el alta.
+
+    Hardening de concurrencia (lo consume conversations, webhooks paralelos): advisory lock
+    transaccional Postgres keyed por (channel_type, identifier) al inicio → serializa el
+    get-then-insert por identifier (el 2º request espera al commit del 1º, hace el get y
+    devuelve la Person ya creada — idempotente; sin IntegrityError). Se libera al commit/
+    rollback de la tx (`_xact_`). sqlite (smoke): no-op (single-thread).
     """
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    func.hashtextextended(f"{channel_type.value}:{identifier}", 0)
+                )
+            )
+        )
     existing = await person_repository.get_by_identifier(db, channel_type.value, identifier)
     if existing is not None:
         return existing
@@ -534,3 +549,26 @@ async def find_by_identifier_or_create(
 
     await db.flush()
     return person
+
+
+async def person_option_map(db: AsyncSession, person_ids: list[str]) -> dict[str, PersonOption]:
+    """Batch map person_id → PersonOption (full_name + document_number + primary_identifier),
+    sin N+1. Helper ADITIVO (backward-compatible): lo consume conversations para denormalizar
+    `ConversationListItem.person` (README reconciliación §4). Solo personas vivas."""
+    if not person_ids:
+        return {}
+    rows = await person_repository.get_by_ids(db, person_ids)
+    primary_map = await person_repository.primary_identifier_map(db, [p.id for p in rows])
+    return {
+        p.id: PersonOption(
+            id=p.id,
+            full_name=_full_name(p),
+            document_number=p.document_number,
+            primary_identifier=(
+                PersonPrimaryIdentifier.model_validate(primary_map[p.id], from_attributes=True)
+                if p.id in primary_map
+                else None
+            ),
+        )
+        for p in rows
+    }

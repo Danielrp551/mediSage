@@ -54,5 +54,17 @@ class ChannelAccountRepository(BaseRepository[ChannelAccount]):
         )
         return list(result.scalars().all())
 
+    async def get_by_ids(self, db: AsyncSession, ids: list[str]) -> dict[str, ChannelAccount]:
+        """Batch map id → ChannelAccount (denorm del inbox sin N+1). F2 lo usa para embeber
+        `ConversationListItem.channel_account`. **NO filtra `deleted_at`**: una conversación
+        (incl. cerradas, que se conservan en el historial) puede referenciar un canal YA
+        soft-deleteado y el inbox debe seguir resolviendo su nombre — denorm audit-honest,
+        igual que `user_repository.get_audit_info_map`. El FK garantiza que la fila existe
+        (los canales solo se soft-deletean, nunca se borran físicamente)."""
+        if not ids:
+            return {}
+        result = await db.execute(select(ChannelAccount).where(ChannelAccount.id.in_(ids)))
+        return {c.id: c for c in result.scalars().all()}
+
 
 channel_account_repository = ChannelAccountRepository()

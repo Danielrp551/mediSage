@@ -31,6 +31,7 @@ from app.modules.clinic.routers import router as clinic_router
 from app.modules.conversations.routers import router as conversations_router
 from app.modules.crm.routers import router as crm_router
 from app.modules.staff.routers import router as staff_router
+from app.routers.webhooks import router as webhooks_router
 
 settings = get_settings()
 configure_logging(settings.LOG_LEVEL)
@@ -74,6 +75,8 @@ app.include_router(clinic_router, prefix=settings.API_V1_PREFIX)
 app.include_router(conversations_router, prefix=settings.API_V1_PREFIX)  # /conversations interno
 app.include_router(crm_router, prefix=settings.API_V1_PREFIX)
 app.include_router(staff_router, prefix=settings.API_V1_PREFIX)
+# Webhooks top-level (sin JWT) — Meta/WhatsApp. Firma HMAC / verify token, no RBAC.
+app.include_router(webhooks_router, prefix=settings.API_V1_PREFIX)  # /webhooks/whatsapp/{id}
 
 
 @app.get("/health", tags=["meta"])

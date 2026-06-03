@@ -181,6 +181,10 @@ export const ENDPOINTS = {
     LIST: `${CONVERSATIONS}/list`, // inbox global. PaginatedResponse[ConversationListItem]
     GET: (id: string) => `${CONVERSATIONS}/${id}`, // SingleResponse[ConversationDetail]
     MESSAGES_LIST: (id: string) => `${CONVERSATIONS}/${id}/messages/list`, // POST + QueryRequest
+    // Custom Token de Firebase para los listeners READ-ONLY del hilo (ADR-011).
+    // POST → SingleResponse<{ token, firebase_config: null }>. Gated CONVERSATIONS_READ
+    // o MY_CONVERSATIONS_READ (reusa permisos existentes; NO es un permiso nuevo).
+    REALTIME_TOKEN: `${CONVERSATIONS}/realtime/token`,
     SEND_MESSAGE: (id: string) => `${CONVERSATIONS}/${id}/messages`, // POST outbound (real Meta)
     TAKE: (id: string) => `${CONVERSATIONS}/${id}/take`, // POST
     RELEASE: (id: string) => `${CONVERSATIONS}/${id}/release`, // POST

@@ -15,8 +15,12 @@ from fastapi import APIRouter
 from app.modules.conversations.routers.channel_account import (
     router as channel_account_router,
 )
+from app.modules.conversations.routers.conversation import router as conversation_router
+from app.modules.conversations.routers.realtime import router as realtime_router
 
 router = APIRouter(prefix="/conversations")
 router.include_router(channel_account_router)  # /channel-accounts/*
+router.include_router(realtime_router)  # /realtime/token (antes de /{id} — defensivo)
+router.include_router(conversation_router)  # /list, /{id}, /{id}/messages/list
 
 __all__ = ["router"]

@@ -119,6 +119,17 @@ class PersonRepository(BaseRepository[Person]):
         )
         return list(result.scalars().all())
 
+    async def get_by_ids(self, db: AsyncSession, person_ids: list[str]) -> list[Person]:
+        """Batch fetch de personas VIVAS por ids (aditivo, molde `staff.branch_repository.
+        get_by_ids`). Lo consume `person_option_map` (denorm de la persona en el inbox de
+        conversations) sin N+1."""
+        if not person_ids:
+            return []
+        result = await db.execute(
+            select(Person).where(Person.id.in_(person_ids), Person.deleted_at.is_(None))
+        )
+        return list(result.scalars().all())
+
     async def list_paginated_filtered(
         self,
         db: AsyncSession,

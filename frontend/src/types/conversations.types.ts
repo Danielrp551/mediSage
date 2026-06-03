@@ -215,6 +215,7 @@ export interface MessageItem {
   conversation_id: string;
   direction: MessageDirection;
   sender_type: SenderType;
+  sender_user_id: string | null; // FK lógica cruda (advisor); espejo de MessageItem.sender_user_id (Pydantic)
   sender_user: UserAuditInfo | null; // null salvo sender_type='advisor'
   content_type: ContentType;
   content: string | null; // texto / transcripción / cuerpo del system_notification

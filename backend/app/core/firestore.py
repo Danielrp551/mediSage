@@ -86,32 +86,75 @@ def revoke_tokens(uid: str) -> None:
     auth.revoke_refresh_tokens(uid, app=_get_app())
 
 
-# ── Writers del read-model (STUBS F1 — se completan en F2, ADR-011) ──────────────
-# El stream de mensajes vive en Firestore como read-model real-time. En F2 el relay
-# del Transactional Outbox los invoca con el Admin SDK (`set(doc_id)` idempotente).
-# En F1 quedan documentados e inertes: NADA los llama todavía.
+# ── Writers del read-model (F2 — ADR-011) ────────────────────────────────────────
+# El stream de mensajes vive en Firestore como read-model real-time. El relay del
+# Transactional Outbox los invoca con el Admin SDK (`set(doc_id)` idempotente). El Admin
+# SDK BYPASSA las Security Rules (esas gobiernan solo al cliente Web). Son SÍNCRONOS (la
+# lib `firebase_admin` es bloqueante); el relay async los envuelve en `asyncio.to_thread`.
+# El smoke (sqlite, sin GCP) NUNCA los llama: los mockea (monkeypatch a este módulo).
 
 
 def write_message_doc(conversation_id: str, doc: dict[str, Any]) -> None:
-    """F2: conversations/{cid}/messages/{mid} ← set(doc). doc-id = doc['id'] (mid) →
+    """conversations/{cid}/messages/{mid} ← set(doc). doc-id = doc['id'] (mid) →
     create-if-absent idempotente (reprocesar el outbox no duplica)."""
-    raise NotImplementedError("write_message_doc se implementa en F2 (ADR-011)")
+    db = get_db()
+    (
+        db.collection("conversations")
+        .document(conversation_id)
+        .collection("messages")
+        .document(doc["id"])
+        .set(doc)
+    )
 
 
 def upsert_conversation_doc(conversation_id: str, doc: dict[str, Any]) -> None:
-    """F2: conversations/{cid} ← set(doc, merge=True). Espejo liviano del Conversation
-    de Postgres (status/assignee/allowed_reader_ids/preview/unread)."""
-    raise NotImplementedError("upsert_conversation_doc se implementa en F2 (ADR-011)")
+    """conversations/{cid} ← set(doc, merge=True). Espejo liviano del Conversation de
+    Postgres (status/assignee/allowed_reader_ids/preview/unread). Idempotente por overwrite."""
+    get_db().collection("conversations").document(conversation_id).set(doc, merge=True)
 
 
 def update_message_status(conversation_id: str | None, patch: dict[str, Any]) -> None:
-    """F2: patch del doc de un mensaje (delivered/read/failed + external_status)."""
-    raise NotImplementedError("update_message_status se implementa en F2 (ADR-011)")
+    """Patch (merge) del doc de un mensaje (delivered/read/failed + external_status). Si
+    `conversation_id` + `patch['id']` (mid) vienen → update directo; si NO (status callback
+    sin cid) → collection group query por `external_id` para ubicar el doc. No-op si no se
+    puede ubicar (status de un mensaje que no enviamos)."""
+    db = get_db()
+    mid = patch.get("id")
+    if conversation_id is not None and mid is not None:
+        (
+            db.collection("conversations")
+            .document(conversation_id)
+            .collection("messages")
+            .document(mid)
+            .set(patch, merge=True)
+        )
+        return
+    external_id = patch.get("external_id")
+    if external_id is None:
+        return
+    from firebase_admin import firestore
+
+    query = (
+        db.collection_group("messages")
+        .where(filter=firestore.FieldFilter("external_id", "==", external_id))
+        .limit(1)
+        .stream()
+    )
+    for snap in query:
+        snap.reference.set(patch, merge=True)
+        return
 
 
 def list_message_docs(
     conversation_id: str, *, skip: int, limit: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """F2: fallback server-side (SSR / sin Firestore en el cliente): lee
-    conversations/{cid}/messages orderBy created_at, pagina. Devuelve (docs, total)."""
-    raise NotImplementedError("list_message_docs se implementa en F2 (ADR-011)")
+    """Fallback server-side (SSR / sin Firestore en el cliente): lee
+    conversations/{cid}/messages orderBy created_at, pagina. Devuelve (docs, total). El
+    path PRIMARIO de lectura es el cliente Firestore real-time (onSnapshot)."""
+    db = get_db()
+    base = db.collection("conversations").document(conversation_id).collection("messages")
+    total = base.count().get()[0][0].value  # aggregation query
+    docs = [
+        snap.to_dict() for snap in base.order_by("created_at").offset(skip).limit(limit).stream()
+    ]
+    return docs, total

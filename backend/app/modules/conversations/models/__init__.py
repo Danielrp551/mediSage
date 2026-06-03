@@ -16,7 +16,15 @@ inmutable).
 """
 
 from app.modules.conversations.models.channel_account import ChannelAccount
+from app.modules.conversations.models.conversation import Conversation
+from app.modules.conversations.models.conversation_assignment_log import (
+    ConversationAssignmentLog,
+)
+from app.modules.conversations.models.message_outbox import MessageOutbox
 
 __all__ = [
     "ChannelAccount",
+    "Conversation",
+    "MessageOutbox",
+    "ConversationAssignmentLog",
 ]
