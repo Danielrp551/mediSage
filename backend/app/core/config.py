@@ -63,6 +63,22 @@ class Settings(BaseSettings):
     SEED_ADMIN_EMAIL: str = "admin@example.com"
     SEED_ADMIN_PASSWORD: str = "ChangeMe123!"
 
+    # ── GCP / secrets / messaging (conversations module, ADR-010 / ADR-011) ──
+    # GCP project for Secret Manager (per-account WhatsApp creds) + Firebase Admin.
+    GCP_PROJECT_ID: str = ""
+    # Firestore named database (read-model, ADR-011). Empty → backend elige por
+    # ENV_NAME (`firestore._DB_BY_ENV`); puede fijarse explícito (ej. "medisage-qa").
+    FIRESTORE_DATABASE: str = ""
+    # Fallback de credenciales WhatsApp para local/dev (cuando ChannelAccount.secret_name
+    # es NULL o USE_LOCAL_SECRETS). Defaults vacíos → en prod se resuelven por
+    # Secret Manager (ADR-010); el smoke (ENV_NAME=dev) usa estos sin tocar el SDK.
+    WHATSAPP_ACCESS_TOKEN: str = ""
+    WHATSAPP_APP_SECRET: str = ""
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    # Forzar el fallback a env (saltarse Secret Manager) aun fuera de dev — útil para
+    # una cuenta única local o tests de integración sin GCP.
+    USE_LOCAL_SECRETS: bool = False
+
     @property
     def database_url(self) -> str:
         """Async SQLAlchemy connection string. Switches to Unix socket on Cloud Run."""

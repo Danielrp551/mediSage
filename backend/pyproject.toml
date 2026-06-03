@@ -18,6 +18,8 @@ dependencies = [
     "slowapi>=0.1.9",
     "python-multipart>=0.0.20",
     "httpx>=0.28.0",
+    "google-cloud-secret-manager>=2.20,<3",
+    "firebase-admin>=6.5,<7",
 ]
 
 [project.optional-dependencies]
@@ -60,3 +62,8 @@ python_version = "3.11"
 strict = true
 plugins = ["pydantic.mypy"]
 exclude = ["alembic/versions/"]
+
+# firebase-admin no publica stubs ni marcador py.typed (ADR-011).
+[[tool.mypy.overrides]]
+module = ["firebase_admin.*"]
+ignore_missing_imports = true
