@@ -84,6 +84,24 @@ class Settings(BaseSettings):
     # una cuenta única local o tests de integración sin GCP.
     USE_LOCAL_SECRETS: bool = False
 
+    # ── Bots (módulo #6, ADR-005 / ADR-012) ──
+    # Motor embebido multi-proveedor (default OpenAI). Las API keys son globales por
+    # entorno (vía --set-secrets de Cloud Run); resolución per-bot vía secret_resolver
+    # (ADR-010) = futuro. Defaults vacíos → inertes hasta F3 (el engine).
+    OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
+    BOT_DEFAULT_MODEL: str = "gpt-4.1-mini"  # default de BotConfigurationVersion.model_name
+    # Corta el loop de tool-calling de un turno (anti-runaway / cost guard).
+    MAX_TOOL_ITERATIONS_PER_TURN: int = 5
+    # Cloud Tasks: el turno del bot se despacha async (ADR-012). El webhook encola →
+    # POST {SERVICE_BASE_URL}/api/v1/bots/engine/dispatch (auth OIDC del invoker SA, o
+    # BOT_DISPATCH_SECRET como shared-secret MVP). Defaults vacíos → no se encola hasta F3.
+    CLOUD_TASKS_QUEUE: str = ""  # ej. medisage-bot-turns-qa
+    CLOUD_TASKS_LOCATION: str = "us-central1"
+    CLOUD_TASKS_INVOKER_SA: str = ""  # SA que firma el OIDC token del dispatch
+    SERVICE_BASE_URL: str = ""  # URL pública del Cloud Run (target del dispatch)
+    BOT_DISPATCH_SECRET: str = ""  # shared-secret del endpoint /engine/dispatch (alt a OIDC)
+
     @property
     def database_url(self) -> str:
         """Async SQLAlchemy connection string. Switches to Unix socket on Cloud Run."""

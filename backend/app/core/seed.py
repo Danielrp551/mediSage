@@ -113,9 +113,21 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     # ── Module: conversations (12 permisos) ─────────────────────────────
     {"code": "MENU-CONVERSATIONS", "name": "Menu Conversations", "module": "CONVERSATIONS"},
     {"code": "CHANNEL_ACCOUNTS_READ", "name": "Read channel accounts", "module": "CONVERSATIONS"},
-    {"code": "CHANNEL_ACCOUNTS_CREATE", "name": "Create channel accounts", "module": "CONVERSATIONS"},
-    {"code": "CHANNEL_ACCOUNTS_UPDATE", "name": "Update channel accounts", "module": "CONVERSATIONS"},
-    {"code": "CHANNEL_ACCOUNTS_DELETE", "name": "Delete channel accounts", "module": "CONVERSATIONS"},
+    {
+        "code": "CHANNEL_ACCOUNTS_CREATE",
+        "name": "Create channel accounts",
+        "module": "CONVERSATIONS",
+    },
+    {
+        "code": "CHANNEL_ACCOUNTS_UPDATE",
+        "name": "Update channel accounts",
+        "module": "CONVERSATIONS",
+    },
+    {
+        "code": "CHANNEL_ACCOUNTS_DELETE",
+        "name": "Delete channel accounts",
+        "module": "CONVERSATIONS",
+    },
     {"code": "CONVERSATIONS_READ", "name": "Read conversations", "module": "CONVERSATIONS"},
     {"code": "CONVERSATIONS_TAKE", "name": "Take conversation", "module": "CONVERSATIONS"},
     {"code": "CONVERSATIONS_RELEASE", "name": "Release conversation", "module": "CONVERSATIONS"},
@@ -123,6 +135,29 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "MESSAGES_READ", "name": "Read messages", "module": "CONVERSATIONS"},
     {"code": "MESSAGES_SEND", "name": "Send messages", "module": "CONVERSATIONS"},
     {"code": "MY_CONVERSATIONS_READ", "name": "Read my conversations", "module": "CONVERSATIONS"},
+    # ── Module: bots (14 permisos) ──────────────────────────────────────
+    {"code": "MENU-BOTS", "name": "Menu Bots", "module": "BOTS"},
+    {"code": "BOT_CONFIGURATIONS_READ", "name": "Read bot configurations", "module": "BOTS"},
+    {"code": "BOT_CONFIGURATIONS_CREATE", "name": "Create bot configurations", "module": "BOTS"},
+    {"code": "BOT_CONFIGURATIONS_UPDATE", "name": "Update bot configurations", "module": "BOTS"},
+    {"code": "BOT_CONFIGURATIONS_DELETE", "name": "Delete bot configurations", "module": "BOTS"},
+    {
+        "code": "BOT_CONFIGURATION_VERSIONS_READ",
+        "name": "Read bot configuration versions",
+        "module": "BOTS",
+    },
+    {
+        "code": "BOT_CONFIGURATION_VERSIONS_WRITE",
+        "name": "Write bot configuration versions",
+        "module": "BOTS",
+    },
+    {"code": "BOT_TOOLS_READ", "name": "Read bot tools", "module": "BOTS"},
+    {"code": "BOT_TOOLS_WRITE", "name": "Write bot tools", "module": "BOTS"},
+    {"code": "BOT_STATE_READ", "name": "Read bot state", "module": "BOTS"},
+    {"code": "BOT_STATE_WRITE", "name": "Write bot state", "module": "BOTS"},
+    {"code": "BOT_EVENTS_READ", "name": "Read bot events", "module": "BOTS"},
+    {"code": "BOT_TOOL_CALLS_READ", "name": "Read bot tool calls", "module": "BOTS"},
+    {"code": "BOT_ENGINE_INVOKE", "name": "Invoke bot engine", "module": "BOTS"},
 ]
 
 

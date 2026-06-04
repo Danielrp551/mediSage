@@ -3,6 +3,7 @@
 import { makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import {
   AppsListRegular,
+  BotRegular,
   BoxRegular,
   BriefcaseRegular,
   BuildingMultipleRegular,
@@ -63,6 +64,8 @@ const ICONS: Record<string, ReactElement> = {
   MailInboxRegular: <MailInboxRegular />,
   PersonMailRegular: <PersonMailRegular />,
   PlugConnectedRegular: <PlugConnectedRegular />,
+  // Bots module
+  BotRegular: <BotRegular />,
 };
 
 const useStyles = makeStyles({

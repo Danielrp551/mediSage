@@ -8,6 +8,7 @@ const CLINIC = "/api/v1/clinic";
 const STAFF = "/api/v1/staff";
 const CRM = "/api/v1/crm";
 const CONVERSATIONS = "/api/v1/conversations";
+const BOTS = "/api/v1/bots";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -194,5 +195,43 @@ export const ENDPOINTS = {
   },
   ME_CONVERSATIONS: {
     LIST: `${CONVERSATIONS}/me/conversations/list`, // POST + QueryRequest — mi bandeja
+  },
+  // ── Bots module (#6) ─────────────────────────────────────
+  // Declarado en F0 (Prep), INERTE: ninguna pantalla lo consume aún. Las rutas
+  // backend se montan por fase (config+versiones F1, tools F2, engine+trace F3).
+  // `/engine/dispatch` (target de Cloud Tasks, top-level interno sin JWT) NO va acá:
+  // lo invoca Cloud Tasks contra el backend; el frontend nunca lo llama.
+  BOT_CONFIGURATIONS: {
+    LIST: `${BOTS}/configurations/list`, // POST + QueryRequest. PaginatedResponse[BotConfigurationItem]
+    CREATE: `${BOTS}/configurations`,
+    GET: (id: string) => `${BOTS}/configurations/${id}`, // SingleResponse[BotConfigurationDetail]
+    UPDATE: (id: string) => `${BOTS}/configurations/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${BOTS}/configurations/${id}`, // soft delete
+    ACTIVE: `${BOTS}/configurations/active`, // raw BotConfigurationOption[] (dropdown)
+    // Versiones (tab del drawer de configuración)
+    VERSIONS_LIST: (id: string) => `${BOTS}/configurations/${id}/versions`, // GET
+    VERSION_CREATE: (id: string) => `${BOTS}/configurations/${id}/versions`, // POST → nueva versión
+    VERSION_GET: (id: string, vid: string) => `${BOTS}/configurations/${id}/versions/${vid}`, // GET
+    ACTIVATE_VERSION: (id: string, vid: string) =>
+      `${BOTS}/configurations/${id}/activate-version/${vid}`, // POST → promueve a vigente
+    // M:N tools del bot (editor multiselect)
+    TOOLS_LIST: (id: string) => `${BOTS}/configurations/${id}/tools`, // GET → BotToolOption[] asignadas
+    TOOLS_UPDATE: (id: string) => `${BOTS}/configurations/${id}/tools`, // PUT bulk {tool_ids:[]}
+  },
+  BOT_TOOLS: {
+    LIST: `${BOTS}/tools/list`, // POST + QueryRequest. PaginatedResponse[BotToolItem]
+    CREATE: `${BOTS}/tools`,
+    UPDATE: (id: string) => `${BOTS}/tools/${id}`, // PUT
+    DELETE: (id: string) => `${BOTS}/tools/${id}`, // soft delete
+  },
+  // Depuración por conversación (paneles read-only del inbox / config)
+  BOT_TRACE: {
+    STATE: (cid: string) => `${BOTS}/conversations/${cid}/state`, // GET ConversationBotState
+    STATE_RESET: (cid: string) => `${BOTS}/conversations/${cid}/state/reset`, // POST
+    EVENTS: (cid: string) => `${BOTS}/conversations/${cid}/events`, // GET BotEventItem[]
+    TOOL_CALLS: (cid: string) => `${BOTS}/conversations/${cid}/tool-calls`, // GET BotToolCallItem[]
+  },
+  BOT_ENGINE: {
+    DISPATCH_MANUAL: `${BOTS}/engine/dispatch-manual`, // POST (RBAC BOT_ENGINE_INVOKE) — debugging
   },
 } as const;

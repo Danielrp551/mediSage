@@ -168,6 +168,24 @@ export const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: "bots",
+    label: "Bots",
+    icon: "BotRegular", // icono del grupo (sólo label + chevron en el sidebar)
+    children: [
+      // F0 declara SOLO Configuraciones (lo entrega F1). "Tools" (F2) y la
+      // "Depuración" por conversación (F3) se agregan en su fase para no dejar
+      // links muertos prolongados (lección crm). La Depuración además se entra
+      // desde el inbox/config, no necesita item propio de menú obligatorio.
+      {
+        key: "bot-configurations",
+        label: "Configuraciones",
+        icon: "BotRegular",
+        url: "/bots/configuraciones",
+        permissions: ["BOT_CONFIGURATIONS_READ"],
+      },
+    ],
+  },
+  {
     key: "admin",
     label: "Administración",
     icon: "SettingsRegular",
