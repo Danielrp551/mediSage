@@ -26,6 +26,7 @@ from app.core.logging import configure_logging
 from app.core.rate_limit import limiter
 from app.middleware.request_context import RequestContextMiddleware
 from app.modules.admin.routers import router as admin_router
+from app.modules.bots.routers import router as bots_router
 from app.modules.catalog.routers import router as catalog_router
 from app.modules.clinic.routers import router as clinic_router
 from app.modules.conversations.routers import router as conversations_router
@@ -75,6 +76,7 @@ app.include_router(clinic_router, prefix=settings.API_V1_PREFIX)
 app.include_router(conversations_router, prefix=settings.API_V1_PREFIX)  # /conversations interno
 app.include_router(crm_router, prefix=settings.API_V1_PREFIX)
 app.include_router(staff_router, prefix=settings.API_V1_PREFIX)
+app.include_router(bots_router, prefix=settings.API_V1_PREFIX)  # /bots/configurations/... (F1)
 # Webhooks top-level (sin JWT) — Meta/WhatsApp. Firma HMAC / verify token, no RBAC.
 app.include_router(webhooks_router, prefix=settings.API_V1_PREFIX)  # /webhooks/whatsapp/{id}
 

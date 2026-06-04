@@ -11,7 +11,7 @@ diferido. Mensajes en Firestore (ADR-011): `BotEvent.input/output_message_id` = 
 
 Diseño completo: `docs/modules/bots/{README,backend,ui,frontend}.md` + ADR-005 (act.) + ADR-012.
 
-⚠ F0 (Prep): este paquete es un SKELETON INERTE — los `__init__.py` solo documentan la
-estructura. **NO está registrado** en `app/modules/__init__.py` ni en `app/main.py` (lo cablea
-F1, como hicieron crm/conversations). Sin modelos/migración todavía → no aporta tablas ni rutas.
+Estado por fases: F1 cablea el paquete (registrado en `app/modules/__init__.py` + aggregator en
+`app/main.py`) con `BotConfiguration` + `BotConfigurationVersion` (migr 0017). F2 agrega `BotTool`
++ M:N (0018). F3 agrega el engine + state + trazas + Cloud Tasks (0019).
 """

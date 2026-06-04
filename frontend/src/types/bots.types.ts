@@ -80,6 +80,7 @@ export interface BotConfigurationItem {
   description: string | null;
   current_version_id: string | null; // FK→version vigente (null = no usable)
   current_version_number: number | null; // derivado: version de la vigente
+  version_count: number; // derivado: cuántas versiones vivas tiene
   max_turns_per_conversation: number | null; // guard opcional (null = sin límite)
   active: boolean;
   created_on: string;
@@ -90,14 +91,18 @@ export interface BotConfigurationItem {
   updated_by_user: UserAuditInfo | null;
 }
 
-// Detalle = Item (hoy sin campos extra; las versiones/tools se piden por sus endpoints).
-export type BotConfigurationDetail = BotConfigurationItem;
+// Detalle = Item + la versión vigente expandida (si la hay) + los tools M:N (F2).
+export interface BotConfigurationDetail extends BotConfigurationItem {
+  current_version: BotConfigurationVersionItem | null;
+  tool_ids: string[]; // M:N — en F1 siempre []
+}
 
 // Para dropdowns (selección de bot a asignar a un canal/conversación). Lista CRUDA.
 export interface BotConfigurationOption {
   id: string;
   code: string;
   name: string;
+  bot_type: BotType;
 }
 
 // Input de creación. `code` se fija al crear; el resto es editable luego.
@@ -109,17 +114,22 @@ export interface BotConfigurationCreate {
   max_turns_per_conversation?: number | null;
 }
 
-// Input de update (PUT, paridad template). `code` es inmutable (no se reenvía).
+// Input de update (PUT parcial). Todos opcionales; `code` es inmutable en la UI (no se reenvía).
+// Espeja el Pydantic BotConfigurationUpdate (todos opcionales + `active`) y el Zod
+// botConfigurationUpdateSchema.
 export interface BotConfigurationUpdate {
-  name: string;
-  bot_type: BotType;
+  name?: string;
+  bot_type?: BotType;
   description?: string | null;
   max_turns_per_conversation?: number | null;
+  active?: boolean;
 }
 
 // ── BotConfigurationVersion ──────────────────────────────
 
 // Fila de la tab Versiones. `is_current` derivado = (id === config.current_version_id).
+// Las versiones son INMUTABLES: el backend NO devuelve campos updated_* ni `active`
+// (el soft-disable de la versión viaja como `is_active`).
 export interface BotConfigurationVersionItem {
   id: string;
   bot_configuration_id: string;
@@ -129,13 +139,9 @@ export interface BotConfigurationVersionItem {
   is_active: boolean; // soft-disable de la versión (distinto de current)
   is_current: boolean; // derivado: es la versión vigente del bot
   notes: string | null; // changelog del prompt
-  active: boolean;
   created_on: string;
   created_by: string;
   created_by_user: UserAuditInfo | null;
-  updated_on: string;
-  updated_by: string;
-  updated_by_user: UserAuditInfo | null;
 }
 
 // Detalle = Item + el prompt, params y los campos de webhook externo (diferidos).
