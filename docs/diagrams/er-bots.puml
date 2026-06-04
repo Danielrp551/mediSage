@@ -1,6 +1,6 @@
 @startuml er-bots
 ' Propósito: modelo relacional del módulo bots (BotConfiguration + Version + State + Tools + Events)
-' Última actualización: 2026-05-28
+' Última actualización: 2026-06-04 (reconciliación CQRS/Cloud Tasks — ADR-005 act., ADR-011, ADR-012)
 ' Código de referencia: backend/app/modules/bots/models/
 
 !theme plain
@@ -152,8 +152,8 @@ entity "bot_event" as t_be {
   * bot_configuration_version_id : varchar(36) <<FK→bot_configuration_version>>
   * turn_number : int
   * event_type : varchar(40)
-  input_message_id : varchar(36) <<nullable, FK→message>>
-  output_message_id : varchar(36) <<nullable, FK→message>>
+  input_message_id : varchar(255) <<nullable>>   ' mid (doc-id Firestore) — NO FK (ADR-011)
+  output_message_id : varchar(255) <<nullable>>  ' mid (doc-id Firestore) — NO FK (ADR-011)
   tokens_in : int <<nullable>>
   tokens_out : int <<nullable>>
   latency_ms : int <<nullable>>
@@ -174,15 +174,18 @@ entity "bot_event" as t_be {
 ' Externas (referencia)
 ' ─────────────────────────────────────────────────────────────
 entity "conversation" as t_conv <<external>> #lightgrey {
-  ' Módulo: conversations
+  ' Módulo: conversations (Postgres control plane). bot_configuration_id (forward FK,
+  ' ADR-009) lo cierra la migración de bots F1. assignee_type='bot' ⇒ atiende el bot.
   * id : varchar(36) <<PK>>
   ...
 }
-entity "message" as t_msg <<external>> #lightgrey {
-  ' Módulo: conversations
+entity "channel_account" as t_ca <<external>> #lightgrey {
+  ' Módulo: conversations. bot_configuration_id (forward FK) = bot por defecto del canal.
   * id : varchar(36) <<PK>>
   ...
 }
+' NB: NO hay tabla `message` — el stream de mensajes vive en Firestore (CQRS, ADR-011).
+' bot_event.input/output_message_id = el `mid` (doc-id Firestore), varchar(255), NO FK.
 
 ' ─────────────────────────────────────────────────────────────
 ' Relaciones
@@ -208,13 +211,16 @@ t_conv ||--o{ t_be
 ' Tool → ToolCall
 t_bt ||--o{ t_btc
 
-' Event → Messages (input/output, opcionales)
-t_msg |o--o{ t_be : "input/output"
+' Event → ToolCalls del turno
 t_be  |o--o{ t_btc : "evento del turno"
 
 ' Configuration + Version → Event
 t_bc  ||--o{ t_be
 t_bcv ||--o{ t_be
+
+' Forward FK (ADR-009) que la migración de bots F1 cierra (ALTER TABLE ADD CONSTRAINT):
+t_ca   }o--o| t_bc : "bot por defecto\n(forward FK)"
+t_conv }o--o| t_bc : "bot asignado\n(forward FK)"
 
 ' ─────────────────────────────────────────────────────────────
 ' Notas

@@ -1,6 +1,6 @@
 @startuml class-backend-bots
-' Propósito: jerarquía OO del módulo bots — modelos, repos, services, BotEngine abstracto con 2 implementaciones
-' Última actualización: 2026-05-28
+' Propósito: jerarquía OO del módulo bots — modelos, repos, services, BotEngine abstracto (Embedded multi-proveedor; External diferido)
+' Última actualización: 2026-06-04 (reconciliación CQRS/Cloud Tasks — ADR-005 act., ADR-011, ADR-012)
 ' Código de referencia: backend/app/modules/bots/
 
 !theme plain
@@ -102,8 +102,8 @@ package "app.modules.bots.models" <<Frame>> {
     +bot_configuration_version_id: str <<FK>>
     +turn_number: int
     +event_type: str
-    +input_message_id: str? <<FK>>
-    +output_message_id: str? <<FK>>
+    +input_message_id: str?   ' mid (doc-id Firestore) — NO FK (ADR-011)
+    +output_message_id: str?  ' mid (doc-id Firestore) — NO FK (ADR-011)
     +tokens_in: int?
     +tokens_out: int?
     +latency_ms: int?
@@ -220,39 +220,43 @@ package "app.modules.bots.services" <<Frame>> {
 ' ─────────────────────────────────────────────────────────────
 package "app.modules.bots.services.engine" <<Frame>> {
   abstract class BotEngine {
-    +{abstract} dispatch_turn(conversation, message, db): None
-    +choose_bot_for_conversation(person, db): BotConfiguration
+    +{abstract} dispatch_turn(conversation_id, db): None
+    +choose_bot_for_conversation(conversation, db): BotConfiguration
     --
-    ' Common: persiste BotEvent, lee/escribe ConversationBotState,
-    ' invoca conversations.message.send_outbound al final.
+    ' dispatch_turn lo invoca POST /engine/dispatch (Cloud Task, ADR-012).
+    ' Lee historial del hilo de Firestore (list_message_docs); persiste
+    ' BotEvent/BotToolCall + ConversationBotState; emite el outbound vía
+    ' conversations.message.send_bot_outbound (sender_type='bot').
   }
 
   class EmbeddedBotEngine {
-    +provider_client: ProviderClient  ' Anthropic/OpenAI/...
-    +dispatch_turn(conversation, message, db): None
+    +provider_adapter: ProviderAdapter  ' openai (default gpt-4.1-mini) | claude
+    +dispatch_turn(conversation_id, db): None
     --
-    ' Construye prompt + tools, llama LLM in-process,
-    ' loop tool_use/tool_result hasta respuesta final.
+    ' Construye prompt + tools, llama al adaptador del provider in-process,
+    ' loop tool_use/tool_result (≤ MAX_TOOL_ITERATIONS_PER_TURN).
   }
 
-  class ExternalBotEngine {
+  class ExternalBotEngine <<DIFERIDO (F4)>> {
     +http_client: AsyncClient
-    +dispatch_turn(conversation, message, db): None
-    +on_external_callback(payload): None
-    +on_tool_result(payload): None
     --
-    ' POST al external_webhook_url con HMAC.
-    ' Recibe callback en /engine/external/*.
+    ' DISEÑADO, NO implementado en el MVP. provider='external_webhook'
+    ' (POST con HMAC + callbacks /engine/external/*). Aditivo, sin migración.
   }
 
-  class TOOL_REGISTRY <<module-level dict>> {
-    +"book_appointment" → scheduling.appointment.create_from_bot
-    +"check_availability" → scheduling.availability.check
-    +"list_products_by_vertical" → catalog.product.list_for_vertical
-    +"register_lead_note" → crm.lead_activity.log_note
-    +"update_lead_status" → crm.person_lead_status.transition
-    +"cancel_appointment" → scheduling.appointment.cancel_from_bot
-    +...
+  ' Adaptadores por provider (subset común JSON Schema OpenAI ≈ Anthropic tool use)
+  class "providers/openai.py" as ProvOpenAI { +complete(system, messages, tools, params) }
+  class "providers/claude.py" as ProvClaude { +complete(system, messages, tools, params) }
+
+  class TOOL_REGISTRY <<module-level dict, by code>> {
+    ' MVP (seedeadas): crm + catalog
+    +"list_verticals" → catalog.vertical.list_active
+    +"list_services_by_vertical" → catalog.service.list_active
+    +"list_products_by_vertical" → catalog.product.list_active
+    +"resolve_or_create_contact" → crm.person.find_by_identifier_or_create
+    +"register_lead_note" → crm.lead_activity.log (NOTE)
+    +"set_lead_status" → crm.person_lead_status.transition (requires_confirmation)
+    ' DIFERIDAS (no seedear hasta scheduling #7): book_appointment / check_availability / cancel_appointment
   }
 
   class BotInvocationContext <<dataclass>> {
@@ -268,8 +272,9 @@ package "app.modules.bots.services.engine" <<Frame>> {
 ' Externos
 ' ─────────────────────────────────────────────────────────────
 class "Conversation" as Conversation <<entity,external>> #lightgrey
-class "Message" as Message <<entity,external>> #lightgrey
 class "Person" as Person <<entity,external>> #lightgrey
+' NB: NO hay clase Message — el stream de mensajes vive en Firestore (CQRS, ADR-011).
+' El engine lee el historial vía conversations.firestore.list_message_docs.
 
 ' ─────────────────────────────────────────────────────────────
 ' Herencia mixins
@@ -319,7 +324,7 @@ Conversation "1" -- "0..*" BotEvent
 BotTool "1" -- "0..*" BotToolCall
 BotEvent "1" -- "0..*" BotToolCall
 
-BotEvent "*" -- "0..1" Message : "input/output"
+' bot_event.input/output_message_id = mid (doc-id Firestore), varchar(255), NO FK (ADR-011).
 
 ' Engine relationships
 BotEngine <|-- EmbeddedBotEngine
@@ -330,11 +335,12 @@ BotEngine ..> BotEventRepository
 BotEngine ..> BotToolCallRepository
 BotEngine ..> TOOL_REGISTRY
 BotEngine ..> Conversation
-BotEngine ..> Message
 BotEngine ..> Person
+BotEngine ..> "conversations.firestore\n(list_message_docs)" : lee historial
+BotEngine ..> "conversations.message\n(send_bot_outbound)" : emite outbound
 
-EmbeddedBotEngine ..> "Anthropic/OpenAI SDK" : in-process
-ExternalBotEngine ..> "external_webhook_url" : HTTP POST
+EmbeddedBotEngine ..> ProvOpenAI : in-process (default)
+EmbeddedBotEngine ..> ProvClaude : in-process
 
 ' Services usan repos
 cfg_svc   ..> BotConfigurationRepository

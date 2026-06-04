@@ -1,6 +1,6 @@
 # ADR-005: Motor del bot agnóstico — entidades de bot separadas de la implementación del engine
 
-> **Status**: Accepted
+> **Status**: Accepted (act. 2026-06-04 — ver §"Actualización (2026-06-04)")
 > **Date**: 2026-05-28
 > **Deciders**: @daniel, @marco
 
@@ -121,9 +121,21 @@ Una tabla por tipo de engine, con sus columnas específicas (provider, model_nam
   - `TOOL_REGISTRY` resuelve `target_service` existente; lanza error claro si no.
   - Tool con `requires_confirmation=true` y bot que invoca sin confirmar → debe rechazar en service.
 
+## Actualización (2026-06-04) — reconciliaciones del MVP
+
+La decisión central (entidades agnósticas + interfaz `BotEngine`) **sigue vigente**. Al planificar la implementación (módulo #6, tras `conversations` completo) se reconciliaron supuestos del diseño original (2026-05-28) que quedaron desactualizados por el rediseño Firestore/CQRS ([ADR-011](ADR-011-firestore-message-stream-cqrs.md)), la lección de async en Cloud Run, y el orden real de implementación (se saltó `scheduling`). Confirmadas con el usuario:
+
+1. **Mensajes en Firestore, no Postgres** (ADR-011): NO existe tabla `message`. `BotEvent.input_message_id`/`output_message_id` pasan a ser **`varchar(255)` planos = el `mid` (doc-id Firestore)**, **NO FK→message**. El engine **lee el historial del hilo desde Firestore** (Admin SDK `conversations.firestore.list_message_docs`) para armar el prompt. El `Message.bot_configuration_id` del diseño viejo se materializa como un **campo del doc Firestore** del mensaje (no una columna Postgres).
+2. **Despacho del turno = Cloud Tasks** ([ADR-012](ADR-012-cloud-tasks-bot-dispatch.md)): el turno es lento (LLM); el webhook encola una Cloud Task → `POST /api/v1/bots/engine/dispatch` (OIDC) corre `dispatch_turn`. NO síncrono, NO `BackgroundTasks`. Esto es ortogonal a "dónde corre el LLM" (embedded/external): fija *cómo se dispara* el turno.
+3. **MVP = `EmbeddedBotEngine` multi-proveedor** (OpenAI + Claude, adaptadores por `provider`). Default `model_name='gpt-4.1-mini'` (OpenAI). El contrato de tools es el **subset común JSON Schema** (OpenAI function calling ≈ Anthropic tool use). **`ExternalBotEngine` queda DISEÑADO pero DIFERIDO**: las entidades conservan `provider/external_webhook_url/external_webhook_secret_name`, pero NO se implementa el engine externo ni los endpoints `/engine/external/*` en el MVP (aditivo después, sin migración). Credenciales de proveedor = `Settings.OPENAI_API_KEY`/`ANTHROPIC_API_KEY` (global por entorno; per-bot vía secret_resolver [ADR-010] = futuro).
+4. **Tools del MVP = crm + catalog SOLO** (`scheduling` #7 aún no existe). `book_appointment`/`check_availability`/`cancel_appointment` quedan diseñadas pero NO seedeadas (su `target_service` apuntaría a `scheduling.*` → `TOOL_NOT_REGISTERED` en runtime hasta que scheduling ship).
+5. **Engagement + outbound del bot = cambios aditivos a `conversations`** (los implementa bots en F3): (a) `find_or_create_open` asigna la conversación nueva a `assignee_type='bot'` si `channel_account.bot_configuration_id` está set; (b) `message.send_bot_outbound` (sender_type='bot', valida `assignee_type=='bot'`, sin el advisor-assignee check de `send_outbound`); (c) las 2 **forward FK** varchar(36) de `conversations` (`channel_account.bot_configuration_id`, `conversation.bot_configuration_id`, [ADR-009](ADR-009-forward-fk-deferred-cross-module.md)) se cierran con `ALTER TABLE ADD CONSTRAINT` en la migración de bots F1, **sin** relationship ORM (no romper el mapper de conversations).
+
+Detalle consolidado en [`docs/modules/bots/README.md`](../modules/bots/README.md) §"Reconciliaciones".
+
 ## Referencias
 
-- Ficha del módulo: [`docs/modules/bots.md`](../modules/bots.md)
+- Ficha del módulo: [`docs/modules/bots/README.md`](../modules/bots/README.md) (+ `backend.md`/`ui.md`/`frontend.md`)
 - ADR relacionado: [ADR-004](ADR-004-conversation-channel-account.md) — `Conversation.bot_configuration_id` apunta a `BotConfiguration` agnóstica; cualquier engine la lee.
 - Patrón futuro (postergado): si se materializa un engine externo en producción, documentar el protocolo HTTP+HMAC en ADR-006.
 - Sobre tool calling como contrato: el `parameters_schema` debe ser JSON Schema compatible con [Anthropic Tool Use](https://docs.anthropic.com/en/docs/build-with-claude/tool-use) y [OpenAI Function Calling](https://platform.openai.com/docs/guides/function-calling) — el subset común. Documentar la convención cuando se implementen las primeras tools.
