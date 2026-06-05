@@ -24,6 +24,7 @@ from app.modules.bots.repositories.bot_configuration import bot_configuration_re
 from app.modules.bots.repositories.bot_configuration_version import (
     bot_configuration_version_repository,
 )
+from app.modules.bots.repositories.bot_tool import bot_tool_repository
 from app.modules.bots.schemas.bot_configuration import (
     BotConfigurationCreate,
     BotConfigurationDetail,
@@ -79,10 +80,11 @@ def _to_item(
 
 
 async def _build_detail(db: AsyncSession, config: BotConfiguration) -> BotConfigurationDetail:
-    """Detail = Item + versión vigente expandida (si la hay) + tool_ids (M:N — [] hasta F2)."""
+    """Detail = Item + versión vigente expandida (si la hay) + tool_ids del M:N (F2)."""
     version_count = (
         await bot_configuration_version_repository.version_count_map(db, [config.id])
     ).get(config.id, 0)
+    tool_ids = await bot_tool_repository.tool_ids_for_config(db, config.id)
 
     actor_ids = {config.created_by, config.updated_by}
     current_version = None
@@ -117,7 +119,7 @@ async def _build_detail(db: AsyncSession, config: BotConfiguration) -> BotConfig
         updated_by=config.updated_by,
         updated_by_user=_audit_info(audit_users.get(config.updated_by)),
         current_version=current_version_item,
-        tool_ids=[],
+        tool_ids=tool_ids,
     )
 
 

@@ -11,8 +11,12 @@ F1 expone `bot_configuration` (/configurations/* + /versions + activate-version)
 from fastapi import APIRouter
 
 from app.modules.bots.routers.bot_configuration import router as bot_configuration_router
+from app.modules.bots.routers.bot_tool import router as bot_tool_router
 
 router = APIRouter(prefix="/bots")
-router.include_router(bot_configuration_router)  # /configurations/* (+ versions, activate-version)
+router.include_router(
+    bot_configuration_router
+)  # /configurations/* (+ versions, activate, tools M:N)
+router.include_router(bot_tool_router)  # /tools/*
 
 __all__ = ["router"]

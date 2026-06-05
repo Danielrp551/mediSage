@@ -220,6 +220,8 @@ export const ENDPOINTS = {
   },
   BOT_TOOLS: {
     LIST: `${BOTS}/tools/list`, // POST + QueryRequest. PaginatedResponse[BotToolItem]
+    ACTIVE: `${BOTS}/tools/active`, // GET → raw BotToolOption[] (multiselect M:N por bot)
+    GET: (id: string) => `${BOTS}/tools/${id}`, // GET → SingleResponse[BotToolDetail] (trae parameters_schema)
     CREATE: `${BOTS}/tools`,
     UPDATE: (id: string) => `${BOTS}/tools/${id}`, // PUT
     DELETE: (id: string) => `${BOTS}/tools/${id}`, // soft delete

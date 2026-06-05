@@ -173,9 +173,14 @@ export interface BotToolItem {
   code: string; // UNIQUE ("list_verticals", "set_lead_status")
   name: string;
   description: string; // la lee el LLM para decidir cuándo invocar
-  target_service: string; // "<module>.<service>.<function>" (resuelto por TOOL_REGISTRY)
+  target_service: string; // "<module>.<service>.<function>" (referencia documental del catálogo)
   requires_confirmation: boolean;
-  is_active: boolean;
+  // Derivado server-side: el `code` de esta tool está registrado en el TOOL_REGISTRY de este
+  // entorno (el registry se indexa por `code`, NO por `target_service` — decisión backend.md §6-bis).
+  // `false` = tool diseñada pero sin implementación registrada (ej. scheduling.*); invocarla daría
+  // TOOL_NOT_REGISTERED en runtime. El backend NO devuelve `is_active` en tools
+  // (reusa `active`, el toggle de ActiveMixin).
+  is_registered: boolean;
   active: boolean;
   created_on: string;
   created_by: string;
@@ -186,32 +191,37 @@ export interface BotToolItem {
 }
 
 // Detalle = Item + el JSON Schema de parámetros (subset común OpenAI/Anthropic).
+// Solo el Detail trae el schema pesado; el Item NO.
 export interface BotToolDetail extends BotToolItem {
   parameters_schema: Record<string, unknown>; // JSON Schema
 }
 
-// Para el editor M:N (multiselect de tools por bot).
+// Para el editor M:N (multiselect de tools por bot). Lista CRUDA. Incluye
+// `requires_confirmation` para pintar el badge ⚠ en cada opción del multiselect.
 export interface BotToolOption {
   id: string;
   code: string;
   name: string;
+  requires_confirmation: boolean;
 }
 
 export interface BotToolCreate {
   code: string;
   name: string;
   description: string;
-  parameters_schema: Record<string, unknown>;
+  parameters_schema?: Record<string, unknown>;
   target_service: string;
   requires_confirmation?: boolean;
 }
 
+// PUT parcial: todos opcionales; `code` es inmutable (no se reenvía).
 export interface BotToolUpdate {
-  name: string;
-  description: string;
-  parameters_schema: Record<string, unknown>;
-  target_service: string;
+  name?: string;
+  description?: string;
+  parameters_schema?: Record<string, unknown>;
+  target_service?: string;
   requires_confirmation?: boolean;
+  active?: boolean;
 }
 
 // Bulk M:N: qué tools puede usar un bot. PUT /configurations/{id}/tools.

@@ -39,6 +39,7 @@ import {
 import { appTokens } from "@/lib/theme/brand";
 import { BOT_TYPES, type BotConfigurationDetail, type BotType } from "@/types/bots.types";
 
+import { BotToolsTab } from "./BotToolsTab";
 import { BotVersionsTab } from "./BotVersionsTab";
 
 const useStyles = makeStyles({
@@ -86,7 +87,7 @@ interface Props {
   onClose: () => void;
 }
 
-type TabId = "details" | "versions";
+type TabId = "details" | "versions" | "tools";
 
 type FormValues = BotConfigurationCreateInput & { active?: boolean };
 
@@ -113,6 +114,12 @@ export function BotConfigurationDrawer({ mode: initialMode, configId, onClose }:
   const canReadVersions = hasAnyPermission(["BOT_CONFIGURATION_VERSIONS_READ"]);
   // Versiones solo existen para un bot ya creado Y si el viewer puede leerlas.
   const versionsAvailable = currentId !== null && canReadVersions;
+  // El tab Herramientas carga el CATÁLOGO de tools (`GET /tools/active`, gated
+  // BOT_TOOLS_READ). El ASESOR tiene CONFIGURATIONS_READ pero NO BOT_TOOLS_READ:
+  // sin este gate, abrir el tab dispararía un 403 al listar el catálogo (lección F1
+  // del tab Versiones). El catálogo de tools es solo del ADMIN.
+  const canReadTools = hasAnyPermission(["BOT_TOOLS_READ"]);
+  const toolsAvailable = currentId !== null && canReadTools;
 
   const form = useForm<FormValues>({
     resolver: zodResolver(botConfigurationCreateSchema),
@@ -254,6 +261,9 @@ export function BotConfigurationDrawer({ mode: initialMode, configId, onClose }:
         <Tab value="details">Datos</Tab>
         <Tab value="versions" disabled={!versionsAvailable}>
           Versiones
+        </Tab>
+        <Tab value="tools" disabled={!toolsAvailable}>
+          Herramientas
         </Tab>
       </TabList>
 
@@ -401,7 +411,7 @@ export function BotConfigurationDrawer({ mode: initialMode, configId, onClose }:
             </FormField>
           ) : null}
         </div>
-      ) : currentId ? (
+      ) : tab === "versions" && currentId ? (
         <BotVersionsTab
           configId={currentId}
           currentVersionId={config?.current_version_id ?? null}
@@ -412,6 +422,10 @@ export function BotConfigurationDrawer({ mode: initialMode, configId, onClose }:
           }}
           onVersionsChanged={() => loadConfig(currentId)}
         />
+      ) : tab === "tools" && currentId ? (
+        // El multiselect es editable solo con BOT_CONFIGURATIONS_UPDATE; en modo
+        // view (o sin ese permiso) el tab muestra las tools asignadas en read-only.
+        <BotToolsTab configId={currentId} readOnly={readOnly} />
       ) : null}
     </Drawer>
   );

@@ -809,7 +809,7 @@ class BotToolItem(BaseModel):
     description: str
     target_service: str
     requires_confirmation: bool
-    is_registered: bool = False    # denormalizado: target_service ∈ TOOL_REGISTRY (lo computa el service)
+    is_registered: bool = False    # denormalizado: code ∈ TOOL_REGISTRY (registry indexado por code, §6-bis)
     active: bool
     created_on: datetime
     created_by: str
@@ -829,7 +829,7 @@ class ConfigurationToolsUpdate(BaseModel):
     tool_ids: list[str] = Field(default_factory=list)
 ```
 
-> **`is_registered`** = el `target_service` de la tool está en `TOOL_REGISTRY` (computado por el service contra el registry en memoria). La UI lo muestra como un badge "registrada / no registrada" — útil para ver que las tools de scheduling (diferidas) quedan **no registradas** hasta #7 (su dispatch daría `TOOL_NOT_REGISTERED`). NO es columna → NO va en `ALLOWED_FIELDS`.
+> **`is_registered`** = el `code` de la tool está en `TOOL_REGISTRY` (el registry se indexa por `code`, NO por `target_service` — ver §6-bis; computado por el service contra el registry en memoria). La UI lo muestra como un badge "registrada / no registrada" — útil para ver que las tools de scheduling (diferidas) quedan **no registradas** hasta #7 (su dispatch daría `TOOL_NOT_REGISTERED`). NO es columna → NO va en `ALLOWED_FIELDS`.
 
 ### `schemas/conversation_bot_state.py`
 

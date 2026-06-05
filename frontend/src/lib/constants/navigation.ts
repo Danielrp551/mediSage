@@ -183,6 +183,15 @@ export const NAV_ITEMS: NavItem[] = [
         url: "/bots/configuraciones",
         permissions: ["BOT_CONFIGURATIONS_READ"],
       },
+      // F2 — catálogo de herramientas invocables (solo ADMIN; el ASESOR no tiene
+      // BOT_TOOLS_READ, así que no ve este item).
+      {
+        key: "bot-tools",
+        label: "Herramientas",
+        icon: "WrenchRegular",
+        url: "/bots/tools",
+        permissions: ["BOT_TOOLS_READ"],
+      },
     ],
   },
   {

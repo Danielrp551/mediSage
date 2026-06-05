@@ -9,10 +9,16 @@ esquema y antes de resolver los `relationship(...)`/`ForeignKey(...)` por string
   `BotEvent.input/output_message_id` = mid Firestore, varchar(255) NO FK).
 """
 
+# Orden: associations + padres (bot_configuration, bot_tool) antes que el resto. El M:N referencia
+# ambas tablas por string → se registra primero para que SQLAlchemy las resuelva.
+from app.modules.bots.models.associations import bot_configuration_tool
 from app.modules.bots.models.bot_configuration import BotConfiguration
 from app.modules.bots.models.bot_configuration_version import BotConfigurationVersion
+from app.modules.bots.models.bot_tool import BotTool
 
 __all__ = [
+    "bot_configuration_tool",
     "BotConfiguration",
     "BotConfigurationVersion",
+    "BotTool",
 ]

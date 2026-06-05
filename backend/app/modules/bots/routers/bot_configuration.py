@@ -27,8 +27,10 @@ from app.modules.bots.schemas.bot_configuration_version import (
     BotConfigurationVersionDetail,
     BotConfigurationVersionItem,
 )
+from app.modules.bots.schemas.bot_tool import BotToolOption, ConfigurationToolsUpdate
 from app.modules.bots.services import bot_configuration as config_service
 from app.modules.bots.services import bot_configuration_version as version_service
+from app.modules.bots.services import bot_tool as tool_service
 from app.shared.base_schemas import PaginatedResponse, QueryRequest, SingleResponse
 
 router = APIRouter(prefix="/configurations", tags=["bots · configurations"])
@@ -159,3 +161,31 @@ async def activate_version(
     return await config_service.activate_version(
         db, configuration_id, version_id, actor_id=actor.id
     )
+
+
+# ── Tools del bot (M:N bot_configuration_tool) ──────────────────────
+
+
+@router.get(
+    "/{configuration_id}/tools",
+    response_model=SingleResponse[list[BotToolOption]],
+    dependencies=[Depends(RequirePermission("BOT_CONFIGURATIONS_READ"))],
+)
+async def list_configuration_tools(
+    configuration_id: ConfigIdPath, db: DBSession
+) -> SingleResponse[list[BotToolOption]]:
+    return await tool_service.list_for_config(db, configuration_id)
+
+
+@router.put(
+    "/{configuration_id}/tools",
+    response_model=SingleResponse[BotConfigurationDetail],
+    dependencies=[Depends(RequirePermission("BOT_CONFIGURATIONS_UPDATE"))],
+)
+async def set_configuration_tools(
+    configuration_id: ConfigIdPath,
+    payload: ConfigurationToolsUpdate,
+    db: DBSession,
+    actor: CurrentAuth,
+) -> SingleResponse[BotConfigurationDetail]:
+    return await tool_service.set_config_tools(db, configuration_id, payload, actor_id=actor.id)
