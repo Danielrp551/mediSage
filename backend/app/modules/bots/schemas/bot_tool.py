@@ -17,7 +17,8 @@ from app.modules.admin.schemas.audit import UserAuditInfo
 
 
 class BotToolCreate(BaseModel):
-    code: str = Field(min_length=1, max_length=60)
+    # Slug: minúsculas, números y guion bajo (paridad con el Zod del front + BotConfiguration.code).
+    code: str = Field(min_length=1, max_length=60, pattern=r"^[a-z0-9_]+$")
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(min_length=1, max_length=4000)
     parameters_schema: dict[str, Any] = Field(default_factory=dict)  # JSON Schema (subset común)
