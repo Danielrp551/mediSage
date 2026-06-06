@@ -1,6 +1,6 @@
 @startuml er-scheduling
-' Propósito: modelo relacional del módulo scheduling (Appointment + AppointmentStatus + History + ChangeLog)
-' Última actualización: 2026-05-28
+' Propósito: modelo relacional del módulo scheduling — modelo FINAL (5 entidades): catálogo de estados de cita + matriz de transiciones configurable (ADR-008) + Appointment (unidad persistida del calendario) + dos audit-trails inmutables (status history + change log). La disponibilidad NO es una tabla — se calcula on-the-fly (ADR-006) a partir de fuentes de otros módulos.
+' Última actualización: 2026-06-06 — modelo final (5 entidades + matriz; disponibilidad on-the-fly ADR-006/007)
 ' Código de referencia: backend/app/modules/scheduling/models/
 
 !theme plain
@@ -20,10 +20,11 @@ legend top right
   | <<FK>> | Foreign Key |
   | <<unique>> | UNIQUE constraint |
   | <<nullable>> | NULL permitido |
+  | <<denorm>> | columna denormalizada (copiada al agendar) |
 endlegend
 
 ' ─────────────────────────────────────────────────────────────
-' Catálogo configurable
+' Catálogo configurable de estados de cita (espeja crm.lead_status)
 ' ─────────────────────────────────────────────────────────────
 entity "appointment_status" as t_as {
   * id : varchar(36) <<PK>>
@@ -46,7 +47,26 @@ entity "appointment_status" as t_as {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Cita
+' Matriz de transiciones configurable (ADR-008) — PK·A·T, SIN SoftDelete
+' Espeja crm.lead_status_transition
+' ─────────────────────────────────────────────────────────────
+entity "appointment_status_transition" as t_ast {
+  * id : varchar(36) <<PK>>
+  --
+  * from_status_id : varchar(36) <<FK→appointment_status, indexed>>
+  * to_status_id : varchar(36) <<FK→appointment_status>>
+  --
+  ' UNIQUE (from_status_id, to_status_id)
+  ' SIN SoftDelete — config: deshabilitar arista = active=false o DELETE
+  * active : boolean
+  * created_on : timestamptz
+  * created_by : varchar(36)
+  * updated_on : timestamptz
+  * updated_by : varchar(36)
+}
+
+' ─────────────────────────────────────────────────────────────
+' Cita — unidad persistida del calendario (ADR-006)
 ' ─────────────────────────────────────────────────────────────
 entity "appointment" as t_appt {
   * id : varchar(36) <<PK>>
@@ -54,13 +74,13 @@ entity "appointment" as t_appt {
   * person_id : varchar(36) <<FK→person>>
   * doctor_id : varchar(36) <<FK→doctor>>
   * office_id : varchar(36) <<FK→office>>
-  * branch_id : varchar(36) <<FK→branch>>      ' denormalizado de office.branch_id
+  * branch_id : varchar(36) <<FK→branch, denorm>>
   * product_id : varchar(36) <<FK→product>>
-  * scheduled_for : timestamptz                ' UTC
-  * duration_min : int                          ' copiado de product.duration_min
+  * scheduled_for : timestamptz                ' inicio, UTC
+  * duration_min : int <<denorm>>              ' copiado de product.duration_min
   * status_id : varchar(36) <<FK→appointment_status>>
-  * source : varchar(20)                        ' bot / advisor / admin / import / api
-  previous_appointment_id : varchar(36) <<nullable, FK→appointment>>
+  * source : varchar(20)                       ' bot|advisor|admin|import|api
+  previous_appointment_id : varchar(36) <<nullable, FK→appointment (self)>>
   notes : text <<nullable>>
   cancellation_reason : varchar(255) <<nullable>>
   cancelled_at : timestamptz <<nullable>>
@@ -73,16 +93,9 @@ entity "appointment" as t_appt {
   '   (office_id, scheduled_for)
   '   (person_id, scheduled_for)
   '   (branch_id, scheduled_for, status_id)
-  ' Invariantes en service (no constraint):
-  '   1) office.branch_id == branch_id
-  '   2) office.verticals ∋ product.service.vertical_id
-  '   3) doctor.branches ∋ branch_id
-  '   4) doctor.verticals ∋ product.service.vertical_id
-  '   5) No conflict de tiempo del doctor (rangos no solapan en estados activos)
-  '   6) No conflict de tiempo del office
-  '   7) Cabe en DoctorAvailabilityPattern y no bloqueado por Override(false)
-  '   8) Cabe en OfficeOperatingHours y no bloqueado por Closure(true)
-  '   9) Si product.min_hours_to_cancel set, validar al cancelar
+  ' NO se soft-deletea al cerrar (diverge de crm): los finales
+  ' (ATTENDED/NO_SHOW/CANCELLED/RESCHEDULED) quedan vivos como
+  ' registro histórico. deleted_at = solo "error de captura".
   * active : boolean
   deleted_at : timestamptz <<nullable>>
   * created_on : timestamptz
@@ -92,19 +105,20 @@ entity "appointment" as t_appt {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Historial inmutable (estados)
+' Historial inmutable de estado — PK·A·T, SIN SoftDelete
+' Espeja crm.lead_status_history
 ' ─────────────────────────────────────────────────────────────
 entity "appointment_status_history" as t_ash {
   * id : varchar(36) <<PK>>
   --
-  * appointment_id : varchar(36) <<FK→appointment>>
+  * appointment_id : varchar(36) <<FK→appointment, indexed>>
   from_status_id : varchar(36) <<nullable, FK→appointment_status>>
   * to_status_id : varchar(36) <<FK→appointment_status>>
   * changed_at : timestamptz
   changed_by : varchar(36) <<nullable, FK→user>>
   reason : varchar(255) <<nullable>>
   --
-  ' SIN SoftDelete
+  ' SIN SoftDelete — audit trail honesto (append-only)
   * active : boolean
   * created_on : timestamptz
   * created_by : varchar(36)
@@ -113,20 +127,20 @@ entity "appointment_status_history" as t_ash {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Traza genérica de cambios (no estados)
+' Traza de cambios in-place de columnas NO-estado — PK·A·T, SIN SoftDelete
 ' ─────────────────────────────────────────────────────────────
 entity "appointment_change_log" as t_acl {
   * id : varchar(36) <<PK>>
   --
-  * appointment_id : varchar(36) <<FK→appointment>>
-  * field_name : varchar(60)            ' doctor_id / office_id / scheduled_for / notes / ...
+  * appointment_id : varchar(36) <<FK→appointment, indexed>>
+  * field_name : varchar(60)            ' doctor_id / office_id / product_id / notes / ...
   previous_value : text <<nullable>>
   new_value : text <<nullable>>
   * changed_at : timestamptz
   changed_by : varchar(36) <<nullable, FK→user>>
   reason : varchar(255) <<nullable>>
   --
-  ' SIN SoftDelete
+  ' SIN SoftDelete — audit trail honesto
   * active : boolean
   * created_on : timestamptz
   * created_by : varchar(36)
@@ -135,7 +149,7 @@ entity "appointment_change_log" as t_acl {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Externas (referencia)
+' Entidades externas (referencia) — TODAS YA existen en prod (FK real)
 ' ─────────────────────────────────────────────────────────────
 entity "person" as t_per <<external>> #lightgrey {
   ' Módulo: crm
@@ -163,7 +177,7 @@ entity "branch" as t_br <<external>> #lightgrey {
 entity "product" as t_prod <<external>> #lightgrey {
   ' Módulo: catalog
   * id : varchar(36) <<PK>>
-  * duration_min : int <<nullable>>
+  duration_min : int <<nullable>>
   min_hours_to_cancel : int <<nullable>>
   ...
 }
@@ -175,27 +189,30 @@ entity "user" as t_user <<external>> #lightgrey {
 entity "lead_activity" as t_la <<external>> #lightgrey {
   ' Módulo: crm
   * id : varchar(36) <<PK>>
-  related_appointment_id : varchar(36) <<FK>>
+  related_appointment_id : varchar(36) <<nullable, FK aditiva→appointment>>
   ...
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Relaciones
+' Relaciones (crow's foot)
 ' ─────────────────────────────────────────────────────────────
 
-' Catálogo → Appointment + History
+' Catálogo → Appointment (status actual) + History (from/to)
 t_as ||--o{ t_appt : "status"
 t_as ||--o{ t_ash  : "from / to"
 
-' Appointment → Person / Doctor / Office / Branch / Product
+' Matriz de transiciones → catálogo (from / to)
+t_as ||--o{ t_ast : "from / to\n(arista permitida)"
+
+' Appointment → Person / Doctor / Office / Branch / Product (FKs reales)
 t_per  ||--o{ t_appt
 t_doc  ||--o{ t_appt
 t_off  ||--o{ t_appt
 t_br   ||--o{ t_appt
 t_prod ||--o{ t_appt
 
-' Self-ref: reagendamiento
-t_appt |o--o{ t_appt : "previous_appointment_id"
+' Self-ref: cadena de reagendamiento
+t_appt |o--o{ t_appt : "previous_appointment_id\n(reschedule chain)"
 
 ' Audit / cancellation
 t_user |o--o{ t_appt : "cancelled_by"
@@ -208,62 +225,113 @@ t_appt ||--o{ t_acl
 t_user |o--o{ t_ash : "changed_by"
 t_user |o--o{ t_acl : "changed_by"
 
-' LeadActivity (crm) referencia a Appointment
-t_appt ||--o{ t_la : "APPOINTMENT_*\n(emitido en crm)"
+' LeadActivity (crm) referencia a Appointment (FK aditiva que crea esta migración)
+t_appt ||--o{ t_la : "APPOINTMENT_BOOKED/\nCANCELLED/ATTENDED\n(emitido en crm)"
 
 ' ─────────────────────────────────────────────────────────────
 ' Notas
 ' ─────────────────────────────────────────────────────────────
 
 note right of t_appt
-  **Unidad persistida del calendario**
-  No hay tabla de slots — la
-  disponibilidad se calcula on-the-fly.
-  Ver ADR-006.
-
-  ""duration_min"" se copia del product
-  al agendar (estable ante edits del product).
-
-  ""branch_id"" denormalizado de
-  office.branch_id para queries por sede.
+  **Unidad persistida del calendario (ADR-006)**
+  No hay tabla de slots — la disponibilidad
+  se calcula on-the-fly (ver nota de fuentes).
+  ""duration_min"" se COPIA de
+  ""product.duration_min"" al agendar (fallback
+  ""doctor.slot_duration_min""); reserva el rango
+  ""[scheduled_for, scheduled_for + duration_min)""
+  para el chequeo de conflicto.
+  ""branch_id"" denorm de ""office.branch_id"" (estable;
+  un office no se mueve de sede) → habilita el índice
+  ""(branch_id, scheduled_for, status_id)"".
 end note
 
-note right of t_appt
+note bottom of t_appt
   **Reagendamiento**
-  Crea NUEVA appointment con
-  ""previous_appointment_id"" FK
-  a la anterior; la vieja queda en
-  estado RESCHEDULED (final).
-  Cadena visible en queries hacia adelante.
+  ""/reschedule"" crea una NUEVA appointment con
+  ""previous_appointment_id"" → la anterior; la vieja
+  pasa a ""RESCHEDULED"" (final) en la misma tx.
+  ""scheduled_for"" no se edita in-place.
+  **NO se soft-deletea al cerrar** (diverge de crm):
+  los finales quedan vivos como histórico.
+end note
+
+note bottom of t_ast
+  **Matriz de transiciones (ADR-008)**
+  Aristas ""from → to"" permitidas del grafo de
+  estados. UNIQUE ""(from_status_id, to_status_id)"".
+  Seedeada con base + editable por admin
+  (APPOINTMENT_STATUSES_WRITE).
+  ""PK·A·T"" SIN SoftDelete (config, no dato):
+  deshabilitar arista = ""active=false"" o DELETE.
+  Ausencia de arista → ""APPOINTMENT_TRANSITION_NOT_ALLOWED"" (400).
+end note
+
+note right of t_as
+  **Catálogo configurable — estados seed (8)**
+  ""(code, color, flags, display_order)"":
+  • SCHEDULED   (is_initial)         #3B82F6
+  • CONFIRMED                        #06B6D4
+  • CHECKED_IN                       #F59E0B
+  • IN_PROGRESS (is_active_attention)#8B5CF6
+  • ATTENDED    (is_final)           #22C55E
+  • NO_SHOW     (is_final)           #EF4444
+  • CANCELLED   (is_final)           #6B7280
+  • RESCHEDULED (is_final)           #9CA3AF
+  ""code"" MAYÚSCULAS (sin pattern slug restrictivo).
+  EXACTAMENTE un ""is_initial"" (service →
+  ""MULTIPLE_INITIAL_STATUS""). El código no hardcodea codes.
 end note
 
 note bottom of t_ash
-  **Inmutable**
-  Cada transición de status agrega
-  una fila. ""changed_by NULL"" = sistema/bot.
+  **Inmutable (auditoría honesta)**
+  ""PK·A·T"" SIN SoftDelete. Cada transición de
+  estado agrega fila; ""from_status_id"" es NULL en
+  la primera (creación). ""changed_by"" NULL = bot/sistema.
+  Sin relationship al padre (acceso por
+  ""appointment_id"" + batch maps).
 end note
 
 note bottom of t_acl
   **Inmutable**
-  Traza de cambios in-place
-  (doctor, office, notes).
-  Cambios de ""status_id"" van a
-  appointment_status_history,
-  no acá.
-  ""scheduled_for"" no se edita
-  in-place — eso usa /reschedule.
+  Cambios in-place de columnas NO-estado
+  (""doctor_id""/""office_id""/""product_id""/""notes""…).
+  Los cambios de ""status_id"" van a
+  ""appointment_status_history"", no acá.
+  ""scheduled_for"" no se edita in-place (/reschedule).
 end note
 
-note right of t_as
-  **Estados seed (8)**:
-  SCHEDULED (initial)
-  CONFIRMED
-  CHECKED_IN
-  IN_PROGRESS (active_attention=true)
-  ATTENDED (final)
-  NO_SHOW (final)
-  CANCELLED (final)
-  RESCHEDULED (final)
+note as N_AVAIL
+  **Disponibilidad ON-THE-FLY — NO es una tabla (ADR-006/007)**
+  La única unidad persistida del calendario es ""appointment"".
+  ""compute_available_slots(doctor, product, branch?, office?, from, to)""
+  la calcula al vuelo (NO se persiste) combinando insumos de otros módulos:
+  • ""staff.DoctorAvailability"" — BLOQUES CONCRETOS por fecha (ADR-007;
+    reemplazó Pattern+Override, eliminados)
+  • ""staff.Doctor.slot_duration_min"" — grano del slot
+  • ""clinic.OfficeOperatingHours"" — patrón semanal (resta)
+  • ""clinic.OfficeClosure"" — cierres ad-hoc (resta is_closed=true / suma=false)
+  • ""clinic.office_vertical"" — filtra office apto para el vertical del producto
+  • ""clinic.Branch.timezone"" — TZ para derivar weekday y convertir local↔UTC
+  • ""catalog.Product.duration_min"" — N=ceil(duration/slot) slots contiguos
+  • ""appointment"" en estados activos (NOT IN CANCELLED/NO_SHOW/RESCHEDULED) — ocupan tiempo
 end note
+N_AVAIL .. t_appt
+
+note as N_FK
+  **FKs cross-módulo reales (ADR-009)**
+  A diferencia de crm (que dejó columnas
+  ""varchar(36)"" sin constraint), TODAS las tablas
+  destino de scheduling YA existen en prod →
+  ""appointment"" declara ""ForeignKey"" reales hacia
+  ""person""/""doctor""/""office""/""branch""/""product""/""user""
+  + la self-FK ""previous_appointment_id"". Lo que NO
+  se declara es ""relationship"" ORM cross-módulo (se
+  resuelven por id + batch maps, cero N+1).
+  Esta migración cierra además de forma ADITIVA la FK
+  forward ""crm.lead_activity.related_appointment_id → appointment""
+  que crm dejó pendiente.
+end note
+N_FK .. t_la
 
 @enduml

@@ -393,7 +393,7 @@ Además de permisos, hay tres catálogos en BD que se seedean al boot. Las lista
 - **LeadStatus** seed (7 entries) — [`crm/README.md`](crm/README.md#leadstatus-catálogo-configurable).
 - **CustomerStatus** seed (5 entries) — [`crm/README.md`](crm/README.md#customerstatus-catálogo-configurable).
 - **Matriz de transiciones** lead/customer (`_seed_lead_transition_matrix` / `_seed_customer_transition_matrix`, idempotentes) — base seedeada sobre los estados ([ADR-008](../decisions/ADR-008-configurable-status-transition-matrix.md); detalle en [`crm/backend.md`](crm/backend.md)).
-- **AppointmentStatus** seed (8 entries) — [`scheduling.md`](scheduling.md#appointmentstatus-catlogo).
+- **AppointmentStatus** seed (8 entries) + **matriz de transiciones de cita** (`appointment_status_transition`, espeja la de crm/ADR-008) — [`scheduling/README.md`](scheduling/README.md) (detalle en [`scheduling/backend.md`](scheduling/backend.md)).
 
 Cada uno se implementa como `_seed_<catalog>_statuses(db, actor_id)` análogo a `_seed_permissions`, idempotente.
 

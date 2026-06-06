@@ -79,8 +79,13 @@ El catálogo de estados (`LeadStatus`/`CustomerStatus`) sigue siendo configurabl
 - La UI de catálogos (`/crm/estados-lead`, `/crm/estados-cliente`) incluye el editor de transiciones permitidas por estado.
 - Actualizar el seed consolidado [`_seed-and-roles.md`](../modules/_seed-and-roles.md) para incluir `_seed_lead_transition_matrix` / `_seed_customer_transition_matrix` en `seed()` y en el checklist de verificación.
 
+## Actualización (2026-06-06) — el patrón se reusa en `scheduling`
+
+El módulo `scheduling` (#7) adopta **el mismo patrón** para el ciclo de vida de la **cita**: una tabla `appointment_status_transition (from_status_id, to_status_id; UNIQUE(from,to); Active·Timestamp, sin SoftDelete)` espeja `lead_status_transition`/`customer_status_transition`, con `repo.is_allowed(from,to)` → `APPOINTMENT_TRANSITION_NOT_ALLOWED` (400). El catálogo `AppointmentStatus` lleva `is_initial`/`is_final` + `is_active_attention` (en vez de `is_won`). Los shortcuts del service (`confirm`/`check_in`/`start`/`attend`/`no_show`/`cancel`/`reschedule`) consultan la matriz; los **side-effects** (attend→promote a cliente, cancel→`min_hours_to_cancel`, reschedule→nueva cita) viven en el service, no en la matriz. **Divergencia deliberada con crm**: alcanzar un estado `is_final` en scheduling **NO soft-deletea** la cita (la fila vive como registro histórico); en crm sí soft-deletea la fila viva del lifecycle. Detalle en [`docs/modules/scheduling/`](../modules/scheduling/README.md) (decisión confirmada con el usuario 2026-06-06).
+
 ## Referencias
 
 - [ADR-003](ADR-003-person-with-separated-lifecycle-statuses.md) — Person + estados separados (este ADR supersede su nota abierta sobre reglas de transición; el resto sigue vigente).
+- [`docs/modules/scheduling/README.md`](../modules/scheduling/README.md) — `scheduling` reusa esta matriz para `AppointmentStatus`.
 - Fichas del módulo: [`crm/README.md`](../modules/crm/README.md) (sección "Matriz de transiciones configurable"), [`crm/backend.md`](../modules/crm/backend.md) (modelos `*_status_transition`, service de transición, seed), [`crm/ui.md`](../modules/crm/ui.md) (editor de matriz), [`crm/frontend.md`](../modules/crm/frontend.md).
 - [ADR-009](ADR-009-forward-fk-deferred-cross-module.md) — la otra decisión nueva de `crm` (FKs forward diferidas).

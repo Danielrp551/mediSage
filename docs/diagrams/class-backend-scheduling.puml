@@ -1,7 +1,8 @@
 @startuml class-backend-scheduling
-' Propósito: jerarquía OO del módulo scheduling — modelos, repos, services y availability engine
-' Última actualización: 2026-05-28
-' Código de referencia: backend/app/modules/scheduling/
+' Propósito: jerarquía OO del módulo scheduling (modelo FINAL, 5 entidades) — catálogo de estados + matriz de transiciones configurable (ADR-008),
+'            Appointment (unidad persistida del calendario), dos audit-trails inmutables, repos + services (availability on-the-fly ADR-006/007 + lifecycle + bot facade).
+' Última actualización: 2026-06-06 — modelo final (5 entidades + matriz; disponibilidad on-the-fly ADR-006/007)
+' Código de referencia: backend/app/modules/scheduling/ y backend/app/shared/
 
 !theme plain
 skinparam classAttributeIconSize 0
@@ -14,171 +15,123 @@ hide empty members
 title Class — Backend · Scheduling module
 
 ' ─────────────────────────────────────────────────────────────
-' Shared
+' Shared layer — mixins y base genérica
 ' ─────────────────────────────────────────────────────────────
 package "app.shared" <<Frame>> {
   together {
-    class PrimaryKeyMixin <<mixin>>
-    class ActiveMixin    <<mixin>>
-    class SoftDeleteMixin <<mixin>>
-    class TimestampMixin  <<mixin>>
+    class PrimaryKeyMixin <<mixin>> {
+      +id: str <<UUID>>
+    }
+    class ActiveMixin <<mixin>> {
+      +active: bool
+    }
+    class SoftDeleteMixin <<mixin>> {
+      +deleted_at: datetime?
+    }
+    class TimestampMixin <<mixin>> {
+      +created_on: datetime
+      +created_by: str
+      +updated_on: datetime
+      +updated_by: str
+    }
   }
+
   abstract class "BaseRepository<ModelT>" as BaseRepository {
-    +ALLOWED_FIELDS
-    +get_by_id / get_paginated / create / update / soft_delete
+    +ALLOWED_FIELDS: set<str>
+    +model: type<ModelT>
+    --
+    +get_by_id(db, id, ...): ModelT?
+    +get_paginated(db, query_request, load): tuple<list, int>
+    +create(db, obj): ModelT
+    +update(db, obj, changes): ModelT
+    +soft_delete(db, obj): None
   }
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Models
-' ─────────────────────────────────────────────────────────────
-package "app.modules.scheduling.models" <<Frame>> {
-  class AppointmentStatus <<entity, catalog>> {
-    +code: str <<unique>>
-    +name: str
-    +description: str?
-    +color: str?
-    +is_initial: bool = false
-    +is_final: bool = false
-    +is_active_attention: bool = false
-    +display_order: int = 0
-  }
-
-  class Appointment <<entity>> {
-    +person_id: str <<FK>>
-    +doctor_id: str <<FK>>
-    +office_id: str <<FK>>
-    +branch_id: str <<FK>>        ' denormalizado
-    +product_id: str <<FK>>
-    +scheduled_for: datetime      ' UTC
-    +duration_min: int
-    +status_id: str <<FK>>
-    +source: str                  ' enum
-    +previous_appointment_id: str? <<FK self>>
-    +notes: str?
-    +cancellation_reason: str?
-    +cancelled_at: datetime?
-    +cancelled_by: str? <<FK>>
-    +confirmed_at: datetime?
-    +attended_at: datetime?
-  }
-
-  class AppointmentStatusHistory <<entity, immutable>> {
-    +appointment_id: str <<FK>>
-    +from_status_id: str? <<FK>>
-    +to_status_id: str <<FK>>
-    +changed_at: datetime
-    +changed_by: str? <<FK>>
-    +reason: str?
-    --
-    ' SIN SoftDelete
-  }
-
-  class AppointmentChangeLog <<entity, immutable>> {
-    +appointment_id: str <<FK>>
-    +field_name: str
-    +previous_value: str?
-    +new_value: str?
-    +changed_at: datetime
-    +changed_by: str? <<FK>>
-    +reason: str?
-    --
-    ' SIN SoftDelete
-  }
-}
-
-' ─────────────────────────────────────────────────────────────
-' Enums
+' Enums (en código, NO en BD — varchar plano en la columna)
 ' ─────────────────────────────────────────────────────────────
 package "app.modules.scheduling.enums" <<Frame>> {
   enum AppointmentSource <<enum>> {
     bot
     advisor
     admin
-    import
+    import_   ' value = "import" (palabra reservada en Python)
     api
   }
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Repositories
+' Domain models — SQLAlchemy 2.0 ORM (5 entidades)
 ' ─────────────────────────────────────────────────────────────
-package "app.modules.scheduling.repositories" <<Frame>> {
-  class AppointmentStatusRepository {
-    +ALLOWED_FIELDS
-    +get_by_code(db, code): AppointmentStatus?
-    +get_initial(db): AppointmentStatus
-    +list_options(db): list
+package "app.modules.scheduling.models" <<Frame>> {
+
+  class AppointmentStatus <<entity, catalog>> {
+    +code: str <<unique>>   ' MAYÚSCULAS, sin pattern slug
+    +name: str
+    +description: str?
+    +color: str?
+    +is_initial: bool = false   ' exactamente uno
+    +is_final: bool = false
+    +is_active_attention: bool = false
+    +display_order: int = 0
   }
-  class AppointmentRepository {
-    +ALLOWED_FIELDS
+
+  class AppointmentStatusTransition <<entity, matrix>> {
+    +from_status_id: str <<FK→appointment_status>>
+    +to_status_id: str <<FK→appointment_status>>
     --
-    +list_by_doctor_in_range(db, doctor_id, frm, to, statuses?): list
-    +list_by_office_in_range(db, office_id, frm, to, statuses?): list
-    +list_by_person(db, person_id, query): tuple<list, int>
-    +get_full(db, appointment_id): Appointment?
-    +check_conflicts(db, doctor_id, office_id, scheduled_for, duration_min, exclude_id?): list
+    ' UNIQUE (from, to). PK·A·T — SIN SoftDeleteMixin (config, ADR-008)
   }
-  class AppointmentStatusHistoryRepository {
-    +list_for_appointment(db, appointment_id): list
-    +append(db, entry): AppointmentStatusHistory
+
+  class Appointment <<entity>> {
+    +person_id: str <<FK→person>>
+    +doctor_id: str <<FK→doctor>>
+    +office_id: str <<FK→office>>
+    +branch_id: str <<FK→branch>>   ' denorm de office.branch_id
+    +product_id: str <<FK→product>>
+    +scheduled_for: datetime        ' UTC
+    +duration_min: int              ' copiado de product.duration_min
+    +status_id: str <<FK→appointment_status>>
+    +source: str                    ' AppointmentSource slug
+    +previous_appointment_id: str? <<FK self>>
+    +notes: str?
+    +cancellation_reason: str?
+    +cancelled_at: datetime?
+    +cancelled_by: str? <<FK→user>>
+    +confirmed_at: datetime?
+    +attended_at: datetime?
+    --
+    ' Sin relationship ORM cross-módulo ni a la self-FK
+    ' (todo por id + batch maps). NO se soft-deletea al cerrar.
   }
-  class AppointmentChangeLogRepository {
-    +list_for_appointment(db, appointment_id): list
-    +append(db, entry): AppointmentChangeLog
+
+  class AppointmentStatusHistory <<entity, immutable>> {
+    +appointment_id: str <<FK→appointment>>
+    +from_status_id: str? <<FK→appointment_status>>   ' NULL en la creación
+    +to_status_id: str <<FK→appointment_status>>
+    +changed_at: datetime
+    +changed_by: str? <<FK→user>>   ' NULL = bot/sistema
+    +reason: str?
+    --
+    ' PK·A·T — SIN SoftDeleteMixin (audit trail honesto)
+  }
+
+  class AppointmentChangeLog <<entity, immutable>> {
+    +appointment_id: str <<FK→appointment>>
+    +field_name: str   ' doctor_id / office_id / product_id / notes / ...
+    +previous_value: str?
+    +new_value: str?
+    +changed_at: datetime
+    +changed_by: str? <<FK→user>>
+    +reason: str?
+    --
+    ' PK·A·T — SIN SoftDeleteMixin. status_id NO va acá (→ History)
   }
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Services
-' ─────────────────────────────────────────────────────────────
-package "app.modules.scheduling.services" <<Frame>> {
-  class "appointment_status.py" as as_svc <<module>> {
-    +list_options(db) / list_paginated / create / update / soft_delete
-  }
-  class "appointment.py" as appt_svc <<module>> {
-    +get_by_id(db, appointment_id)
-    +list_paginated(db, query)
-    +list_for_person(db, person_id, query)
-    +list_for_doctor_me(db, current_user, query)
-    --
-    +create(db, payload, actor_id, source='advisor')
-    +update(db, appointment_id, payload, actor_id)
-    +soft_delete(db, appointment_id, actor_id)
-    --
-    +transition(db, appointment_id, to_status_id, actor_id, reason?)
-    +confirm / check_in / start / attend / mark_no_show (shortcuts)
-    +cancel(db, appointment_id, actor_id, reason?, override=false)
-    +reschedule(db, appointment_id, new_payload, actor_id, reason?)
-    --
-    ' attend dispara crm.promote_to_customer si aplica
-    ' Valida invariantes 1-9 antes de persistir
-  }
-  class "appointment_status_history.py" as ash_svc <<module>> {
-    +list_for_appointment(db, appointment_id)
-    +append(db, ...)  ' interno
-  }
-  class "appointment_change_log.py" as acl_svc <<module>> {
-    +list_for_appointment(db, appointment_id)
-    +append(db, ...)  ' interno
-  }
-  class "availability.py" as av_svc <<module>> {
-    +compute_available_slots(db, doctor_id, product_id, branch_id?, office_id?, frm, to): list<AvailabilitySlot>
-    +check_slot(db, doctor_id, office_id, scheduled_for, duration_min): bool
-    --
-    ' Algoritmo descrito en docs/modules/scheduling.md
-  }
-  class "bot_facade.py" as bot_svc <<module>> {
-    +book_from_bot(db, payload, bot_context): Appointment
-    +cancel_from_bot(db, appointment_id, bot_context, reason?): Appointment
-    --
-    ' Entrypoints sistémicos (sin CurrentAuth)
-    ' Tools del módulo bots los invocan vía TOOL_REGISTRY
-  }
-}
-
-' ─────────────────────────────────────────────────────────────
-' Externas
+' Externos (informativo) — TODOS YA existen en prod (FK real, sin relationship)
 ' ─────────────────────────────────────────────────────────────
 class "Person" as Person <<entity,external>> #lightgrey
 class "Doctor" as Doctor <<entity,external>> #lightgrey
@@ -188,7 +141,100 @@ class "Product" as Product <<entity,external>> #lightgrey
 class "User" as User <<entity,external>> #lightgrey
 
 ' ─────────────────────────────────────────────────────────────
-' Herencia mixins
+' Repositories — un repo por entidad
+' ─────────────────────────────────────────────────────────────
+package "app.modules.scheduling.repositories" <<Frame>> {
+  class AppointmentStatusRepository {
+    +ALLOWED_FIELDS: set  ' code/name/flags/display_order/active/timestamps
+    --
+    +get_by_code(db, code): AppointmentStatus?
+    +get_initial(db): AppointmentStatus?
+    +count_initial(db, exclude_id?): int
+    +count_using_status(db, status_id): int  ' guard DELETE → IN_USE
+    +get_by_ids(db, ids): list  ' batch badge
+  }
+  class AppointmentStatusTransitionRepository {
+    +is_allowed(db, from_id, to_id): bool
+    +list_outgoing(db, from_id): list<str>
+    +replace_outgoing(db, from_id, to_ids): None
+  }
+  class AppointmentRepository {
+    +ALLOWED_FIELDS: set  ' SOLO columnas reales (lección cd10c78)
+    --
+    +list_overlapping_for_doctor(db, doctor_id, start, end, blocking_ids, exclude_id?, for_update?): list
+    +list_overlapping_for_office(db, office_id, start, end, blocking_ids, exclude_id?, for_update?): list
+    +list_in_range(db, doctor_id?, office_id?, branch_id?, start, end, status_ids?): list
+    +list_for_doctor_paginated(db, query_request, doctor_id): tuple<list, int>  ' /me, anti-IDOR
+    --
+    ' Batch maps (sin N+1):
+    +person_name_map(db, ids) / doctor_name_map(db, ids)
+    +office_map(db, ids) / branch_name_map(db, ids) / product_name_map(db, ids)
+  }
+  class AppointmentStatusHistoryRepository {
+    +ALLOWED_FIELDS = set()  ' sin /list
+    +list_for_appointment(db, appointment_id): list  ' changed_at asc
+  }
+  class AppointmentChangeLogRepository {
+    +ALLOWED_FIELDS = set()
+    +list_for_appointment(db, appointment_id): list  ' changed_at asc
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Services — módulos funcionales (NO clases)
+' ─────────────────────────────────────────────────────────────
+package "app.modules.scheduling.services" <<Frame>> {
+  class "appointment_status.py" as as_svc <<module>> {
+    +list_options(db) / list_paginated(db, query)
+    +get_by_id(db, status_id)
+    +create/update/soft_delete(...)  ' 1 is_initial (MULTIPLE_INITIAL_STATUS), guard *_IN_USE
+    +get_transitions(db, status_id) / set_transitions(db, status_id, to_ids, actor_id)
+  }
+  class "appointment_status_transition.py" as ast_svc <<module>> {
+    +is_allowed(db, from_id, to_id): bool
+    +list_outgoing(db, from_id) / replace_outgoing(db, from_id, to_ids, actor_id)
+    --
+    ' Matriz ADR-008 — ausencia de arista ⟹ APPOINTMENT_TRANSITION_NOT_ALLOWED (en transition.py)
+  }
+  class "availability.py" as av_svc <<module>> {
+    +compute_available_slots(db, doctor_id, product_id, branch_id?, office_id?, from_date, to_date): AvailabilityResponse
+    +check_slot(db, doctor_id, office_id, product_id, scheduled_for): CheckSlotResponse
+    --
+    ' ADR-006/007 — NO persiste. Lee DoctorAvailability (bloques concretos),
+    ' OfficeOperatingHours/Closure, office_vertical, slot_duration_min,
+    ' Product.duration_min y appointment activas. TZ = branch.timezone.
+  }
+  class "appointment.py" as appt_svc <<module>> {
+    +get_by_id(db, appointment_id) / list_paginated(db, query)
+    +list_for_doctor_me(db, current, query)  ' anti-IDOR scoped
+    +calendar(db, doctor_id?, office_id?, branch_id?, from, to)  ' citas + free_slots
+    +create(db, payload, actor_id)  ' 9 invariantes + FOR UPDATE → SLOT_TAKEN
+    +update(db, appointment_id, payload, actor_id)  ' no-estado → ChangeLog
+    +soft_delete(db, appointment_id, actor_id)  ' "error de captura"
+    +reschedule(db, appointment_id, payload, actor_id)  ' marca vieja RESCHEDULED + nueva tx
+    --
+    ' _validate_booking_invariants (1..8) + _has_overlap (FOR UPDATE)
+  }
+  class "transition.py" as tr_svc <<module>> {
+    +transition(db, appointment_id, to_status_id, actor_id, reason?)  ' valida matriz
+    +confirm / check_in / start / attend / no_show (shortcuts por code)
+    +cancel(db, appointment_id, payload, actor)  ' inv #9 CANCEL_TOO_LATE (+ override)
+    --
+    ' attend → crm.promote_to_customer (atómico) + LeadActivity(APPOINTMENT_ATTENDED)
+    ' Side-effects por code del destino (confirmed_at/cancelled_at/attended_at)
+  }
+  class "bot_facade.py" as bot_svc <<module>> {
+    +book_from_bot(db, ctx, doctor_id, office_id, product_id, ...): Appointment
+    +cancel_from_bot(db, ctx, appointment_id): Appointment
+    --
+    ' SYSTEM, source='bot', respeta TODOS los invariantes (sin override).
+    ' bots/services/engine/tools/scheduling.py invoca vía TOOL_REGISTRY:
+    ' check_availability / book_appointment / cancel_appointment
+  }
+}
+
+' ─────────────────────────────────────────────────────────────
+' Herencia de mixins (representativa — todas llevan PK·A·T)
 ' ─────────────────────────────────────────────────────────────
 PrimaryKeyMixin <|-- AppointmentStatus
 ActiveMixin     <|-- AppointmentStatus
@@ -200,106 +246,168 @@ ActiveMixin     <|-- Appointment
 SoftDeleteMixin <|-- Appointment
 TimestampMixin  <|-- Appointment
 
+PrimaryKeyMixin <|-- AppointmentStatusTransition
 PrimaryKeyMixin <|-- AppointmentStatusHistory
 PrimaryKeyMixin <|-- AppointmentChangeLog
 
 note bottom of TimestampMixin
-  **Mixins por entidad**:
-  ""AppointmentStatus"" y ""Appointment"":
-  los 4 mixins (con SoftDelete).
-
-  ""AppointmentStatusHistory"" y
-  ""AppointmentChangeLog"":
-  PrimaryKey + Active + Timestamp.
-  SIN SoftDelete — audit trail inmutable.
+  **Mixins por entidad (modelo final)**
+  • Los 4 mixins (con ""SoftDeleteMixin""):
+    ""AppointmentStatus"", ""Appointment"".
+  • PK·A·T (SIN ""SoftDeleteMixin""):
+    ""AppointmentStatusTransition"" (matriz config:
+    deshabilitar = ""active=false"" o DELETE),
+    ""AppointmentStatusHistory"" y ""AppointmentChangeLog""
+    (audit trail inmutable / append-only).
+  (Sólo se dibujan las herencias de ""AppointmentStatus""
+  y ""Appointment"".)
 end note
 
-' Repos extienden BaseRepository
-BaseRepository <|-- AppointmentStatusRepository           : "<AppointmentStatus>"
-BaseRepository <|-- AppointmentRepository                 : "<Appointment>"
-BaseRepository <|-- AppointmentStatusHistoryRepository    : "<AppointmentStatusHistory>"
-BaseRepository <|-- AppointmentChangeLogRepository        : "<AppointmentChangeLog>"
+' ─────────────────────────────────────────────────────────────
+' Repos extienden el genérico BaseRepository<ModelT>
+' ─────────────────────────────────────────────────────────────
+BaseRepository <|-- AppointmentStatusRepository            : "<AppointmentStatus>"
+BaseRepository <|-- AppointmentStatusTransitionRepository  : "<AppointmentStatusTransition>"
+BaseRepository <|-- AppointmentRepository                  : "<Appointment>"
+BaseRepository <|-- AppointmentStatusHistoryRepository     : "<AppointmentStatusHistory>"
+BaseRepository <|-- AppointmentChangeLogRepository         : "<AppointmentChangeLog>"
 
-' Relaciones de dominio
-AppointmentStatus "1" -- "0..*" Appointment : "status"
-AppointmentStatus "1" -- "0..*" AppointmentStatusHistory : "from / to"
+' ─────────────────────────────────────────────────────────────
+' Relaciones de dominio (FK; relationship solo intra-módulo vía status badge batch)
+' ─────────────────────────────────────────────────────────────
+AppointmentStatus "1" -- "0..*" Appointment                : "status"
+AppointmentStatus "1" -- "0..*" AppointmentStatusHistory   : "from / to"
 
+' Matriz de transiciones (ADR-008): aristas from→to del grafo de estados
+AppointmentStatus "1" -- "0..*" AppointmentStatusTransition : "from"
+AppointmentStatus "1" -- "0..*" AppointmentStatusTransition : "to"
+
+Appointment "1" -- "0..*" AppointmentStatusHistory
+Appointment "1" -- "0..*" AppointmentChangeLog
+Appointment "0..1" -- "0..*" Appointment : "previous_appointment_id\n(reschedule chain)"
+
+' FKs reales cross-módulo (las tablas existen) — SIN relationship ORM
 Appointment "*" -- "1" Person
 Appointment "*" -- "1" Doctor
 Appointment "*" -- "1" Office
 Appointment "*" -- "1" Branch
 Appointment "*" -- "1" Product
-Appointment "0..1" -- "0..*" Appointment : "previous_appointment_id\n(reschedule chain)"
-
 Appointment "*" -- "0..1" User : "cancelled_by"
-
-Appointment "1" -- "0..*" AppointmentStatusHistory
-Appointment "1" -- "0..*" AppointmentChangeLog
-
 AppointmentStatusHistory "*" -- "0..1" User : "changed_by"
 AppointmentChangeLog     "*" -- "0..1" User : "changed_by"
 
-' Repos manejan modelos
-AppointmentStatusRepository        ..> AppointmentStatus
-AppointmentRepository              ..> Appointment
-AppointmentStatusHistoryRepository ..> AppointmentStatusHistory
-AppointmentChangeLogRepository     ..> AppointmentChangeLog
+' ─────────────────────────────────────────────────────────────
+' Repos manejan su modelo
+' ─────────────────────────────────────────────────────────────
+AppointmentStatusRepository           ..> AppointmentStatus
+AppointmentStatusTransitionRepository ..> AppointmentStatusTransition
+AppointmentRepository                 ..> Appointment
+AppointmentStatusHistoryRepository    ..> AppointmentStatusHistory
+AppointmentChangeLogRepository        ..> AppointmentChangeLog
 
-' Services usan repos
+' ─────────────────────────────────────────────────────────────
+' Services usan repos (selectivo para legibilidad)
+' ─────────────────────────────────────────────────────────────
 as_svc   ..> AppointmentStatusRepository
+as_svc   ..> AppointmentStatusTransitionRepository
+ast_svc  ..> AppointmentStatusTransitionRepository
+av_svc   ..> AppointmentRepository
+av_svc   ..> AppointmentStatusRepository
 appt_svc ..> AppointmentRepository
 appt_svc ..> AppointmentStatusRepository
 appt_svc ..> AppointmentStatusHistoryRepository
 appt_svc ..> AppointmentChangeLogRepository
-ash_svc  ..> AppointmentStatusHistoryRepository
-acl_svc  ..> AppointmentChangeLogRepository
-av_svc   ..> AppointmentRepository
+appt_svc ..> av_svc
+tr_svc   ..> AppointmentRepository
+tr_svc   ..> AppointmentStatusRepository
+tr_svc   ..> AppointmentStatusTransitionRepository
+tr_svc   ..> AppointmentStatusHistoryRepository
 bot_svc  ..> appt_svc
+bot_svc  ..> tr_svc
+bot_svc  ..> av_svc
 
+' ─────────────────────────────────────────────────────────────
 ' Notas
+' ─────────────────────────────────────────────────────────────
+note bottom of AppointmentStatusTransition
+  **Matriz configurable (ADR-008)**
+  Aristas ""from→to"" del grafo de estados.
+  ""transition.py:transition"" valida contra esta
+  tabla (""is_allowed""). El seed instala una matriz
+  base; admin la refina (APPOINTMENT_STATUSES_WRITE).
+  ""PUT /appointment-statuses/{id}/transitions""
+  reemplaza las salientes (sin SoftDelete).
+end note
+
 note right of Appointment
-  **No hay tabla de slots**
-  ""scheduled_for"" + ""duration_min""
-  + las tablas de patron / overrides
-  de otros módulos calculan
-  disponibilidad on-the-fly.
-  Ver ADR-006.
+  **Unidad persistida del calendario (ADR-006)**
+  No hay tabla de slots — la disponibilidad se
+  calcula on-the-fly. ""duration_min"" copiado de
+  ""product.duration_min"" (fallback ""slot_duration_min"").
+  ""branch_id"" denorm de ""office.branch_id"".
+  FKs cross-módulo reales (todas las tablas existen)
+  pero SIN relationship ORM (id + batch maps).
+  **NO se soft-deletea al cerrar** (diverge de crm):
+  los finales quedan vivos como histórico.
 end note
 
 note right of av_svc
-  **compute_available_slots**
-  Combina:
-  • DoctorAvailabilityPattern (staff)
-  • DoctorAvailabilityOverride (staff)
-  • OfficeOperatingHours (clinic)
-  • OfficeClosure (clinic)
-  • office_vertical filter (clinic)
-  • Doctor.slot_duration_min (staff)
-  • Appointment (no canceladas)
-
-  Algoritmo en docs/modules/scheduling.md.
-end note
-
-note right of bot_svc
-  **Entrypoint sistémico**
-  Tools del bot ""book_appointment"" y
-  ""cancel_appointment"" llaman acá
-  con BotInvocationContext.
-  Sin CurrentAuth — usa user 'sistema'
-  para audit columns.
+  **compute_available_slots (ADR-006/007)**
+  NO persiste. Combina:
+  • ""staff.DoctorAvailability"" — BLOQUES CONCRETOS
+    por fecha (ADR-007; reemplazó Pattern+Override)
+  • ""staff.Doctor.slot_duration_min"" — grano
+  • ""clinic.OfficeOperatingHours"" / ""OfficeClosure""
+  • ""clinic.office_vertical"" — filtra office apto
+  • ""clinic.Branch.timezone"" — weekday + local↔UTC
+  • ""catalog.Product.duration_min"" — N contiguos
+  • ""appointment"" activas (ocupan tiempo)
+  ""check_slot"" revalida UN slot puntual antes de book.
 end note
 
 note bottom of appt_svc
-  **Invariantes 1-9**
-  Validados en service antes de persistir.
-  Cada uno lanza ""BadRequestException""
-  con ""code"" específico:
-   • SLOT_TAKEN
-   • DOCTOR_NOT_IN_BRANCH
-   • OFFICE_NOT_APT_FOR_VERTICAL
-   • OUTSIDE_PATTERN
-   • OFFICE_CLOSED
-   • CANCEL_TOO_LATE (con permiso override evita)
+  **9 invariantes de create/reschedule (en el SERVICE, con code)**
+  1 OFFICE_NOT_IN_BRANCH · 2 OFFICE_NOT_APT_FOR_VERTICAL
+  3 DOCTOR_NOT_IN_BRANCH · 4 DOCTOR_NOT_APT_FOR_VERTICAL
+  5 SLOT_TAKEN (FOR UPDATE) · 6 OFFICE_SLOT_TAKEN
+  7 NO_AVAILABILITY_BLOCK (reemplaza el viejo OUTSIDE_PATTERN)
+  8 OFFICE_CLOSED · 9 CANCEL_TOO_LATE (en cancel; +override)
+  Otros: DOCTOR_INACTIVE (gate de nueva reserva),
+  APPOINTMENT_TRANSITION_NOT_ALLOWED, *_NOT_FOUND,
+  APPOINTMENT_STATUS_IN_USE, NO_INITIAL_STATUS.
 end note
+
+note bottom of tr_svc
+  **Transiciones + lifecycle**
+  ""transition"" valida la matriz (is_allowed) y aplica
+  side-effects por code del destino (timestamps).
+  Shortcuts: confirm/check-in/start/attend/no-show/cancel.
+  ""attend"" → ""crm.promote_to_customer"" (ATÓMICO: cierra
+  el lead is_won + crea cliente is_initial) + ""LeadActivity""
+  ""(APPOINTMENT_ATTENDED)"". ""reschedule"" vive en appointment.py.
+end note
+
+note bottom of bot_svc
+  **Bot facade (SYSTEM)**
+  ""/appointments/from-bot"" + ""/{id}/cancel-from-bot"".
+  Corre como SYSTEM, ""source='bot'"", respeta TODOS los
+  invariantes (incl. ""min_hours_to_cancel"" — el bot NO
+  hace override). ""bots/.../tools/scheduling.py"" registra
+  3 tools en ""TOOL_REGISTRY"" (check_availability /
+  book_appointment / cancel_appointment). Reschedule por
+  bot = cancel + book (sin 4ta tool en el MVP).
+end note
+
+note as N_FK
+  **FKs cross-módulo reales (ADR-009)**
+  A diferencia de crm, ""Person""/""Doctor""/""Office""/
+  ""Branch""/""Product""/""User"" YA existen en prod →
+  ""Appointment"" declara ""ForeignKey"" reales + la self-FK
+  ""previous_appointment_id"", pero SIN ""relationship"" ORM
+  (se resuelven por id + batch maps, cero N+1).
+  La migración cierra de forma ADITIVA la FK forward
+  ""crm.lead_activity.related_appointment_id → appointment"".
+end note
+N_FK .. Person
 
 @enduml

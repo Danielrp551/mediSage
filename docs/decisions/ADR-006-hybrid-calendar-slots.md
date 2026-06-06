@@ -141,7 +141,7 @@ Cada request de disponibilidad recalcula todo. Sin caché.
 ### Lo que esto nos obliga a hacer
 
 - **`scheduling.services.availability.compute_available_slots()`** es el corazón del módulo. Implementación + tests con fixtures completas.
-- **Concurrencia**: el service `create_appointment` envuelve en transacción con `SELECT FOR UPDATE`. Documentado en `docs/modules/scheduling.md`.
+- **Concurrencia**: el service `create_appointment` envuelve en transacción con `SELECT FOR UPDATE`. Documentado en `docs/modules/scheduling/backend.md`.
 - **Métrica de p95 de `availability.compute_available_slots()`** en observabilidad. Cuando supere 200ms p95, activar cache Redis.
 - **Tests obligatorios**:
   - Slots libres = patrón ∩ override_extra − override_block − closures − appointments_activas.
@@ -152,7 +152,7 @@ Cada request de disponibilidad recalcula todo. Sin caché.
 
 ## Referencias
 
-- Ficha del módulo: [`docs/modules/scheduling.md`](../modules/scheduling.md)
+- Ficha del módulo: [`docs/modules/scheduling/README.md`](../modules/scheduling/README.md) (overview + [backend](../modules/scheduling/backend.md) + [ui](../modules/scheduling/ui.md) + [frontend](../modules/scheduling/frontend.md))
 - Ficha del módulo staff: [`docs/modules/staff/README.md`](../modules/staff/README.md) — `DoctorAvailability` (bloques concretos por fecha, ver [ADR-007](ADR-007-doctor-availability-concrete-blocks.md)), `Doctor.slot_duration_min`.
 - Ficha del módulo clinic: [`docs/modules/clinic/`](../modules/clinic/README.md) — `OfficeOperatingHours`, `OfficeClosure`, `office_vertical`.
 - Hardening: [`docs/HARDENING.md`](../HARDENING.md) §1 — Redis para rate limit distribuido y cache.

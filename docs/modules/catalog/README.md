@@ -65,7 +65,7 @@ Lo que efectivamente se vende y se agenda. Es el grano del catálogo: una cita s
 - `duration_min: int` `<<nullable>>` — duración estimada de la atención. Usado por `scheduling` para reservar el slot correcto. `NULL` = no tiene duración fija (ej. plan de tratamiento).
 - `requires_appointment: bool` `default true` — si es agendable. Hay productos que se venden sin cita (ej. paquetes de cremas).
 - `is_package: bool` `default false` — paquete o tratamiento multi-sesión. (Decisión: por ahora no modelamos las sesiones de un paquete — se trackea con `LeadActivity`/`CustomerStatusHistory` en `crm`. Si crece, agregar `ProductSession` después.)
-- `min_hours_to_cancel: int` `<<nullable>>` — horas mínimas de antelación para cancelar una cita de este producto. `NULL` = sin límite. Si está set, `scheduling.appointment.cancel` valida `(scheduled_for - now()) >= min_hours_to_cancel * 60 min` salvo permiso `APPOINTMENTS_CANCEL_OVERRIDE`. Agregado a raíz de la decisión del módulo `scheduling` ([ver](../scheduling.md#decisiones-de-diseo)).
+- `min_hours_to_cancel: int` `<<nullable>>` — horas mínimas de antelación para cancelar una cita de este producto. `NULL` = sin límite. Si está set, `scheduling.appointment.cancel` valida `(scheduled_for - now()) >= min_hours_to_cancel * 60 min` salvo permiso `APPOINTMENTS_CANCEL_OVERRIDE`. Agregado a raíz de la decisión del módulo `scheduling` ([ver](../scheduling/README.md)).
 - Mixins: `PrimaryKey`, `Active`, `SoftDelete`, `Timestamp`.
 
 ## Endpoints (resumen)
