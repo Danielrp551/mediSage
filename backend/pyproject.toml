@@ -20,6 +20,8 @@ dependencies = [
     "httpx>=0.28.0",
     "google-cloud-secret-manager>=2.20,<3",
     "firebase-admin>=6.5,<7",
+    "openai>=1.50,<2",
+    "anthropic>=0.39,<1",
 ]
 
 [project.optional-dependencies]
@@ -66,4 +68,10 @@ exclude = ["alembic/versions/"]
 # firebase-admin no publica stubs ni marcador py.typed (ADR-011).
 [[tool.mypy.overrides]]
 module = ["firebase_admin.*"]
+ignore_missing_imports = true
+
+# openai/anthropic se importan LAZY en los adaptadores del motor (engine/providers); pueden no
+# estar en el venv local (el smoke mockea el adaptador). En runtime/Docker sí están (deps).
+[[tool.mypy.overrides]]
+module = ["openai.*", "anthropic.*"]
 ignore_missing_imports = true

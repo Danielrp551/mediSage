@@ -387,3 +387,103 @@ async def send_outbound(
         else None
     )
     return SingleResponse(data=_doc_to_message_item(doc, sender_user=sender))
+
+
+async def send_bot_outbound(
+    db: AsyncSession,
+    conversation: Conversation,
+    content: str,
+    *,
+    bot_configuration_id: str,
+) -> SingleResponse[MessageItem]:
+    """OUTBOUND de un BOT (no de un asesor). Hermana de `send_outbound` (mismo Meta send + outbox +
+    relay), pero SIN advisor-assignee check: valida solo que el hilo esté abierto y
+    assignee_type=='bot'. Persiste sender_type='bot', sender_user_id=None, bot_configuration_id en el
+    doc. Corre como SYSTEM. Devuelve el MessageItem (`.data.id` == el mid = BotEvent.output_message_id).
+    El RELAY síncrono a Firestore lo dispara el ROUTER (igual que send_outbound). Lo invoca el motor
+    (engine.embedded) dentro del turno; recibe el `Conversation` ya cargado."""
+    from app.modules.conversations.services.webhook_processor import whatsapp as wa
+
+    if conversation.status != ConversationStatus.open.value:
+        raise BadRequestException("La conversación está cerrada", code="CONVERSATION_NOT_OPEN")
+    if conversation.assignee_type != AssigneeType.bot.value:
+        raise BadRequestException(
+            "La conversación no está asignada a un bot", code="CONVERSATION_NOT_BOT"
+        )
+
+    settings = get_settings()
+    now = utc_now()
+    mid = generate_uuid()
+    external_id: str | None = None
+    external_status = MessageExternalStatus.sent.value
+    failed_at: str | None = None
+    failure_reason: str | None = None
+
+    # Envío REAL a Meta (mismo path que send_outbound). Cualquier fallo → persistir `failed`
+    # (la traza del bot queda; el turno NO revienta por un error de envío).
+    ca = await channel_account_repository.get_by_id(db, conversation.channel_account_id)
+    try:
+        if ca is None:
+            raise ValueError("La cuenta de canal ya no existe")
+        recipient = (
+            await crm_person_repository.get_channel_identifier(
+                db, conversation.person_id, ca.channel_type
+            )
+            if conversation.person_id is not None
+            else None
+        )
+        if recipient is None:
+            raise ValueError("No hay un identificador de WhatsApp para el contacto")
+        creds = await channel_account_service.get_credentials(db, ca)
+        external_id = await wa.send_text(
+            access_token=creds["access_token"],
+            phone_number_id=creds.get("phone_number_id") or (ca.phone_number_id or ""),
+            to=recipient.identifier,
+            body=content,
+            graph_api_version=settings.WHATSAPP_GRAPH_API_VERSION,
+        )
+    except Exception as exc:  # noqa: BLE001 — el outbound fallido se persiste, no rompe el turno
+        external_status = MessageExternalStatus.failed.value
+        failed_at = _iso(now)
+        failure_reason = str(exc)[:255]
+        logger.warning(
+            "bot outbound send failed",
+            extra={"conversation_id": conversation.id, "error": str(exc)},
+        )
+
+    doc: dict[str, Any] = {
+        "id": mid,
+        "conversation_id": conversation.id,
+        "direction": MessageDirection.outbound.value,
+        "sender_type": SenderType.bot.value,
+        "sender_user_id": None,
+        "bot_configuration_id": bot_configuration_id,
+        "content_type": ContentType.text.value,
+        "content": content,
+        "external_id": external_id,
+        "external_status": external_status,
+        "sent_at": _iso(now),
+        "delivered_at": None,
+        "read_at": None,
+        "failed_at": failed_at,
+        "failure_reason": failure_reason,
+        "attachments": [],
+        "created_at": _iso(now),
+    }
+    await message_outbox_repository.enqueue(
+        db,
+        id=mid,
+        conversation_id=conversation.id,
+        op="message_create",
+        payload=doc,
+        actor_id=SYSTEM_USER_ID,
+    )
+    conversation.last_message_at = now
+    conversation.last_message_preview = content[:255]
+    conversation.updated_by = SYSTEM_USER_ID
+    conversation.updated_on = now
+    await conversation_service.enqueue_conversation_upsert(
+        db, conversation, actor_id=SYSTEM_USER_ID
+    )
+    await db.flush()
+    return SingleResponse(data=_doc_to_message_item(doc, sender_user=None))

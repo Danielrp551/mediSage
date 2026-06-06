@@ -57,6 +57,16 @@ class BotToolRepository(BaseRepository[BotTool]):
         )
         return list(result.scalars().all())
 
+    async def codes_by_ids(self, db: AsyncSession, tool_ids: Sequence[str]) -> dict[str, str]:
+        """id → code para denormalizar `bot_tool_code` en las trazas (BotToolCall). NO filtra
+        deleted_at: una traza puede referenciar una tool que se soft-deleteó después."""
+        if not tool_ids:
+            return {}
+        result = await db.execute(
+            select(BotTool.id, BotTool.code).where(BotTool.id.in_(list(tool_ids)))
+        )
+        return {row[0]: row[1] for row in result.all()}
+
     async def tool_ids_for_config(self, db: AsyncSession, bot_configuration_id: str) -> list[str]:
         """Los bot_tool_id VIVOS (no soft-deleted) asignados a un bot. JOIN con bot_tool para
         excluir tools soft-deleted (la tabla M:N no tiene deleted_at) → `Detail.tool_ids` queda

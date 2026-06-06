@@ -14,6 +14,9 @@ Diseño completo: `docs/modules/bots/{README,backend,ui,frontend}.md` + ADR-005 
 Estado por fases: F1 cableó el paquete (registrado en `app/modules/__init__.py` + aggregator en
 `app/main.py`) con `BotConfiguration` + `BotConfigurationVersion` (migr 0017). F2 agrega `BotTool`
 + M:N `bot_configuration_tool` (migr 0018) + el `TOOL_REGISTRY` (`services/engine/tools/`, indexado
-por `code`) con las 6 tools MVP crm/catalog (se registran al import → `is_registered`). F3 agrega el
-engine que las invoca + state + trazas + Cloud Tasks (0019).
+por `code`) con las 6 tools MVP crm/catalog (se registran al import → `is_registered`). F3a agrega el
+data plane (ConversationBotState + BotEvent + BotToolCall, migr 0019) + el EmbeddedBotEngine
+(OpenAI/Claude) + dispatch-manual + send_bot_outbound (conversations) + UI de depuración. F3b agrega
+Cloud Tasks (`app/core/cloud_tasks.py`) + el auto-enqueue del webhook + los hooks de
+find_or_create_open.
 """

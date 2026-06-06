@@ -2235,8 +2235,11 @@ def upgrade() -> None:
         sa.Column("updated_on", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_by", sa.String(length=36), nullable=False),
     )
-    op.create_index("uq_bot_event_conversation_turn", "bot_event",
-        ["conversation_id", "turn_number"], unique=True)
+    op.create_index("ix_bot_event_conversation_id", "bot_event", ["conversation_id"])
+    # NO único: un turno tiene VARIOS eventos (turn_started + turn_completed/turn_failed) con el mismo
+    # turn_number → el índice agrupa, no restringe a 1 por turno (decisión confirmada en F3a).
+    op.create_index("ix_bot_event_conversation_turn", "bot_event",
+        ["conversation_id", "turn_number"])
     op.create_index("ix_bot_event_config_created", "bot_event", ["bot_configuration_id", "created_on"])
     op.create_index("ix_bot_event_type_created", "bot_event", ["event_type", "created_on"])
     # ── bot_tool_call (PK·A·T, SIN deleted_at — traza) ──
@@ -2267,7 +2270,8 @@ def downgrade() -> None:
     op.drop_table("bot_tool_call")
     op.drop_index("ix_bot_event_type_created", table_name="bot_event")
     op.drop_index("ix_bot_event_config_created", table_name="bot_event")
-    op.drop_index("uq_bot_event_conversation_turn", table_name="bot_event")
+    op.drop_index("ix_bot_event_conversation_turn", table_name="bot_event")
+    op.drop_index("ix_bot_event_conversation_id", table_name="bot_event")
     op.drop_table("bot_event")
     op.drop_index("uq_conversation_bot_state_conversation", table_name="conversation_bot_state")
     op.drop_table("conversation_bot_state")

@@ -12,11 +12,15 @@ from fastapi import APIRouter
 
 from app.modules.bots.routers.bot_configuration import router as bot_configuration_router
 from app.modules.bots.routers.bot_tool import router as bot_tool_router
+from app.modules.bots.routers.conversation_bot_state import router as state_router
+from app.modules.bots.routers.engine import router as engine_router
 
 router = APIRouter(prefix="/bots")
 router.include_router(
     bot_configuration_router
 )  # /configurations/* (+ versions, activate, tools M:N)
 router.include_router(bot_tool_router)  # /tools/*
+router.include_router(engine_router)  # /engine/dispatch-manual (RBAC); /engine/dispatch OIDC = F3b
+router.include_router(state_router)  # /conversations/{cid}/state|events|tool-calls
 
 __all__ = ["router"]

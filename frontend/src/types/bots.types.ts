@@ -5,9 +5,12 @@
  * desde server actions y client components. Reusa `UserAuditInfo` de
  * `audit.types` — NO se redefine.
  *
- * Declarado en F0 (Prep), INERTE: ninguna pantalla lo consume todavía. Las
- * pantallas llegan por fases: Configuraciones + Versiones (F1), Tools + editor
- * M:N (F2), Depuración por conversación (state + eventos + tool calls, F3).
+ * Las pantallas llegan por fases: Configuraciones + Versiones (F1), Tools +
+ * editor M:N (F2), Depuración por conversación (state + eventos + tool calls,
+ * F3a). Los tipos de la traza (ConversationBotState, BotEventItem,
+ * BotToolCallItem) se reconciliaron con el backend real en F3a: SIN audit users (solo
+ * `created_on`), state CON denormalizados `bot_configuration_code`/`version_number`,
+ * y `ResetBotStateRequest` con `reason` opcional.
  *
  * Notas de contrato que el código no expresa solo:
  * - El SECRETO del proveedor NUNCA viaja al front. Las API keys son globales
@@ -231,11 +234,16 @@ export interface ConfigurationToolsUpdate {
 
 // ── ConversationBotState (panel de depuración, read-only) ─
 
-export interface ConversationBotState {
+// ⚠ El backend NO devuelve audit users (created_by/updated_by/*_user) en este
+// tipo — el panel es observabilidad pura. SÍ devuelve denormalizados
+// `bot_configuration_code` y `version_number` para pintar el header sin joins.
+export interface ConversationBotStateItem {
   id: string;
   conversation_id: string; // UNIQUE
   bot_configuration_id: string;
   bot_configuration_version_id: string; // versión con la que arrancó (no migra al promover)
+  bot_configuration_code: string | null; // denormalizado: code del bot
+  version_number: number | null; // denormalizado: version (v{n}) de la versión con la que arrancó
   current_intent: string | null;
   collected_slots: Record<string, unknown>; // schema libre por bot
   last_node: string | null;
@@ -243,18 +251,22 @@ export interface ConversationBotState {
   turn_count: number;
   active: boolean;
   created_on: string;
-  created_by: string;
-  created_by_user: UserAuditInfo | null;
   updated_on: string;
-  updated_by: string;
-  updated_by_user: UserAuditInfo | null;
 }
 
-// Reset explícito del estado del bot en una conversación. Body vacío (cid por path).
-export type ResetBotStateRequest = Record<string, never>;
+// Detalle = Item (sin campos extra por ahora).
+export interface ConversationBotStateDetail extends ConversationBotStateItem {}
+
+// Reset explícito del estado del bot en una conversación. `reason` opcional;
+// el cid va por path.
+export interface ResetBotStateRequest {
+  reason?: string | null;
+}
 
 // ── BotEvent (traza por turno, inmutable, read-only) ─────
 
+// ⚠ Audit inmutable: el backend devuelve SOLO `created_on` (sin updated_*/audit
+// users). No tiene SoftDelete.
 export interface BotEventItem {
   id: string;
   conversation_id: string;
@@ -271,15 +283,12 @@ export interface BotEventItem {
   error: string | null;
   metadata: Record<string, unknown> | null; // raw provider response/fingerprint (JSONB)
   created_on: string;
-  created_by: string;
-  created_by_user: UserAuditInfo | null;
-  updated_on: string;
-  updated_by: string;
-  updated_by_user: UserAuditInfo | null;
 }
 
 // ── BotToolCall (traza por invocación de tool, inmutable, read-only) ─
 
+// ⚠ Audit inmutable: el backend devuelve SOLO `created_on` (sin updated_*/audit
+// users). No tiene SoftDelete.
 export interface BotToolCallItem {
   id: string;
   conversation_id: string;
@@ -295,11 +304,6 @@ export interface BotToolCallItem {
   completed_at: string | null;
   latency_ms: number | null;
   created_on: string;
-  created_by: string;
-  created_by_user: UserAuditInfo | null;
-  updated_on: string;
-  updated_by: string;
-  updated_by_user: UserAuditInfo | null;
 }
 
 // ── Engine dispatch ──────────────────────────────────────

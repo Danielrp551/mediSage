@@ -192,6 +192,16 @@ export const NAV_ITEMS: NavItem[] = [
         url: "/bots/tools",
         permissions: ["BOT_TOOLS_READ"],
       },
+      // F3a — panel de observabilidad read-only por conversación (estado + traza).
+      // El ASESOR tiene BOT_EVENTS_READ → ve este item; el item abre la pantalla
+      // sin ?conv= (selector). También se entra contextualmente desde el inbox.
+      {
+        key: "bot-debug",
+        label: "Depuración",
+        icon: "BugRegular",
+        url: "/bots/depuracion",
+        permissions: ["BOT_EVENTS_READ"],
+      },
     ],
   },
   {

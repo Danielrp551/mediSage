@@ -484,7 +484,9 @@ async def release(
     if payload.to_assignee_type == AssigneeType.advisor:
         raise BadRequestException("Para asignar a un asesor usa 'Tomar'", code="INVALID_ASSIGNEE")
     if payload.to_assignee_type == AssigneeType.bot and payload.to_bot_configuration_id is None:
-        # bots #6 no existe en el MVP → en la práctica solo `unassigned`. Guard de invariante.
+        # release→bot (bots #6, F3): exige el bot a asignar. La forward FK (migr 0017) valida que el
+        # id exista; el dispatch valida la versión vigente (NO_CURRENT_VERSION). El bot reactivado
+        # responde en su próximo turno (auto-enqueue por webhook = F3b; manual vía dispatch-manual).
         raise BadRequestException("Falta la configuración de bot", code="INVALID_ASSIGNEE")
     now = utc_now()
     await _reassign(
