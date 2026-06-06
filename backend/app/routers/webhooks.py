@@ -23,6 +23,7 @@ import json
 
 from fastapi import APIRouter, Query, Request, Response, status
 
+from app.core import cloud_tasks
 from app.core.dependencies import DBSession
 from app.core.exceptions import ForbiddenException, NotFoundException
 from app.modules.conversations.repositories.channel_account import channel_account_repository
@@ -80,6 +81,11 @@ async def inbound_whatsapp(
     # (id=mid); un sweep/Cloud Task que reintente filas `failed` queda para F3
     # (`relay_outbox_in_new_session`). El relay es rápido (writes Firestore ms) y tolera fallos
     # por-fila (marca `failed` y sigue) → el 200 a Meta no se bloquea por un blip de Firestore.
-    await wa.process_inbound(db, payload=payload, channel_account=ca)
+    bot_dispatches = await wa.process_inbound(db, payload=payload, channel_account=ca)
     await message_service.relay_outbox(db)
+    # Auto-path del bot (F3b, ADR-012): tras proyectar el inbound a Firestore (el motor lee el historial
+    # de ahí), encola UN turno por conversación asignada a un bot. NO-OP en dev / sin cola. El encolado es
+    # best-effort (no rompe el 200 a Meta); el endpoint /engine/dispatch corre el turno con CPU asignada.
+    for conv_id, mid in bot_dispatches.items():
+        await cloud_tasks.enqueue_turn(conversation_id=conv_id, input_message_id=mid)
     return {"success": True}

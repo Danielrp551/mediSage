@@ -21,7 +21,7 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.conversations.enums import ContentType
+from app.modules.conversations.enums import AssigneeType, ContentType
 from app.modules.conversations.models.channel_account import ChannelAccount
 from app.modules.conversations.services import conversation as conversation_service
 from app.modules.conversations.services import message as message_service
@@ -120,9 +120,13 @@ def _extract_content(m: dict[str, Any]) -> tuple[str | None, ContentType]:
 
 async def process_inbound(
     db: AsyncSession, *, payload: dict[str, Any], channel_account: ChannelAccount
-) -> None:
-    """Parse + orquestación SÍNCRONA del control plane (antes del 200). El relay a Firestore
-    corre aparte (BackgroundTasks)."""
+) -> dict[str, str]:
+    """Parse + orquestación SÍNCRONA del control plane (antes del 200). El relay a Firestore lo dispara
+    el ENTRYPOINT (webhook) tras esta función, con la misma sesión. Devuelve `{conversation_id:
+    last_inbound_mid}` de los hilos asignados a un BOT en este batch (dedup por conversación) → el
+    webhook encola UN turno por hilo DESPUÉS del relay (el doc Firestore del inbound debe existir antes
+    de que el motor arme el prompt). Auto-path del bot = F3b (ADR-012)."""
+    bot_dispatches: dict[str, str] = {}
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {}) or {}
@@ -153,7 +157,7 @@ async def process_inbound(
                 # 3) Texto primero: encola el message_create (+ conversation_upsert) en el
                 #    outbox; IDEMPOTENTE por mid (= wamid). El relay lo escribe a Firestore.
                 content, content_type = _extract_content(m)
-                await message_service.persist_inbound(
+                inserted = await message_service.persist_inbound(
                     db,
                     conversation=conv,
                     mid=m["id"],
@@ -161,6 +165,13 @@ async def process_inbound(
                     content_type=content_type,
                     sent_at=_ts(m.get("timestamp")),
                 )
+                # Auto-path del bot (F3b): si el hilo quedó asignado a un bot, recordar el inbound para
+                # encolar UN turno por conversación tras el relay (dedup: el último mensaje del batch).
+                # SOLO si fue inserción genuina (`inserted`): un reenvío de Meta del MISMO mid devuelve
+                # False (ya procesado) → no re-encolar. El dedup de Cloud Tasks (task-name) y la
+                # idempotencia del motor (por input_message_id) quedan como 2ª/3ª línea.
+                if inserted and conv.assignee_type == AssigneeType.bot.value:
+                    bot_dispatches[conv.id] = m["id"]
             for s in value.get("statuses", []):
                 if not s.get("id"):
                     continue
@@ -181,3 +192,4 @@ async def process_inbound(
                         "apply_status falló (best-effort, ignorado)",
                         extra={"external_id": s.get("id"), "status": s.get("status")},
                     )
+    return bot_dispatches

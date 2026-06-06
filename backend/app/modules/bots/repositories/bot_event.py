@@ -27,6 +27,22 @@ class BotEventRepository(BaseRepository[BotEvent]):
         )
         return int(result.scalar_one())
 
+    async def exists_for_input_message(
+        self, db: AsyncSession, conversation_id: str, input_message_id: str
+    ) -> bool:
+        """Idempotencia del dispatch (Cloud Tasks es AT-LEAST-ONCE): ¿ya se registró un turno para
+        este inbound? Cualquier BotEvent con ese `input_message_id` en la conversación basta — si un
+        turno previo llegó a escribir su `turn_started`, no debemos re-ejecutar en un reintento."""
+        result = await db.execute(
+            select(func.count())
+            .select_from(BotEvent)
+            .where(
+                BotEvent.conversation_id == conversation_id,
+                BotEvent.input_message_id == input_message_id,
+            )
+        )
+        return int(result.scalar_one()) > 0
+
     async def list_for_conversation(self, db: AsyncSession, conversation_id: str) -> list[BotEvent]:
         result = await db.execute(
             select(BotEvent)

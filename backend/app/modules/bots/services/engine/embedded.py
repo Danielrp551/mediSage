@@ -405,6 +405,20 @@ async def dispatch_turn(
     BotEvent(turn_failed) + fallback; el turno NO devuelve 5xx (no spamear reintentos)."""
     from app.modules.bots.services.engine import engine_factory
 
+    # Idempotencia (Cloud Tasks entrega AT-LEAST-ONCE): si ya hay un turno registrado para este
+    # inbound (input_message_id), NO re-ejecutar — evita una 2ª llamada al LLM + un 2º mensaje al
+    # usuario cuando la cola reintenta una task cuyo turno ya completó (p.ej. la instancia murió tras
+    # responder pero antes de que el 200 llegara a Cloud Tasks). Cubre el reintento post-commit; el
+    # caso raro "Meta enviado pero el commit del turn_started no alcanzó a persistir" queda como límite
+    # conocido (handoff/cost-cap = F4). dispatch-manual con input_message_id=None NO se ve afectado.
+    if input_message_id is not None and await bot_event_repository.exists_for_input_message(
+        db, conversation_id, input_message_id
+    ):
+        logger.info(
+            "turno ya procesado para este input (idempotencia)",
+            extra={"conversation_id": conversation_id, "input_message_id": input_message_id},
+        )
+        return
     try:
         conv = await conversation_repository.get_by_id(db, conversation_id)
         if conv is None:

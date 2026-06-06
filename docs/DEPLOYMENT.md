@@ -197,6 +197,48 @@ echo "WIF_PROVIDER (a guardar en GitHub secrets):"
 echo "  $PROVIDER"
 ```
 
+### 2.7 Cloud Tasks — auto-dispatch del bot (módulo `bots`, ADR-012)
+
+El módulo `bots` despacha el turno del LLM de forma asíncrona vía **Cloud Tasks**: el webhook de
+WhatsApp encola una task que hace `POST /api/v1/bots/engine/dispatch`. Si NO se configura, el auto-path
+hace **NO-OP silencioso** (el webhook responde 200 pero el bot no contesta) — por eso los 4 valores de
+runtime + la cola + el IAM son obligatorios para que el bot responda solo. Provisionar **antes** del
+deploy que active la cola.
+
+```bash
+# 1) Cola por env (reintentos generosos para absorber la carrera commit→dispatch).
+for ENV in qa prod; do
+  gcloud tasks queues create "medisage-bot-turns-${ENV}" \
+    --location="$REGION" --project="$PROJECT_ID" \
+    --max-attempts=10 --max-concurrent-dispatches=10 \
+    --max-dispatches-per-second=5 --min-backoff=5s --max-backoff=300s
+done
+
+# 2) Secret del dispatch por env (256-bit; el endpoint lo compara en tiempo constante).
+for ENV in qa prod; do
+  printf %s "$(python -c 'import secrets;print(secrets.token_urlsafe(48))')" \
+    | gcloud secrets create "medisage-bot-dispatch-secret-${ENV}" --data-file=- --project="$PROJECT_ID"
+done
+
+# 3) La SA runtime de cada servicio debe poder ENCOLAR (roles/cloudtasks.enqueuer).
+#    (Opción shared-secret: NO se necesita actAs/serviceAccountUser ni run.invoker — eso sería OIDC.)
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:medisage-sa-qa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/cloudtasks.enqueuer"
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:medisage-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/cloudtasks.enqueuer"
+```
+
+Los workflows de deploy ya inyectan (ver `deploy-backend-{qa,prod}.yml`):
+`--set-env-vars` += `CLOUD_TASKS_QUEUE=medisage-bot-turns-${ENV_NAME}`, `CLOUD_TASKS_LOCATION` (= región),
+`SERVICE_BASE_URL`; `--set-secrets` += `BOT_DISPATCH_SECRET=medisage-bot-dispatch-secret-${ENV_NAME}:latest`.
+`SERVICE_BASE_URL` se guarda como **GitHub Environment secret** por env (la URL pública del Cloud Run,
+**sin** trailing slash — usar `gcloud run services describe <svc> --format='value(status.url)'`).
+
+⚠ Orden crítico: crear el secret **antes** del deploy. Con `CLOUD_TASKS_QUEUE` seteado, el boot-validator
+exige un `BOT_DISPATCH_SECRET` real (≥32 chars) o el contenedor no arranca.
+
 ---
 
 ## 3. Setup GitHub (Environments + Secrets)

@@ -480,6 +480,10 @@ async def send_bot_outbound(
     )
     conversation.last_message_at = now
     conversation.last_message_preview = content[:255]
+    # El bot atendió el inbound → resetear unread (igual que `take` cuando un asesor lo lee). Sin esto
+    # los hilos de bot —que con F3b son el caso por defecto de todo canal con bot— acumularían un badge
+    # de no-leídos creciente en la bandeja global del supervisor aunque el bot esté respondiendo.
+    conversation.unread_count = 0
     conversation.updated_by = SYSTEM_USER_ID
     conversation.updated_on = now
     await conversation_service.enqueue_conversation_upsert(

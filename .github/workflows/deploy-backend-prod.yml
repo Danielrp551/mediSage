@@ -66,8 +66,8 @@ jobs:
             --no-cpu-throttling \
             --ingress all \
             --add-cloudsql-instances "${{ secrets.CLOUD_SQL_INSTANCE }}" \
-            --set-env-vars "^@@^USE_UNIX_SOCKET=True@@CLOUD_SQL_INSTANCE=${{ secrets.CLOUD_SQL_INSTANCE }}@@ENV_NAME=${ENV_NAME}@@DEBUG=False@@LOG_LEVEL=INFO@@JWT_ISSUER=medisage-${ENV_NAME}@@JWT_AUDIENCE=medisage-${ENV_NAME}@@RATE_LIMIT_TRUST_FORWARDED=True@@CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}@@GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}" \
-            --set-secrets "SECRET_KEY=medisage-secret-key-${ENV_NAME}:latest,DB_USER=medisage-db-user-${ENV_NAME}:latest,DB_PASSWORD=medisage-db-password-${ENV_NAME}:latest,DB_NAME=medisage-db-name-${ENV_NAME}:latest,OPENAI_API_KEY=medisage-openai-api-key-${ENV_NAME}:latest,ANTHROPIC_API_KEY=medisage-anthropic-api-key-${ENV_NAME}:latest" \
+            --set-env-vars "^@@^USE_UNIX_SOCKET=True@@CLOUD_SQL_INSTANCE=${{ secrets.CLOUD_SQL_INSTANCE }}@@ENV_NAME=${ENV_NAME}@@DEBUG=False@@LOG_LEVEL=INFO@@JWT_ISSUER=medisage-${ENV_NAME}@@JWT_AUDIENCE=medisage-${ENV_NAME}@@RATE_LIMIT_TRUST_FORWARDED=True@@CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}@@GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}@@CLOUD_TASKS_QUEUE=medisage-bot-turns-${ENV_NAME}@@CLOUD_TASKS_LOCATION=${{ secrets.GCP_REGION }}@@SERVICE_BASE_URL=${{ secrets.SERVICE_BASE_URL }}" \
+            --set-secrets "SECRET_KEY=medisage-secret-key-${ENV_NAME}:latest,DB_USER=medisage-db-user-${ENV_NAME}:latest,DB_PASSWORD=medisage-db-password-${ENV_NAME}:latest,DB_NAME=medisage-db-name-${ENV_NAME}:latest,OPENAI_API_KEY=medisage-openai-api-key-${ENV_NAME}:latest,ANTHROPIC_API_KEY=medisage-anthropic-api-key-${ENV_NAME}:latest,BOT_DISPATCH_SECRET=medisage-bot-dispatch-secret-${ENV_NAME}:latest" \
             --memory 1Gi \
             --cpu 1 \
             --min-instances 1 \

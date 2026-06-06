@@ -19,6 +19,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "httpx>=0.28.0",
     "google-cloud-secret-manager>=2.20,<3",
+    "google-cloud-tasks>=2.16,<3",
     "firebase-admin>=6.5,<7",
     "openai>=1.50,<2",
     "anthropic>=0.39,<1",
@@ -74,4 +75,10 @@ ignore_missing_imports = true
 # estar en el venv local (el smoke mockea el adaptador). En runtime/Docker sí están (deps).
 [[tool.mypy.overrides]]
 module = ["openai.*", "anthropic.*"]
+ignore_missing_imports = true
+
+# google-cloud-tasks se importa LAZY en app/core/cloud_tasks.py (solo Cloud Run lo usa; el
+# boot/smoke local con ENV_NAME=dev hace NO-OP y nunca lo importa). En runtime/Docker es dep directa.
+[[tool.mypy.overrides]]
+module = ["google.cloud", "google.cloud.tasks_v2", "google.cloud.tasks_v2.*"]
 ignore_missing_imports = true

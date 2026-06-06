@@ -4,7 +4,7 @@ El orden importa solo dentro de cada sub-router (/active antes de /{id}).
 
 F1 expone `bot_configuration` (/configurations/* + /versions + activate-version). F2 agrega
 `bot_tool` (/tools/*) y los endpoints M:N /configurations/{id}/tools. F3 agrega `engine`
-(/engine/dispatch OIDC + /engine/dispatch-manual RBAC) y `conversation_bot_state`
+(/engine/dispatch shared-secret [F3b] + /engine/dispatch-manual RBAC [F3a]) y `conversation_bot_state`
 (/conversations/{cid}/state|events|tool-calls).
 """
 
@@ -20,7 +20,9 @@ router.include_router(
     bot_configuration_router
 )  # /configurations/* (+ versions, activate, tools M:N)
 router.include_router(bot_tool_router)  # /tools/*
-router.include_router(engine_router)  # /engine/dispatch-manual (RBAC); /engine/dispatch OIDC = F3b
+router.include_router(
+    engine_router
+)  # /engine/dispatch-manual (RBAC) + /engine/dispatch (shared-secret)
 router.include_router(state_router)  # /conversations/{cid}/state|events|tool-calls
 
 __all__ = ["router"]

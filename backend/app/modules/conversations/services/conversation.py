@@ -181,13 +181,23 @@ async def find_or_create_open(
     if open_conv is not None:
         return open_conv
     now = utc_now()
-    # AUTO-ASIGNACIÓN: el dueño del lead vía crm (lectura aditiva, sin cambio a crm).
-    advisor_map = await lead_assignment_repository.advisor_map(db, [person_id])
-    advisor_id = advisor_map.get(person_id)
-    if advisor_id is not None:
-        assignee_type, assignee_user_id = AssigneeType.advisor, advisor_id
+    # ENGAGEMENT DEL BOT (bots #6, ADR-012): si el canal tiene un bot configurado, las conversaciones
+    # NUEVAS arrancan asignadas al bot (atiende el primer contacto; el `take` de un asesor lo saca del
+    # path y el webhook deja de encolar turnos). Tiene PRIORIDAD sobre la auto-asignación al dueño del
+    # lead. `conv.bot_configuration_id` es lo que `choose_bot_for_conversation` lee para resolver el bot
+    # efectivo. Sin bot en el canal → comportamiento intacto (advisor / unassigned).
+    bot_configuration_id: str | None = None
+    if channel_account.bot_configuration_id is not None:
+        assignee_type, assignee_user_id = AssigneeType.bot, None
+        bot_configuration_id = channel_account.bot_configuration_id
     else:
-        assignee_type, assignee_user_id = AssigneeType.unassigned, None
+        # AUTO-ASIGNACIÓN: el dueño del lead vía crm (lectura aditiva, sin cambio a crm).
+        advisor_map = await lead_assignment_repository.advisor_map(db, [person_id])
+        advisor_id = advisor_map.get(person_id)
+        if advisor_id is not None:
+            assignee_type, assignee_user_id = AssigneeType.advisor, advisor_id
+        else:
+            assignee_type, assignee_user_id = AssigneeType.unassigned, None
     conv = Conversation(
         id=generate_uuid(),
         channel_account_id=channel_account.id,
@@ -195,6 +205,7 @@ async def find_or_create_open(
         status=ConversationStatus.open.value,
         assignee_type=assignee_type.value,
         assignee_user_id=assignee_user_id,
+        bot_configuration_id=bot_configuration_id,
         opened_at=now,
         unread_count=0,
         active=True,

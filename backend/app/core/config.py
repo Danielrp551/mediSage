@@ -94,13 +94,22 @@ class Settings(BaseSettings):
     # Corta el loop de tool-calling de un turno (anti-runaway / cost guard).
     MAX_TOOL_ITERATIONS_PER_TURN: int = 5
     # Cloud Tasks: el turno del bot se despacha async (ADR-012). El webhook encola →
-    # POST {SERVICE_BASE_URL}/api/v1/bots/engine/dispatch (auth OIDC del invoker SA, o
-    # BOT_DISPATCH_SECRET como shared-secret MVP). Defaults vacíos → no se encola hasta F3.
+    # POST {SERVICE_BASE_URL}/api/v1/bots/engine/dispatch. Auth del dispatch (F3b) = SHARED-SECRET
+    # (BOT_DISPATCH_SECRET, comparado en tiempo constante): el servicio es público (--allow-unauthenticated
+    # por Meta/Vercel) → OIDC degradaría a verificación in-app sin el rechazo de la plataforma, sumando
+    # fallas solo-en-prod (cert-fetch/clock-skew/audiencia/IAM actAs). OIDC = hardening futuro si el
+    # endpoint se separa a un Cloud Run privado. Defaults vacíos → el auto-path es NO-OP (no se encola).
     CLOUD_TASKS_QUEUE: str = ""  # ej. medisage-bot-turns-qa
     CLOUD_TASKS_LOCATION: str = "us-central1"
-    CLOUD_TASKS_INVOKER_SA: str = ""  # SA que firma el OIDC token del dispatch
-    SERVICE_BASE_URL: str = ""  # URL pública del Cloud Run (target del dispatch)
-    BOT_DISPATCH_SECRET: str = ""  # shared-secret del endpoint /engine/dispatch (alt a OIDC)
+    CLOUD_TASKS_INVOKER_SA: str = (
+        ""  # reservado para OIDC futuro (no usado por el shared-secret MVP)
+    )
+    SERVICE_BASE_URL: str = (
+        ""  # URL pública del Cloud Run (target del dispatch; sin trailing slash)
+    )
+    BOT_DISPATCH_SECRET: str = (
+        ""  # shared-secret del endpoint /engine/dispatch (Secret Manager por env)
+    )
 
     @property
     def database_url(self) -> str:
@@ -163,6 +172,24 @@ class Settings(BaseSettings):
             raise ValueError(
                 "CORS_ORIGINS contains '*' but the app sends credentials (httpOnly cookies). "
                 "List explicit origins (comma-separated) or a JSON array."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _enforce_bot_dispatch_secret(self) -> Settings:
+        """Si el auto-path del bot está habilitado (`CLOUD_TASKS_QUEUE` seteado), fuera de `dev` el
+        endpoint interno `/engine/dispatch` (ADR-012) DEBE tener un `BOT_DISPATCH_SECRET` real: es la
+        ÚNICA barrera entre internet y la ejecución del LLM (el servicio es público). Falla RUIDOSA al
+        boot ante un secret vacío/corto en vez de aceptar dispatches sin auth o rechazarlos en silencio
+        (lección operativa: nada que solo falle en prod)."""
+        if self.ENV_NAME == "dev" or not self.CLOUD_TASKS_QUEUE:
+            return self
+        if len(self.BOT_DISPATCH_SECRET.strip()) < _MIN_SECRET_LEN:
+            raise ValueError(
+                "CLOUD_TASKS_QUEUE is set (bot auto-dispatch enabled) but BOT_DISPATCH_SECRET is "
+                f"missing or too short (need >= {_MIN_SECRET_LEN} chars) for ENV_NAME="
+                f"{self.ENV_NAME!r}. Set the per-environment secret (generate with: python -c "
+                "'import secrets; print(secrets.token_urlsafe(48))')."
             )
         return self
 
