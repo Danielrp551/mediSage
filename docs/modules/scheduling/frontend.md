@@ -145,23 +145,14 @@ export interface AppointmentStatusItem {
   updated_by_user: UserAuditInfo | null;
 }
 
-// Para dropdowns y el StatusControl (lista cruda en /active).
+// Para dropdowns, StatusControl, badges en listado/detalle/timeline/grilla y como
+// shape denormalizado del estado en Appointment (lista cruda en /active).
 export interface AppointmentStatusOption {
   id: string;
   code: string;
   name: string;
   color: string | null;
   is_initial: boolean;
-  is_final: boolean;
-  is_active_attention: boolean;
-}
-
-// Subset para badges en listados/detalle/timeline/grilla (color + name).
-export interface AppointmentStatusSummary {
-  id: string;
-  code: string;
-  name: string;
-  color: string | null;
   is_final: boolean;
   is_active_attention: boolean;
 }
@@ -278,12 +269,9 @@ export interface AppointmentItem {
   product_name: string; // denormalizado
   scheduled_for: string; // timestamptz UTC (inicio)
   duration_min: number; // copiado de product al agendar
-  status: AppointmentStatusSummary; // estado actual (badge color)
+  status: AppointmentStatusOption; // badge (id/code/name/color/flags)
   source: AppointmentSource;
   previous_appointment_id: string | null; // cadena de reagendamiento
-  confirmed_at: string | null;
-  attended_at: string | null;
-  cancelled_at: string | null;
   active: boolean;
   created_on: string;
   created_by: string;
@@ -295,40 +283,16 @@ export interface AppointmentItem {
 
 // Detalle: identidad completa + history + changelog embebidos (un solo GET puebla
 // el drawer de detalle — ver GET /appointments/{id} en backend.md).
-export interface AppointmentDetail {
-  id: string;
-  person_id: string;
-  person_name: string;
-  doctor_id: string;
-  doctor_name: string;
-  office_id: string;
-  office_name: string;
-  branch_id: string;
-  branch_name: string;
-  product_id: string;
-  product_name: string;
-  scheduled_for: string;
-  duration_min: number;
-  status: AppointmentStatusSummary;
-  source: AppointmentSource;
-  previous_appointment_id: string | null;
+export interface AppointmentDetail extends AppointmentItem {
   notes: string | null;
   cancellation_reason: string | null;
   cancelled_at: string | null;
   cancelled_by: string | null;
-  cancelled_by_user: UserAuditInfo | null;
   confirmed_at: string | null;
   attended_at: string | null;
   // Sub-recursos embebidos (no inflan listados; sólo el detalle los trae).
   status_history: AppointmentStatusHistoryItem[];
   change_log: AppointmentChangeLogItem[];
-  active: boolean;
-  created_on: string;
-  created_by: string;
-  created_by_user: UserAuditInfo | null;
-  updated_on: string;
-  updated_by: string;
-  updated_by_user: UserAuditInfo | null;
 }
 
 // Body de POST /appointments (create/book) — lo arma el wizard al confirmar.
@@ -336,7 +300,6 @@ export interface AppointmentCreatePayload {
   person_id: string;
   doctor_id: string;
   office_id: string;
-  branch_id: string;
   product_id: string;
   scheduled_for: string; // ISO 8601 UTC del slot elegido
   source?: AppointmentSource; // "advisor"/"admin" desde la UI (default por rol)
@@ -351,7 +314,6 @@ export interface AppointmentCreatePayload {
 export interface AppointmentUpdatePayload {
   doctor_id?: string;
   office_id?: string;
-  branch_id?: string;
   product_id?: string;
   notes?: string | null;
   reason?: string | null; // se escribe en change_log.reason
@@ -363,8 +325,8 @@ export interface AppointmentUpdatePayload {
 export interface AppointmentStatusHistoryItem {
   id: string;
   appointment_id: string;
-  from_status: AppointmentStatusSummary | null; // null al crear (NULL→initial)
-  to_status: AppointmentStatusSummary;
+  from_status: AppointmentStatusOption | null; // null al crear (NULL→initial)
+  to_status: AppointmentStatusOption;
   changed_at: string; // timestamptz ISO 8601
   changed_by: string | null; // null = bot/sistema
   changed_by_user: UserAuditInfo | null; // resuelto batch; null si SYSTEM/hard-deleted
@@ -404,7 +366,7 @@ export interface AppointmentTransitionPayload {
 }
 
 export interface AppointmentCancelPayload {
-  cancellation_reason: string; // obligatorio
+  cancellation_reason?: string | null;
   // override = lo decide el backend por permiso APPOINTMENTS_CANCEL_OVERRIDE; el
   // front NO manda un flag — si el actor tiene el permiso, el backend salta el gate.
 }
@@ -412,31 +374,28 @@ export interface AppointmentCancelPayload {
 // Reagendar: revalida invariantes 1-8 sobre la NUEVA cita, excluye la vieja del
 // conflicto, marca la vieja RESCHEDULED y crea la nueva en la misma transacción.
 export interface AppointmentReschedulePayload {
-  doctor_id: string;
-  office_id: string;
-  branch_id: string;
-  product_id: string;
-  scheduled_for: string; // ISO 8601 UTC del NUEVO slot
+  scheduled_for: string; // nuevo inicio (ISO 8601 UTC)
+  doctor_id?: string;
+  office_id?: string;
   reason?: string | null;
-  notes?: string | null;
 }
 
-// Fila de /me/appointments/list (citas del doctor logueado). Mismo perfil que
-// AppointmentItem recortado a lo que el doctor necesita.
-export interface MyAppointmentItem {
+// GET/POST /me/appointments/list devuelve el AppointmentItem completo (backend.md).
+export type MyAppointmentItem = AppointmentItem;
+
+// Referencia compacta de una cita; la usan la cadena de reagendamiento y respuestas
+// internas (espeja backend.AppointmentOption).
+export interface AppointmentOption {
   id: string;
-  person_name: string;
-  office_name: string;
-  product_name: string;
   scheduled_for: string;
-  duration_min: number;
-  status: AppointmentStatusSummary;
+  doctor_name: string;
+  person_name: string;
 }
 ```
 
 > **Nota sobre las clases de tiempo** (igual que clinic/staff/crm):
 > - `AvailabilityRequest.from_date`/`to_date`, `CalendarResponse.from_date`/`to_date` → fechas-puro `"YYYY-MM-DD"` (date sin TZ). Se componen del rango de la semana visible y se parsean como **local** (`new Date(\`${d}T00:00:00\`)`), nunca como UTC.
-> - `scheduled_for`, `starts_at`/`ends_at`, `confirmed_at`/`attended_at`/`cancelled_at`/`changed_at`/`created_on`/`updated_on` → `timestamptz` ISO 8601 con offset → `lib/utils/date.ts` (`formatDate` / relativa) o, en la grilla, posicionados por minutos-desde-medianoche **en la TZ del branch** (ver [ScheduleGrid](#schedulegridtsx--la-grilla-semanal)).
+> - `scheduled_for`, `starts_at`/`ends_at`, `changed_at`/`created_on`/`updated_on` (y, SOLO en `AppointmentDetail`, `confirmed_at`/`attended_at`/`cancelled_at`) → `timestamptz` ISO 8601 con offset → `lib/utils/date.ts` (`formatDate` / relativa) o, en la grilla, posicionados por minutos-desde-medianoche **en la TZ del branch** (ver [ScheduleGrid](#schedulegridtsx--la-grilla-semanal)).
 > - El catálogo `AppointmentStatus` **no** tiene campos de hora — sólo `display_order` y flags.
 
 > **Por qué `AppointmentItem` denormaliza tanto** (`person_name`, `doctor_name`, `office_name`, `branch_name`, `product_name`, `status`): el listado/grilla no quiere 6 joins por fila. El backend los resuelve con batch maps (sin N+1). **Implicancia crítica**: ninguno de los `*_name` está en `ALLOWED_FIELDS` → **no** son server-sortable ni server-filterable (lección `cd10c78`). El filtro va sobre las columnas **reales** (`status_id`/`doctor_id`/`office_id`/`branch_id`/`scheduled_for`/`product_id`). El `defaultSort` del listado usa `scheduled_for` (columna real) y **debe coincidir** con el prefetch RSC.
@@ -535,11 +494,13 @@ export const availabilityRequestSchema = z
 export const bookingWizardSchema = z.object({
   // Paso 1 — Paciente.
   person_id: z.string().min(1, "Elige al paciente"),
-  // Paso 2 — Producto + Doctor (+ sede/consultorio para acotar el cómputo).
+  // Paso 2 — Producto + Doctor (+ consultorio para acotar el cómputo).
   product_id: z.string().min(1, "Elige el servicio/producto"),
   doctor_id: z.string().min(1, "Elige el doctor"),
-  branch_id: z.string().min(1, "Elige la sede"),
   office_id: z.string().min(1, "Elige el consultorio"),
+  // branch_id NO va en el body del create (el backend lo deriva de office); la sede es
+  // estado de UI del wizard para acotar el cómputo de slots (availabilityRequestSchema
+  // sí lo acepta opcional).
   // Paso 3 — Slot (ISO 8601 con offset; lo setea WizardStepSlot al elegir un slot).
   scheduled_for: z.string().datetime({ offset: true }),
   // Paso 4 — Confirmar.
@@ -551,7 +512,6 @@ export const appointmentUpdateSchema = z
   .object({
     doctor_id: z.string().min(1).optional(),
     office_id: z.string().min(1).optional(),
-    branch_id: z.string().min(1).optional(),
     product_id: z.string().min(1).optional(),
     notes: z.string().max(5000).nullable().optional(),
     reason: z.string().max(255, "Máximo 255 caracteres").nullable().optional(),
@@ -566,21 +526,19 @@ export const appointmentTransitionSchema = z.object({
 });
 
 // ── Cancelar ────────────────────────────────────────────
-// cancellation_reason obligatorio. El override (saltar min_hours_to_cancel) lo
-// decide el backend por permiso APPOINTMENTS_CANCEL_OVERRIDE — no hay flag en Zod.
+// cancellation_reason OPCIONAL (el backend lo acepta None). El override (saltar
+// min_hours_to_cancel) lo decide el backend por permiso APPOINTMENTS_CANCEL_OVERRIDE —
+// no hay flag en Zod.
 export const appointmentCancelSchema = z.object({
-  cancellation_reason: z.string().min(1, "Indica el motivo de la cancelación").max(255),
+  cancellation_reason: z.string().max(255).nullable().optional(),
 });
 
 // ── Reagendar ───────────────────────────────────────────
 export const appointmentRescheduleSchema = z.object({
-  doctor_id: z.string().min(1, "Elige el doctor"),
-  office_id: z.string().min(1, "Elige el consultorio"),
-  branch_id: z.string().min(1, "Elige la sede"),
-  product_id: z.string().min(1, "Elige el servicio/producto"),
   scheduled_for: z.string().datetime({ offset: true }),
+  doctor_id: z.string().min(1).optional(),
+  office_id: z.string().min(1).optional(),
   reason: z.string().max(255).nullable().optional(),
-  notes: z.string().max(5000).nullable().optional(),
 });
 
 export type AvailabilityRequestInput = z.infer<typeof availabilityRequestSchema>;
@@ -1001,6 +959,7 @@ export async function createAppointment(
   try {
     // source lo decide el action por rol (advisor/admin); aquí "advisor" por defecto
     // del panel; el admin lo puede sobreescribir. duration_min lo copia el backend.
+    // branch_id NO va en el body (lo deriva el backend de office); duration_min lo copia de product.
     const body = { ...parsed.data, source: "advisor" as const };
     const data = await backendClient.post<ApiSingle<AppointmentDetail>>(
       ENDPOINTS.APPOINTMENTS.CREATE,
@@ -1378,8 +1337,10 @@ const [step, setStep] = useState<WizardStep>(prefill?.slot ? "confirm" : "person
 // via trigger(["campo"]) antes de avanzar).
 const form = useForm<BookingWizardInput>({
   resolver: zodResolver(bookingWizardSchema),
-  defaultValues: { person_id: "", product_id: "", doctor_id: "", branch_id: "", office_id: "", scheduled_for: "", notes: "", ...prefill },
+  defaultValues: { person_id: "", product_id: "", doctor_id: "", office_id: "", scheduled_for: "", notes: "", ...prefill },
 });
+// La sede (branch_id) NO está atada a bookingWizardSchema (el body de create no la lleva):
+// se maneja como estado de UI aparte del form para acotar offices/cómputo de slots.
 
 // Resultado de computeAvailability (paso Slot).
 const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
@@ -1410,7 +1371,7 @@ Drawer de detalle (no página). Carga `getAppointment(id)` en cliente al abrir (
 
 - **Cabecera**: `person_name`, badge de estado (`StatusBadge` con `status.color`), `doctor_name` · `office_name`/`branch_name`, `scheduled_for` (fecha+hora **client-only**) + `duration_min`, `source` (`APPOINTMENT_SOURCE_META`), origen de reagendamiento si `previous_appointment_id` ("Reagendada de una cita anterior" + link).
 - **`AppointmentStatusControl`** (gated por la matriz + permisos): ver abajo.
-- **Editar columnas no-estado** (gated `APPOINTMENTS_UPDATE`): form inline `doctor_id`/`office_id`/`branch_id`/`product_id`/`notes` + `reason` → `updateAppointment(id, values)`. Cambiar doctor/office puede violar invariantes → error en `MessageBar`.
+- **Editar columnas no-estado** (gated `APPOINTMENTS_UPDATE`): form inline `doctor_id`/`office_id`/`product_id`/`notes` + `reason` → `updateAppointment(id, values)` (`branch_id` se re-deriva del office; no es campo editable). Cambiar doctor/office puede violar invariantes → error en `MessageBar`.
 - **`AppointmentTimeline`** (status_history + change_log entrelazados): ver abajo.
 - **`RescheduleDialog`** / **`CancelDialog`**: ver abajo.
 
@@ -1429,11 +1390,11 @@ Componente que ofrece **shortcuts** gated por la matriz (espeja el `TransitionCo
 
 ### `RescheduleDialog.tsx`
 
-Reagendar = elegir un **nuevo** slot (re-corre el sub-flujo del wizard de Slot) que **EXCLUYE la cita vieja** del chequeo de conflicto. Reusa `WizardStepServiceDoctor` + `WizardStepSlot` (o un compute directo) con los valores actuales de la cita como defaults. Al confirmar → `rescheduleAppointment(id, personId, { doctor_id, office_id, branch_id, product_id, scheduled_for, reason, notes })`. El backend marca la vieja `RESCHEDULED` y crea la nueva con `previous_appointment_id` en la misma transacción; devuelve la **nueva** cita → el drawer puede saltar a la nueva o cerrar y dejar que la lista/grilla se re-pinten. **No** está sujeto a `min_hours_to_cancel` (no es cancelación). Errores (`SLOT_TAKEN`, etc.) sobre la **nueva** cita → `MessageBar`.
+Reagendar = elegir un **nuevo** slot (re-corre el sub-flujo del wizard de Slot) que **EXCLUYE la cita vieja** del chequeo de conflicto. Reusa `WizardStepServiceDoctor` + `WizardStepSlot` (o un compute directo) con los valores actuales de la cita como defaults. Al confirmar → `rescheduleAppointment(id, personId, { scheduled_for, doctor_id?, office_id?, reason })` (sin `branch_id`/`product_id`/`notes`; `doctor_id`/`office_id` solo si el usuario los cambió — si se omiten, el backend reusa los de la cita vieja). El backend marca la vieja `RESCHEDULED` y crea la nueva con `previous_appointment_id` en la misma transacción; devuelve la **nueva** cita → el drawer puede saltar a la nueva o cerrar y dejar que la lista/grilla se re-pinten. **No** está sujeto a `min_hours_to_cancel` (no es cancelación). Errores (`SLOT_TAKEN`, etc.) sobre la **nueva** cita → `MessageBar`.
 
 ### `CancelDialog.tsx`
 
-`Textarea cancellation_reason` (obligatorio) + botón "Cancelar cita" → `cancelAppointment(id, personId, { cancellation_reason })`. Si el backend devuelve `CANCEL_TOO_LATE` (400) — la cita está dentro de la ventana `min_hours_to_cancel` y el actor **no** tiene `APPOINTMENTS_CANCEL_OVERRIDE` — mostrar el mensaje en `MessageBar` ("No se puede cancelar: faltan menos de {n} horas. Requiere permiso de cancelación forzada."). Si el actor **sí** tiene `APPOINTMENTS_CANCEL_OVERRIDE` (`usePermissions`), mostrar un aviso "Estás cancelando fuera de la ventana permitida" pero permitir el submit (el backend salta el gate por el permiso). El front **no** manda un flag de override — lo decide el backend por permiso.
+`Textarea cancellation_reason` (opcional según el contrato; el backend acepta cancelar sin motivo) + botón "Cancelar cita" → `cancelAppointment(id, personId, { cancellation_reason })`. Si el backend devuelve `CANCEL_TOO_LATE` (400) — la cita está dentro de la ventana `min_hours_to_cancel` y el actor **no** tiene `APPOINTMENTS_CANCEL_OVERRIDE` — mostrar el mensaje en `MessageBar` ("No se puede cancelar: faltan menos de {n} horas. Requiere permiso de cancelación forzada."). Si el actor **sí** tiene `APPOINTMENTS_CANCEL_OVERRIDE` (`usePermissions`), mostrar un aviso "Estás cancelando fuera de la ventana permitida" pero permitir el submit (el backend salta el gate por el permiso). El front **no** manda un flag de override — lo decide el backend por permiso.
 
 ### `AppointmentTimeline.tsx`
 
@@ -1574,7 +1535,7 @@ Reusa el componente de crm. Recibe `statusId`, `allStatuses: AppointmentStatusOp
 - [ ] Extender `src/lib/constants/endpoints.ts` con el bloque `SCHEDULING` (`APPOINTMENT_STATUSES`, `AVAILABILITY`, `APPOINTMENTS` con nested transitions/shortcuts, `ME_SCHEDULING`). Verbos `PUT`, rutas `/active`, shortcuts `POST`. **No** incluir `from-bot`/`cancel-from-bot`.
 - [ ] Extender `src/lib/constants/navigation.ts` con el grupo `scheduling` ("Agenda" → Citas `APPOINTMENTS_READ`, Calendario `APPOINTMENTS_READ`, Estados de cita `APPOINTMENT_STATUSES_READ`, Mi agenda `MY_APPOINTMENTS_READ`; grupo gated `MENU-SCHEDULING`).
 - [ ] Registrar íconos `CalendarLtrRegular`/`CalendarClockRegular`/`CalendarWeekStartRegular`/`TagRegular`/`PersonClockRegular` en el `iconMap` del `Sidebar.tsx` (con fallbacks verificados).
-- [ ] Crear `src/types/scheduling.types.ts` (TODAS las interfaces + enums `AppointmentSource`/`CheckSlotReason`; reusa `UserAuditInfo`/`DoctorOption`/`BranchOption`/`PersonOption`/`ProductOption`).
+- [ ] Crear `src/types/scheduling.types.ts` (TODAS las interfaces incl. `AppointmentStatusOption` como ÚNICO badge/option — NO `AppointmentStatusSummary` — + enums `AppointmentSource`/`CheckSlotReason`; reusa `UserAuditInfo`/`DoctorOption`/`BranchOption`/`PersonOption`/`ProductOption`).
 - [ ] Crear `src/lib/constants/scheduling.ts` (`APPOINTMENT_SOURCE_META`, `CHECK_SLOT_REASON_LABELS`). Confirmar que `src/lib/constants/calendar.ts` (de staff) ya existe y se reusa.
 - [ ] Crear los skeletons inertes de las 4 páginas (placeholders) — registrar las rutas sin lógica. (Traducción ya hecha.)
 - [ ] **Permisos test (F0)**: con `MENU-SCHEDULING` (rol ASESOR/DOCTOR) el grupo "Agenda" aparece con sus items según permisos finos; el DOCTOR no ve "Estados de cita". Sin `MENU-SCHEDULING`, el grupo no aparece. (Los 13 permisos + roles ya están en `seed.py` — ver [`../_seed-and-roles.md`](../_seed-and-roles.md); los introduce backend F0.)

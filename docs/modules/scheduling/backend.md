@@ -617,7 +617,21 @@ class CheckSlotRequest(BaseModel):
 class CheckSlotResponse(BaseModel):
     available: bool
     reason: str | None = None  # code del primer invariante que falla (None si available)
+
+
+class CalendarResponse(BaseModel):
+    """GET /appointments/calendar + /me/calendar. Citas + slots libres del rango.
+    SIN campo timezone: la grilla resuelve la TZ del branch client-side por branch_id
+    (soporta multi-sede en un mismo rango). Importa AppointmentItem de schemas/appointment.py
+    (o se declara en appointment.py si el import cruzado molesta)."""
+
+    appointments: list["AppointmentItem"] = Field(default_factory=list)
+    free_slots: list[AvailabilitySlot] = Field(default_factory=list)
+    from_date: date_type
+    to_date: date_type
 ```
+
+> **Nota forward-ref/import**: `AppointmentItem` vive en `schemas/appointment.py`; aquí se referencia como forward-ref (string) para evitar el import circular — `model_rebuild()` o un `from app.modules.scheduling.schemas.appointment import AppointmentItem` al pie del módulo lo resuelve. Si el import cruzado molesta, declarar `CalendarResponse` en `schemas/appointment.py` reusando `AvailabilitySlot`; lo vinculante es el shape `{appointments, free_slots, from_date, to_date}` **sin** `timezone`.
 
 ### `schemas/appointment.py` (Appointment + requests de lifecycle)
 
@@ -1659,7 +1673,7 @@ Citas (bloques sólidos por estado) + slots libres (overlay) en el rango, para l
   "free_slots": [ { "starts_at": "...", "ends_at": "...", "doctor_id": "...", "office_id": "..." } ]
 } }
 ```
-> `free_slots` se computa con `compute_available_slots` cuando `doctor_id` + `product_id` vienen; si no, el calendario muestra solo `appointments` (la grilla pide los libres bajo demanda al abrir el wizard). `CalendarResponse` es un schema de `schemas/availability.py` o `schemas/appointment.py` (ver cross_doc_notes).
+> `free_slots` se computa con `compute_available_slots` cuando `doctor_id` + `product_id` vienen; si no, el calendario muestra solo `appointments` (la grilla pide los libres bajo demanda al abrir el wizard). `CalendarResponse` se define en `schemas/availability.py` (junto a Availability*/CheckSlot*), SIN campo `timezone` — la grilla resuelve la TZ del branch client-side por `branch_id`.
 
 #### Lifecycle (transition + shortcuts)
 
