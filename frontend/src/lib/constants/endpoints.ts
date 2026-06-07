@@ -9,6 +9,7 @@ const STAFF = "/api/v1/staff";
 const CRM = "/api/v1/crm";
 const CONVERSATIONS = "/api/v1/conversations";
 const BOTS = "/api/v1/bots";
+const SCHEDULING = "/api/v1/scheduling";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -235,5 +236,46 @@ export const ENDPOINTS = {
   },
   BOT_ENGINE: {
     DISPATCH_MANUAL: `${BOTS}/engine/dispatch-manual`, // POST (RBAC BOT_ENGINE_INVOKE) — debugging
+  },
+  // ── Scheduling module (#7) ───────────────────────────────
+  // Declarado en F0 (Prep), INERTE: ninguna pantalla lo consume aún. Las rutas
+  // backend se montan por fase (estados+matriz F1, citas+disponibilidad F2,
+  // lifecycle F3, calendario F4). La facade SYSTEM `/appointments/from-bot` +
+  // `/appointments/{id}/cancel-from-bot` NO va acá: la invoca el backend de bots
+  // (vía la tool), no el frontend.
+  APPOINTMENT_STATUSES: {
+    LIST: `${SCHEDULING}/appointment-statuses/list`, // POST + QueryRequest. PaginatedResponse[AppointmentStatusItem]
+    CREATE: `${SCHEDULING}/appointment-statuses`,
+    GET: (id: string) => `${SCHEDULING}/appointment-statuses/${id}`, // SingleResponse[AppointmentStatusItem]
+    UPDATE: (id: string) => `${SCHEDULING}/appointment-statuses/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${SCHEDULING}/appointment-statuses/${id}`, // soft delete (409 APPOINTMENT_STATUS_IN_USE)
+    ACTIVE: `${SCHEDULING}/appointment-statuses/active`, // raw AppointmentStatusOption[] (dropdown)
+    // Matriz de transiciones (editor en /scheduling/estados)
+    TRANSITIONS: (id: string) => `${SCHEDULING}/appointment-statuses/${id}/transitions`, // GET to-targets / PUT bulk set
+  },
+  AVAILABILITY: {
+    COMPUTE: `${SCHEDULING}/availability/compute`, // POST AvailabilityRequest → AvailabilityResponse (slots on-the-fly)
+    CHECK_SLOT: `${SCHEDULING}/availability/check-slot`, // POST → {available, reason?}
+  },
+  APPOINTMENTS: {
+    LIST: `${SCHEDULING}/appointments/list`, // POST + QueryRequest. PaginatedResponse[AppointmentItem]
+    CREATE: `${SCHEDULING}/appointments`, // POST (book)
+    GET: (id: string) => `${SCHEDULING}/appointments/${id}`, // SingleResponse[AppointmentDetail] (+ status_history + change_log)
+    UPDATE: (id: string) => `${SCHEDULING}/appointments/${id}`, // PUT columnas no-estado → changelog
+    DELETE: (id: string) => `${SCHEDULING}/appointments/${id}`, // soft delete ("error de captura", admin)
+    CALENDAR: `${SCHEDULING}/appointments/calendar`, // GET → CalendarResponse (grilla)
+    // Ciclo de vida (valida la matriz configurable)
+    TRANSITION: (id: string) => `${SCHEDULING}/appointments/${id}/transition`, // POST genérico
+    CONFIRM: (id: string) => `${SCHEDULING}/appointments/${id}/confirm`,
+    CHECK_IN: (id: string) => `${SCHEDULING}/appointments/${id}/check-in`,
+    START: (id: string) => `${SCHEDULING}/appointments/${id}/start`,
+    ATTEND: (id: string) => `${SCHEDULING}/appointments/${id}/attend`, // → ATTENDED + promote_to_customer atómico
+    NO_SHOW: (id: string) => `${SCHEDULING}/appointments/${id}/no-show`,
+    CANCEL: (id: string) => `${SCHEDULING}/appointments/${id}/cancel`, // (+APPOINTMENTS_CANCEL_OVERRIDE salta min_hours)
+    RESCHEDULE: (id: string) => `${SCHEDULING}/appointments/${id}/reschedule`,
+  },
+  ME_SCHEDULING: {
+    APPOINTMENTS_LIST: `${SCHEDULING}/me/appointments/list`, // POST + QueryRequest — mi agenda (doctor)
+    CALENDAR: `${SCHEDULING}/me/calendar`, // GET → CalendarResponse
   },
 } as const;

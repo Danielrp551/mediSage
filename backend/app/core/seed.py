@@ -158,6 +158,32 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "BOT_EVENTS_READ", "name": "Read bot events", "module": "BOTS"},
     {"code": "BOT_TOOL_CALLS_READ", "name": "Read bot tool calls", "module": "BOTS"},
     {"code": "BOT_ENGINE_INVOKE", "name": "Invoke bot engine", "module": "BOTS"},
+    # ── Module: scheduling (13 permisos) ────────────────────────────────
+    {"code": "MENU-SCHEDULING", "name": "Menu Scheduling", "module": "SCHEDULING"},
+    {
+        "code": "APPOINTMENT_STATUSES_READ",
+        "name": "Read appointment statuses",
+        "module": "SCHEDULING",
+    },
+    {
+        "code": "APPOINTMENT_STATUSES_WRITE",
+        "name": "Write appointment statuses",
+        "module": "SCHEDULING",
+    },
+    {"code": "APPOINTMENTS_READ", "name": "Read appointments", "module": "SCHEDULING"},
+    {"code": "APPOINTMENTS_CREATE", "name": "Create appointments", "module": "SCHEDULING"},
+    {"code": "APPOINTMENTS_UPDATE", "name": "Update appointments", "module": "SCHEDULING"},
+    {"code": "APPOINTMENTS_DELETE", "name": "Delete appointments", "module": "SCHEDULING"},
+    {"code": "APPOINTMENTS_TRANSITION", "name": "Transition appointment", "module": "SCHEDULING"},
+    {"code": "APPOINTMENTS_CANCEL", "name": "Cancel appointments", "module": "SCHEDULING"},
+    {
+        "code": "APPOINTMENTS_CANCEL_OVERRIDE",
+        "name": "Override cancel limit",
+        "module": "SCHEDULING",
+    },
+    {"code": "APPOINTMENTS_RESCHEDULE", "name": "Reschedule appointments", "module": "SCHEDULING"},
+    {"code": "AVAILABILITY_READ", "name": "Read availability", "module": "SCHEDULING"},
+    {"code": "MY_APPOINTMENTS_READ", "name": "Read my appointments", "module": "SCHEDULING"},
 ]
 
 

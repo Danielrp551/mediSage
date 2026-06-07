@@ -205,6 +205,23 @@ export const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: "scheduling",
+    label: "Agenda",
+    icon: "CalendarLtrRegular", // icono del grupo (sólo label + chevron en el sidebar)
+    children: [
+      // F0 declara SOLO "Estados de cita" (lo entrega F1). "Citas" + wizard (F2),
+      // "Calendario" (grilla, F4) y "Mi agenda" del doctor (F4) se agregan en su
+      // fase para no dejar links muertos prolongados (lección crm/bots).
+      {
+        key: "appointment-statuses",
+        label: "Estados de cita",
+        icon: "TagRegular",
+        url: "/scheduling/estados",
+        permissions: ["APPOINTMENT_STATUSES_READ"],
+      },
+    ],
+  },
+  {
     key: "admin",
     label: "Administración",
     icon: "SettingsRegular",
