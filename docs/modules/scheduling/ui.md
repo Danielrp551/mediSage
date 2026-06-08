@@ -691,7 +691,7 @@ Todo en **español**, tono profesional y breve. Identificadores de código (`key
 | Flag en atención | "En atención ahora" |
 | Hint en atención | "Marca el estado que representa una cita en curso (vista operativa)." |
 | Título matriz (fila) | "Transiciones permitidas hacia…" |
-| Hint matriz (fila) | "Desde '{estado}' una cita podrá pasar a los estados marcados." |
+| Hint matriz (fila) | "Desde este estado una cita podrá pasar a los estados marcados." |
 | Matriz deshabilitada (final) | "Un estado final no admite transiciones de salida." |
 | Matriz (grilla) title | "Matriz de transiciones" |
 | Matriz (grilla) subtitle | "Marca a qué estados puede pasar una cita desde cada estado de origen." |

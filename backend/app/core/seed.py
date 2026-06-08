@@ -30,6 +30,10 @@ from app.modules.crm.models.customer_status import CustomerStatus
 from app.modules.crm.models.customer_status_transition import CustomerStatusTransition
 from app.modules.crm.models.lead_status import LeadStatus
 from app.modules.crm.models.lead_status_transition import LeadStatusTransition
+from app.modules.scheduling.models.appointment_status import AppointmentStatus
+from app.modules.scheduling.models.appointment_status_transition import (
+    AppointmentStatusTransition,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -349,6 +353,42 @@ CUSTOMER_TRANSITIONS: list[tuple[str, str]] = [
     ("INACTIVO", "ACTIVO"),  # reactivar
 ]
 
+# ── Catálogo de estados de cita seed (scheduling F1, ADR-008) ──────────────
+# Idéntico patrón que crm: idempotente por `code` (MAYÚSCULAS, inmutables — los
+# shortcuts del service de F3 resuelven por estos codes). is_initial único = SCHEDULED;
+# is_final = {ATTENDED, NO_SHOW, CANCELLED, RESCHEDULED}; is_active_attention = IN_PROGRESS.
+#
+# AppointmentStatus (8): (code, name, color, is_initial, is_final, is_active_attention, display_order)
+APPOINTMENT_STATUS_SEED: list[tuple[str, str, str, bool, bool, bool, int]] = [
+    ("SCHEDULED", "Agendada", "#3B82F6", True, False, False, 10),
+    ("CONFIRMED", "Confirmada", "#06B6D4", False, False, False, 20),
+    ("CHECKED_IN", "En recepción", "#F59E0B", False, False, False, 30),
+    ("IN_PROGRESS", "En atención", "#8B5CF6", False, False, True, 40),
+    ("ATTENDED", "Atendida", "#22C55E", False, True, False, 50),
+    ("NO_SHOW", "No asistió", "#EF4444", False, True, False, 60),
+    ("CANCELLED", "Cancelada", "#6B7280", False, True, False, 70),
+    ("RESCHEDULED", "Reagendada", "#9CA3AF", False, True, False, 80),
+]
+
+# Matriz base de transiciones de cita (from_code, to_code). Editable por admin sin
+# deploy. Los finales (ATTENDED/NO_SHOW/CANCELLED/RESCHEDULED) no tienen salida.
+# Reschedule permitido desde {SCHEDULED, CONFIRMED}.
+APPOINTMENT_TRANSITIONS: list[tuple[str, str]] = [
+    ("SCHEDULED", "CONFIRMED"),
+    ("SCHEDULED", "CHECKED_IN"),
+    ("SCHEDULED", "NO_SHOW"),
+    ("SCHEDULED", "CANCELLED"),
+    ("SCHEDULED", "RESCHEDULED"),
+    ("CONFIRMED", "CHECKED_IN"),
+    ("CONFIRMED", "NO_SHOW"),
+    ("CONFIRMED", "CANCELLED"),
+    ("CONFIRMED", "RESCHEDULED"),
+    ("CHECKED_IN", "IN_PROGRESS"),
+    ("CHECKED_IN", "CANCELLED"),
+    ("IN_PROGRESS", "ATTENDED"),
+    ("IN_PROGRESS", "CANCELLED"),
+]
+
 
 async def _seed_permissions(db: AsyncSession, actor_id: str) -> list[Permission]:
     existing = (await db.execute(select(Permission))).scalars().all()
@@ -599,6 +639,82 @@ async def _seed_customer_transition_matrix(db: AsyncSession, actor_id: str) -> N
         logger.info("seed.customer_transition.created %s->%s", from_code, to_code)
 
 
+async def _seed_appointment_statuses(db: AsyncSession, actor_id: str) -> None:
+    """Inserta los AppointmentStatus faltantes (idempotente por code, incl.
+    soft-deleted: el code es UNIQUE no-parcial)."""
+    existing_codes = {s.code for s in (await db.execute(select(AppointmentStatus))).scalars().all()}
+    now = datetime.now(UTC)
+    for (
+        code,
+        name,
+        color,
+        is_initial,
+        is_final,
+        is_active_attention,
+        display_order,
+    ) in APPOINTMENT_STATUS_SEED:
+        if code in existing_codes:
+            continue
+        db.add(
+            AppointmentStatus(
+                id=str(uuid.uuid4()),
+                code=code,
+                name=name,
+                description=None,
+                color=color,
+                is_initial=is_initial,
+                is_final=is_final,
+                is_active_attention=is_active_attention,
+                display_order=display_order,
+                active=True,
+                created_by=actor_id,
+                created_on=now,
+                updated_by=actor_id,
+                updated_on=now,
+            )
+        )
+        logger.info("seed.appointment_status.created code=%s", code)
+
+
+async def _seed_appointment_transition_matrix(db: AsyncSession, actor_id: str) -> None:
+    """Inserta las aristas base de la matriz de cita que falten (idempotente).
+    Resuelve los codes a ids sobre estados VIVOS; omite una arista si alguno de sus
+    extremos no existe."""
+    id_by_code = {
+        s.code: s.id
+        for s in (
+            await db.execute(
+                select(AppointmentStatus).where(AppointmentStatus.deleted_at.is_(None))
+            )
+        )
+        .scalars()
+        .all()
+    }
+    existing_edges = {
+        (t.from_status_id, t.to_status_id)
+        for t in (await db.execute(select(AppointmentStatusTransition))).scalars().all()
+    }
+    now = datetime.now(UTC)
+    for from_code, to_code in APPOINTMENT_TRANSITIONS:
+        from_id = id_by_code.get(from_code)
+        to_id = id_by_code.get(to_code)
+        if from_id is None or to_id is None or (from_id, to_id) in existing_edges:
+            continue
+        db.add(
+            AppointmentStatusTransition(
+                id=str(uuid.uuid4()),
+                from_status_id=from_id,
+                to_status_id=to_id,
+                active=True,
+                created_by=actor_id,
+                created_on=now,
+                updated_by=actor_id,
+                updated_on=now,
+            )
+        )
+        logger.info("seed.appointment_transition.created %s->%s", from_code, to_code)
+
+
 async def seed() -> None:
     """Run the full seed inside one transaction."""
     actor_id = "00000000-0000-0000-0000-000000000001"
@@ -654,6 +770,12 @@ async def seed() -> None:
             await db.flush()
             await _seed_lead_transition_matrix(db, actor_id)
             await _seed_customer_transition_matrix(db, actor_id)
+
+            # scheduling F1: catálogo de estados de cita + matriz base (idempotente).
+            # Primero los estados; flush para materializar sus ids antes de las aristas.
+            await _seed_appointment_statuses(db, actor_id)
+            await db.flush()
+            await _seed_appointment_transition_matrix(db, actor_id)
 
 
 if __name__ == "__main__":

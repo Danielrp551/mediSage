@@ -864,7 +864,7 @@ Todo en **español**, tono profesional y breve. Identificadores de código (`key
 | Flag ganado | "Estado ganado" |
 | Hint ganado | "Un estado ganado debe ser también final." |
 | Título matriz | "Transiciones permitidas hacia…" |
-| Hint matriz | "Desde '{estado}' un lead podrá pasar a los estados marcados." |
+| Hint matriz | "Desde este estado un lead podrá pasar a los estados marcados." |
 | Matriz deshabilitada (final) | "Un estado final no tiene transiciones de salida." |
 | Empty catálogo | "Aún no hay estados. Crea el primero (marca uno como inicial)." |
 | Error en uso | "No se puede eliminar: hay contactos en este estado." |
