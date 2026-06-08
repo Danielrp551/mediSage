@@ -96,6 +96,17 @@ class AppointmentStatusRepository(BaseRepository[AppointmentStatus]):
         )
         return list(result.scalars().all())
 
+    async def get_by_ids_for_badge(
+        self, db: AsyncSession, ids: list[str]
+    ) -> list[AppointmentStatus]:
+        """Como get_by_ids pero INCLUYE soft-deleted: para denormalizar el badge de una
+        cita cuyo estado se soft-deleteó (defensa en profundidad — la lectura nunca debe
+        500-ear por un estado borrado; lookup puro por id, como office_map/person_name_map)."""
+        if not ids:
+            return []
+        result = await db.execute(select(AppointmentStatus).where(AppointmentStatus.id.in_(ids)))
+        return list(result.scalars().all())
+
 
 class AppointmentStatusTransitionRepository(BaseRepository[AppointmentStatusTransition]):
     ALLOWED_FIELDS: set[str] = set()

@@ -7,10 +7,10 @@ Invariantes (validados acá, NO en Pydantic, para devolver 400/409 + code consis
 - `code` único → 409 APPOINTMENT_STATUS_CODE_TAKEN.
 - exactamente un `is_initial` por catálogo → 400 MULTIPLE_INITIAL_STATUS.
 
-Delete-guard `APPOINTMENT_STATUS_IN_USE` (que mira la tabla `appointment`) se activa
-en F2 (cuando exista la tabla): por ahora `remove` solo limpia las aristas de la
-matriz que tocan el estado (no quedan colgantes) y lo soft-deletea — análogo a cómo
-crm difirió `LEAD_STATUS_IN_USE` hasta tener la tabla hija.
+Delete-guard `APPOINTMENT_STATUS_IN_USE` (409): no se puede borrar un estado
+referenciado por una cita viva (ACTIVADO en F2a, con la tabla `appointment` ya
+creada) — espeja `LEAD_STATUS_IN_USE`/`CUSTOMER_STATUS_IN_USE` de crm. `remove`
+además limpia las aristas de la matriz que tocan el estado (no quedan colgantes).
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import (
     AlreadyExistsException,
     BadRequestException,
+    ConflictException,
     NotFoundException,
 )
 from app.modules.admin.models.user import User
@@ -29,6 +30,7 @@ from app.modules.scheduling.models.appointment_status import AppointmentStatus
 from app.modules.scheduling.models.appointment_status_transition import (
     AppointmentStatusTransition,
 )
+from app.modules.scheduling.repositories.appointment import appointment_repository
 from app.modules.scheduling.repositories.appointment_status import (
     appointment_status_repository,
     appointment_status_transition_repository,
@@ -182,7 +184,12 @@ async def remove(db: AsyncSession, status_id: str, *, actor_id: str) -> None:
     status = await appointment_status_repository.get_by_id(db, status_id)
     if status is None:
         raise NotFoundException("Estado de cita no encontrado", code="APPOINTMENT_STATUS_NOT_FOUND")
-    # F2: guard de uso (APPOINTMENT_STATUS_IN_USE) cuando exista la tabla `appointment`.
+    # Guard de uso: no se puede borrar un estado referenciado por una cita viva (sino la
+    # denorm del badge quedaría colgando). Activado en F2 (la tabla `appointment` existe).
+    if await appointment_repository.count_using_status(db, status_id) > 0:
+        raise ConflictException(
+            "No se puede eliminar: hay citas en este estado", code="APPOINTMENT_STATUS_IN_USE"
+        )
     # Limpiamos las aristas de transición que tocan el estado (sin SD → DELETE real)
     # para no dejar la matriz colgando, y soft-deleteamos el catálogo.
     await appointment_status_transition_repository.delete_referencing(db, status_id)
