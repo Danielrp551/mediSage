@@ -209,9 +209,16 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Agenda",
     icon: "CalendarLtrRegular", // icono del grupo (sólo label + chevron en el sidebar)
     children: [
-      // F0 declara SOLO "Estados de cita" (lo entrega F1). "Citas" + wizard (F2),
+      // F2b entrega "Citas" (tabla + wizard de reserva + detalle read-only). El
       // "Calendario" (grilla, F4) y "Mi agenda" del doctor (F4) se agregan en su
       // fase para no dejar links muertos prolongados (lección crm/bots).
+      {
+        key: "appointments",
+        label: "Citas",
+        icon: "CalendarLtrRegular", // ya registrado en el ICONS map del Sidebar
+        url: "/scheduling/citas",
+        permissions: ["APPOINTMENTS_READ"],
+      },
       {
         key: "appointment-statuses",
         label: "Estados de cita",
