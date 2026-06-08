@@ -11,7 +11,7 @@ import {
 import { ENDPOINTS } from "@/lib/constants/endpoints";
 import { backendClient } from "@/services/backend.client";
 import { HttpError, type ApiPaginated, type ApiSingle } from "@/types/api.types";
-import type { QueryRequest } from "@/types/query.types";
+import type { FilterCondition, QueryRequest } from "@/types/query.types";
 import type {
   AppointmentDetail,
   AppointmentItem,
@@ -74,6 +74,78 @@ export async function computeAvailability(
     input,
   );
   return res.data;
+}
+
+// ── Calendario / Mi agenda (F4) ──────────────────────────────────────────────
+// El calendario es FRONTEND-ONLY: arma la grilla con /appointments/list (rango por
+// scheduled_for) + /me/appointments/list + /availability/compute. NO hay endpoint
+// /calendar dedicado (la memoria decía "ya existe" — era inexacto; F4 lo resuelve sin
+// tocar el backend).
+
+export async function listMyAppointments(
+  query: QueryRequest,
+): Promise<ApiPaginated<AppointmentItem>> {
+  // POST /me/appointments/list — el backend FUERZA doctor_id = doctor del token (anti-IDOR);
+  // si el user no es doctor devuelve página vacía.
+  return backendClient.post<ApiPaginated<AppointmentItem>>(
+    ENDPOINTS.ME_SCHEDULING.APPOINTMENTS_LIST,
+    query,
+    { tags: [TAG] },
+  );
+}
+
+// El list topa en limit=100; para el calendario necesitamos TODAS las citas del rango.
+// Paginamos en bucle hasta cubrir `total` (sin truncamiento silencioso). Tope de
+// seguridad: 20 páginas = 2000 citas/rango (muy por encima de una semana real).
+const RANGE_PAGE = 100;
+const RANGE_MAX_PAGES = 20;
+
+async function fetchAllInRange(
+  fetcher: (q: QueryRequest) => Promise<ApiPaginated<AppointmentItem>>,
+  conditions: FilterCondition[],
+): Promise<AppointmentItem[]> {
+  const all: AppointmentItem[] = [];
+  for (let page = 0; page < RANGE_MAX_PAGES; page++) {
+    const query: QueryRequest = {
+      pagination: { skip: page * RANGE_PAGE, limit: RANGE_PAGE },
+      sorting: { sort_by: "scheduled_for", sort_order: "asc" },
+      filters: { filters: [{ operator: "AND", conditions }] },
+    };
+    const res = await fetcher(query);
+    all.push(...res.data.items);
+    if (res.data.items.length === 0 || all.length >= res.data.total) break;
+  }
+  return all;
+}
+
+// Rango por scheduled_for (UTC ISO): gte fromIso / lt toIso (cota local→UTC la calcula el
+// cliente con toISOString del lunes/​día local). doctor/estado opcionales acotan.
+export async function fetchAppointmentsInRange(params: {
+  fromIso: string;
+  toIso: string;
+  doctorId?: string | null;
+  statusId?: string | null;
+}): Promise<AppointmentItem[]> {
+  const conditions: FilterCondition[] = [
+    { field: "scheduled_for", operator: "gte", value: params.fromIso },
+    { field: "scheduled_for", operator: "lt", value: params.toIso },
+  ];
+  if (params.doctorId)
+    conditions.push({ field: "doctor_id", operator: "eq", value: params.doctorId });
+  if (params.statusId)
+    conditions.push({ field: "status_id", operator: "eq", value: params.statusId });
+  return fetchAllInRange((q) => listAppointments(q), conditions);
+}
+
+export async function fetchMyAppointmentsInRange(params: {
+  fromIso: string;
+  toIso: string;
+}): Promise<AppointmentItem[]> {
+  const conditions: FilterCondition[] = [
+    { field: "scheduled_for", operator: "gte", value: params.fromIso },
+    { field: "scheduled_for", operator: "lt", value: params.toIso },
+  ];
+  return fetchAllInRange((q) => listMyAppointments(q), conditions);
 }
 
 // ── Ciclo de vida (F3b) ──────────────────────────────────────────────────────
