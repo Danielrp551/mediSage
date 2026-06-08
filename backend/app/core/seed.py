@@ -15,6 +15,7 @@ import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,7 @@ from app.core.security import hash_password
 from app.modules.admin.models.permission import Permission
 from app.modules.admin.models.role import Role
 from app.modules.admin.models.user import User
+from app.modules.bots.models.bot_tool import BotTool
 from app.modules.crm.models.customer_status import CustomerStatus
 from app.modules.crm.models.customer_status_transition import CustomerStatusTransition
 from app.modules.crm.models.lead_status import LeadStatus
@@ -389,6 +391,87 @@ APPOINTMENT_TRANSITIONS: list[tuple[str, str]] = [
     ("IN_PROGRESS", "CANCELLED"),
 ]
 
+# ── Catálogo de tools del bot — scheduling (F5) ────────────────────────────
+# Las 3 tools que cierran el loop lead→bot→cita→cliente. El `code` DEBE coincidir con el
+# @register_tool de `bots/services/engine/tools/scheduling.py` (si no, is_registered=false y
+# el engine devuelve TOOL_NOT_REGISTERED). El admin las ASIGNA a un bot vía el M:N
+# `bot_configuration_tool`. Idempotente por code. parameters_schema = JSON Schema (lo que ve
+# el LLM para decidir cuándo/cómo invocarlas). requires_confirmation=true en las que mutan.
+# (code, name, description, parameters_schema, target_service, requires_confirmation)
+BOT_TOOL_SEED: list[tuple[str, str, str, dict[str, Any], str, bool]] = [
+    (
+        "check_availability",
+        "Consultar disponibilidad",
+        "Lista los horarios libres de un doctor para un producto/servicio en un rango de "
+        "fechas. Úsala para ofrecerle opciones de horario al paciente antes de reservar.",
+        {
+            "type": "object",
+            "properties": {
+                "doctor_id": {"type": "string", "description": "ID del doctor"},
+                "product_id": {"type": "string", "description": "ID del producto/servicio"},
+                "from_date": {
+                    "type": "string",
+                    "description": "Fecha inicial del rango (YYYY-MM-DD)",
+                },
+                "to_date": {
+                    "type": "string",
+                    "description": "Fecha final del rango, inclusive (YYYY-MM-DD)",
+                },
+                "office_id": {"type": "string", "description": "Opcional: acota a un consultorio"},
+                "branch_id": {"type": "string", "description": "Opcional: acota a una sede"},
+            },
+            "required": ["doctor_id", "product_id", "from_date", "to_date"],
+        },
+        "scheduling.availability.compute_available_slots",
+        False,
+    ),
+    (
+        "book_appointment",
+        "Reservar cita",
+        "Reserva una cita para el contacto de la conversación en el horario elegido (un slot "
+        "devuelto por check_availability). Devuelve la cita creada o el motivo si el horario "
+        "ya no está disponible.",
+        {
+            "type": "object",
+            "properties": {
+                "doctor_id": {"type": "string", "description": "ID del doctor"},
+                "office_id": {
+                    "type": "string",
+                    "description": "ID del consultorio (el office_id del slot elegido)",
+                },
+                "product_id": {"type": "string", "description": "ID del producto/servicio"},
+                "scheduled_for": {
+                    "type": "string",
+                    "description": "Inicio de la cita en ISO 8601 (el starts_at del slot elegido)",
+                },
+                "notes": {"type": "string", "description": "Opcional: notas internas de la cita"},
+            },
+            "required": ["doctor_id", "office_id", "product_id", "scheduled_for"],
+        },
+        "scheduling.appointment.create_appointment",
+        True,
+    ),
+    (
+        "cancel_appointment",
+        "Cancelar cita",
+        "Cancela una cita existente. Puede rechazarse si falta muy poco para la cita (política "
+        "de cancelación de la clínica); en ese caso pídele al paciente que llame a la clínica.",
+        {
+            "type": "object",
+            "properties": {
+                "appointment_id": {"type": "string", "description": "ID de la cita a cancelar"},
+                "cancellation_reason": {
+                    "type": "string",
+                    "description": "Opcional: motivo de la cancelación",
+                },
+            },
+            "required": ["appointment_id"],
+        },
+        "scheduling.transition.cancel",
+        True,
+    ),
+]
+
 
 async def _seed_permissions(db: AsyncSession, actor_id: str) -> list[Permission]:
     existing = (await db.execute(select(Permission))).scalars().all()
@@ -715,6 +798,41 @@ async def _seed_appointment_transition_matrix(db: AsyncSession, actor_id: str) -
         logger.info("seed.appointment_transition.created %s->%s", from_code, to_code)
 
 
+async def _seed_bot_tools(db: AsyncSession, actor_id: str) -> None:
+    """Inserta las filas BotTool faltantes del catálogo (idempotente por code). El admin las
+    ASIGNA a un bot vía el M:N; `is_registered` se deriva en runtime (code ∈ TOOL_REGISTRY) —
+    estas 3 quedan registradas por `bots/services/engine/tools/scheduling.py`."""
+    existing_codes = {t.code for t in (await db.execute(select(BotTool))).scalars().all()}
+    now = datetime.now(UTC)
+    for (
+        code,
+        name,
+        description,
+        parameters_schema,
+        target_service,
+        requires_confirmation,
+    ) in BOT_TOOL_SEED:
+        if code in existing_codes:
+            continue
+        db.add(
+            BotTool(
+                id=str(uuid.uuid4()),
+                code=code,
+                name=name,
+                description=description,
+                parameters_schema=parameters_schema,
+                target_service=target_service,
+                requires_confirmation=requires_confirmation,
+                active=True,
+                created_by=actor_id,
+                created_on=now,
+                updated_by=actor_id,
+                updated_on=now,
+            )
+        )
+        logger.info("seed.bot_tool.created code=%s", code)
+
+
 async def seed() -> None:
     """Run the full seed inside one transaction."""
     actor_id = "00000000-0000-0000-0000-000000000001"
@@ -776,6 +894,10 @@ async def seed() -> None:
             await _seed_appointment_statuses(db, actor_id)
             await db.flush()
             await _seed_appointment_transition_matrix(db, actor_id)
+
+            # bots/scheduling F5: catálogo de tools del bot (idempotente por code). El admin
+            # las asigna a un bot vía el M:N; el engine resuelve por code en TOOL_REGISTRY.
+            await _seed_bot_tools(db, actor_id)
 
 
 if __name__ == "__main__":
