@@ -20,6 +20,7 @@ from app.modules.admin.models.user import User
 from app.modules.admin.repositories.user import user_repository
 from app.modules.admin.schemas.audit import UserAuditInfo
 from app.modules.scheduling.models.appointment import Appointment
+from app.modules.scheduling.models.appointment_change_log import AppointmentChangeLog
 from app.modules.scheduling.models.appointment_status import AppointmentStatus
 from app.modules.scheduling.models.appointment_status_history import (
     AppointmentStatusHistory,
@@ -38,6 +39,7 @@ from app.modules.scheduling.schemas.appointment import (
     AppointmentCreate,
     AppointmentDetail,
     AppointmentItem,
+    AppointmentUpdate,
 )
 from app.modules.scheduling.schemas.appointment_status import AppointmentStatusOption
 from app.modules.scheduling.schemas.audit import (
@@ -312,3 +314,103 @@ async def list_for_current_doctor(
         )
     scoped = _force_filter(query, "doctor_id", doctor.id)
     return await list_paginated(db, scoped)
+
+
+async def update_appointment(
+    db: AsyncSession, appointment_id: str, payload: AppointmentUpdate, *, actor_id: str
+) -> SingleResponse[AppointmentDetail]:
+    """PUT /appointments/{id} (F3) — edita SOLO columnas no-estado/no-tiempo
+    (doctor_id/office_id/product_id/notes). Cada cambio → una fila de AppointmentChangeLog.
+    Si cambia doctor/office/product, revalida los invariantes 1-8 sobre el nuevo combo
+    (sin tocar scheduled_for, excluyendo la propia cita del solape) y re-deriva
+    branch_id/duration_min del producto/office. status_id y scheduled_for NO se editan
+    acá (usan /transition y /reschedule)."""
+    appt = await appointment_repository.get_by_id(db, appointment_id)
+    if appt is None:
+        raise NotFoundException("Cita no encontrada", code="APPOINTMENT_NOT_FOUND")
+
+    new_doctor = payload.doctor_id if payload.doctor_id is not None else appt.doctor_id
+    new_office = payload.office_id if payload.office_id is not None else appt.office_id
+    new_product = payload.product_id if payload.product_id is not None else appt.product_id
+    revalidate = (
+        new_doctor != appt.doctor_id
+        or new_office != appt.office_id
+        or new_product != appt.product_id
+    )
+    # Revalidar ANTES de mutar la cita: si el nuevo combo es inválido (office no apto,
+    # solape, …), la excepción propaga y la cita queda intacta.
+    ctx = (
+        await availability_service.validate_booking_invariants(
+            db,
+            doctor_id=new_doctor,
+            office_id=new_office,
+            product_id=new_product,
+            scheduled_for=appt.scheduled_for,
+            exclude_id=appt.id,
+            for_update=True,
+        )
+        if revalidate
+        else None
+    )
+
+    # Solo se registra (y aplica) un cambio si el valor llega y DIFIERE del actual.
+    changes: list[tuple[str, str | None, str | None]] = []
+    if payload.doctor_id is not None and payload.doctor_id != appt.doctor_id:
+        changes.append(("doctor_id", appt.doctor_id, payload.doctor_id))
+        appt.doctor_id = payload.doctor_id
+    if payload.office_id is not None and payload.office_id != appt.office_id:
+        changes.append(("office_id", appt.office_id, payload.office_id))
+        appt.office_id = payload.office_id
+    if payload.product_id is not None and payload.product_id != appt.product_id:
+        changes.append(("product_id", appt.product_id, payload.product_id))
+        appt.product_id = payload.product_id
+    # notes es NULLABLE: a diferencia de los 3 FKs (NOT NULL → `is not None` distingue
+    # "no enviado"), acá se usa `model_fields_set` (como crm.lead_activity.update con
+    # exclude_unset) para distinguir "no enviado" de "enviado como null" → permite
+    # LIMPIAR las notas (notes=null) sin confundirlo con "no cambiar".
+    if "notes" in payload.model_fields_set and payload.notes != appt.notes:
+        changes.append(("notes", appt.notes, payload.notes))
+        appt.notes = payload.notes
+
+    if ctx is not None:
+        # branch_id/duration_min son consecuencias derivadas (no edición directa) → se
+        # actualizan sin fila de changelog (el changelog registra los campos editados).
+        appt.branch_id = ctx.branch_id
+        appt.duration_min = ctx.duration_min
+
+    if changes:
+        now = utc_now()
+        appt.updated_by = actor_id
+        appt.updated_on = now
+        for field_name, old_value, new_value in changes:
+            db.add(
+                AppointmentChangeLog(
+                    id=generate_uuid(),
+                    appointment_id=appt.id,
+                    field_name=field_name,
+                    previous_value=old_value,
+                    new_value=new_value,
+                    changed_at=now,
+                    changed_by=actor_id,
+                    reason=payload.reason,
+                    active=True,
+                    created_by=actor_id,
+                    created_on=now,
+                    updated_by=actor_id,
+                    updated_on=now,
+                )
+            )
+        await db.flush()
+    return SingleResponse(data=await _to_detail(db, appt))
+
+
+async def delete_appointment(db: AsyncSession, appointment_id: str, *, actor_id: str) -> None:
+    """DELETE /appointments/{id} (F3) — soft delete SOLO para "error de captura" (admin).
+    NO es el camino de cierre normal: una cita ATTENDED/CANCELLED/NO_SHOW mantiene su fila
+    viva como registro histórico. Aquí se oculta una cita creada por error."""
+    appt = await appointment_repository.get_by_id(db, appointment_id)
+    if appt is None:
+        raise NotFoundException("Cita no encontrada", code="APPOINTMENT_NOT_FOUND")
+    appt.updated_by = actor_id
+    appt.updated_on = utc_now()
+    await appointment_repository.soft_delete(db, appt)

@@ -40,6 +40,42 @@ class AppointmentCreate(BaseModel):
     notes: str | None = None
 
 
+class AppointmentUpdate(BaseModel):
+    """Body de PUT /appointments/{id} (F3) — SOLO columnas no-estado y no-tiempo (cada
+    cambio → AppointmentChangeLog). status_id se cambia por /transition; scheduled_for
+    por /reschedule. branch_id/duration_min se re-derivan si cambia office/product."""
+
+    doctor_id: str | None = None
+    office_id: str | None = None
+    product_id: str | None = None
+    notes: str | None = None
+    reason: str | None = Field(default=None, max_length=255)  # para el changelog
+
+
+class AppointmentTransitionRequest(BaseModel):
+    """Body de POST /appointments/{id}/transition (F3, genérico, valida la matriz)."""
+
+    to_status_id: str = Field(min_length=1)
+    reason: str | None = Field(default=None, max_length=255)
+
+
+class AppointmentCancelRequest(BaseModel):
+    """Body de POST /appointments/{id}/cancel (F3)."""
+
+    cancellation_reason: str | None = Field(default=None, max_length=255)
+
+
+class AppointmentRescheduleRequest(BaseModel):
+    """Body de POST /appointments/{id}/reschedule (F3). Crea una cita NUEVA (mismo
+    person/product por defecto; doctor/office/scheduled_for nuevos) y marca la vieja
+    RESCHEDULED. doctor_id/office_id opcionales = se reusan los de la cita vieja."""
+
+    scheduled_for: datetime  # nuevo inicio, UTC
+    doctor_id: str | None = None
+    office_id: str | None = None
+    reason: str | None = Field(default=None, max_length=255)
+
+
 class AppointmentItem(BaseModel):
     """Fila de la tabla de citas. Denormaliza person/doctor/office/branch/product + el
     badge de estado para que la lista no joinee. NINGUNO de los denormalizados va en
