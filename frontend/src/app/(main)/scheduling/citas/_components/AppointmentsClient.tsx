@@ -369,7 +369,14 @@ export function AppointmentsClient({ initialData, doctors, statuses, branches, p
       ) : null}
 
       {detailId ? (
-        <AppointmentDetailDrawer appointmentId={detailId} onClose={() => setDetailId(null)} />
+        <AppointmentDetailDrawer
+          appointmentId={detailId}
+          onClose={() => setDetailId(null)}
+          onChanged={() => void table.query.refetch()}
+          doctors={doctors}
+          branches={branches}
+          products={products}
+        />
       ) : null}
     </div>
   );

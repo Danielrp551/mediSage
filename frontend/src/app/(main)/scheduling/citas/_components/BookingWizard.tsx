@@ -4,7 +4,6 @@ import {
   Button,
   Combobox,
   Dropdown,
-  Input,
   MessageBar,
   MessageBarBody,
   Option,
@@ -14,26 +13,23 @@ import {
   mergeClasses,
   tokens,
 } from "@fluentui/react-components";
-import {
-  CalendarLtrRegular,
-  CheckmarkCircleRegular,
-  PersonRegular,
-  SearchRegular,
-} from "@fluentui/react-icons";
+import { PersonRegular, SearchRegular } from "@fluentui/react-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState, useTransition } from "react";
 
-import { computeAvailability, createAppointment } from "@/actions/appointment.actions";
+import { createAppointment } from "@/actions/appointment.actions";
 import { listActiveOffices } from "@/actions/office.actions";
 import { listActivePersons } from "@/actions/person.actions";
 import { Drawer } from "@/components/ui/Drawer/Drawer";
 import { FormField } from "@/components/ui/Form/FormField";
 import { appTokens } from "@/lib/theme/brand";
-import { formatDate, formatDateShort, formatTime } from "@/lib/utils/date";
+import { formatDate } from "@/lib/utils/date";
 import type { ProductOption } from "@/types/catalog.types";
 import type { BranchOption } from "@/types/clinic.types";
 import type { AvailabilitySlot } from "@/types/scheduling.types";
 import type { DoctorOption } from "@/types/staff.types";
+
+import { AvailabilityPicker } from "./AvailabilityPicker";
 
 const useStyles = makeStyles({
   body: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalL },
@@ -84,29 +80,9 @@ const useStyles = makeStyles({
   twoCol: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: tokens.spacingHorizontalM },
   hint: { fontSize: tokens.fontSizeBase200, color: appTokens.chromeTextMuted, margin: 0 },
   loadingRow: { display: "flex", alignItems: "center", gap: tokens.spacingHorizontalS },
-  // width 100% + minWidth 0 para que el input nativo de fecha (dentro del <Input> de
-  // Fluent) no desborde el grid de dos columnas (mismo arreglo que AddAvailabilityDrawer).
+  // width 100% + minWidth 0 para que el input nativo (dentro del <Input> de Fluent) no
+  // desborde el grid de dos columnas (mismo arreglo que AddAvailabilityDrawer).
   control: { width: "100%", minWidth: 0 },
-  // Disponibilidad: cada día agrupa sus slots; los slots son botones togglables.
-  dayGroup: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalS },
-  dayHeader: {
-    fontSize: tokens.fontSizeBase300,
-    fontWeight: tokens.fontWeightSemibold,
-    color: appTokens.chromeText,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-  },
-  slotGrid: { display: "flex", flexWrap: "wrap", gap: tokens.spacingHorizontalS },
-  slotButton: { minWidth: "auto" },
-  emptyBox: {
-    padding: tokens.spacingVerticalL,
-    borderRadius: tokens.borderRadiusMedium,
-    border: `1px dashed ${appTokens.chromeBorder}`,
-    color: appTokens.chromeTextMuted,
-    fontSize: tokens.fontSizeBase300,
-    textAlign: "center",
-  },
   // Resumen: filas etiqueta/valor.
   summary: {
     display: "grid",
@@ -128,13 +104,6 @@ interface Props {
 
 const STEP_LABELS = ["Contacto", "Servicio y profesional", "Disponibilidad", "Resumen"] as const;
 
-// Grupo de slots por día local (la clave de día se deriva client-side de starts_at;
-// ver nota TZ en el render del paso 3).
-interface DayGroup {
-  key: string;
-  slots: AvailabilitySlot[];
-}
-
 export function BookingWizard({ doctors, products, branches, onClose, onCreated }: Props) {
   const styles = useStyles();
 
@@ -151,18 +120,9 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
   const [doctorId, setDoctorId] = useState<string | null>(null);
   const [branchId, setBranchId] = useState<string | null>(null);
   const [officeId, setOfficeId] = useState<string | null>(null);
-  // Paso 3 — la disponibilidad y la selección de slot son un bloque acoplado: se
-  // invalidan juntas (resetAvailability) cuando cambia cualquier insumo del cómputo.
-  const [fromDate, setFromDate] = useState<string>("");
-  const [toDate, setToDate] = useState<string>("");
-  const [slots, setSlots] = useState<AvailabilitySlot[] | null>(null);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-  const [slotsError, setSlotsError] = useState<string | null>(null);
-  // El slot elegido se guarda COMPLETO (no solo su starts_at): dos consultorios pueden
-  // tener un slot a la misma hora, así que starts_at solo no lo identifica. De él salen
-  // el office_id y el scheduled_for que se mandan al crear.
+  // Paso 3 — el slot elegido. El AvailabilityPicker posee el cómputo y lo INVALIDA (vía
+  // onSelectSlot(null)) cuando cambia cualquier insumo (doctor/producto/sede/consultorio).
   const [selectedSlot, setSelectedSlot] = useState<AvailabilitySlot | null>(null);
-  const [slotDurationMin, setSlotDurationMin] = useState<number | null>(null);
   // Paso 4
   const [notes, setNotes] = useState<string>("");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -190,63 +150,6 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
     queryFn: () => listActiveOffices(branchId ?? undefined),
     enabled: step >= 2,
   });
-
-  // Invalida la disponibilidad ya computada: se llama al cambiar CUALQUIER insumo del
-  // cómputo (doctor/producto/sede/consultorio/fechas) para que el paso 3 obligue a
-  // re-buscar y no quede un slot/duración/office stale del cómputo anterior.
-  const resetAvailability = () => {
-    setSlots(null);
-    setSelectedSlot(null);
-    setSlotDurationMin(null);
-    setSlotsError(null);
-  };
-
-  // ── Cómputo de disponibilidad ──
-  const handleSearchSlots = async () => {
-    if (!doctorId || !productId || !fromDate || !toDate) return;
-    // Validación client-side del rango: el backend también lo rechaza (422) pero su
-    // `detail` llega en inglés genérico; acá damos un mensaje claro en español. Las
-    // fechas son "YYYY-MM-DD" → comparar como string es cronológicamente correcto.
-    if (toDate < fromDate) {
-      setSlotsError('La fecha "Hasta" debe ser igual o posterior a "Desde".');
-      return;
-    }
-    setLoadingSlots(true);
-    setSlotsError(null);
-    setSlots(null);
-    setSelectedSlot(null);
-    try {
-      const res = await computeAvailability({
-        doctor_id: doctorId,
-        product_id: productId,
-        branch_id: branchId || null,
-        office_id: officeId || null,
-        from_date: fromDate,
-        to_date: toDate,
-      });
-      setSlots(res.slots);
-      setSlotDurationMin(res.duration_min);
-    } catch (e) {
-      setSlotsError(e instanceof Error ? e.message : "No se pudo calcular la disponibilidad.");
-    } finally {
-      setLoadingSlots(false);
-    }
-  };
-
-  // Agrupa los slots por día LOCAL. La clave del día se deriva de
-  // formatDateShort(starts_at) — client-safe (TZ del navegador); NO se construye una
-  // fecha con la hora actual, para no desfasar entre SSR y cliente.
-  const dayGroups = useMemo<DayGroup[]>(() => {
-    if (!slots) return [];
-    const map = new Map<string, AvailabilitySlot[]>();
-    for (const slot of slots) {
-      const key = formatDateShort(slot.starts_at);
-      const bucket = map.get(key);
-      if (bucket) bucket.push(slot);
-      else map.set(key, [slot]);
-    }
-    return Array.from(map.entries()).map(([key, daySlots]) => ({ key, slots: daySlots }));
-  }, [slots]);
 
   // ── Crear cita ── (office_id y scheduled_for salen del slot elegido) ──
   const handleCreate = () => {
@@ -285,6 +188,15 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
   const selectedBranchName = branches.find((b) => b.id === branchId)?.name ?? "";
   const selectedOffice = officesQuery.data?.find((o) => o.id === officeId);
   const officesEmpty = !officesQuery.isPending && (officesQuery.data?.length ?? 0) === 0;
+
+  // Duración derivada del slot elegido (ends_at − starts_at en minutos; es una diferencia,
+  // independiente de la TZ). Equivale a product.duration_min (ends_at = starts_at + dur).
+  const selectedDurationMin = selectedSlot
+    ? Math.round(
+        (new Date(selectedSlot.ends_at).getTime() - new Date(selectedSlot.starts_at).getTime()) /
+          60000,
+      )
+    : null;
 
   return (
     <Drawer
@@ -415,10 +327,7 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
                   placeholder="Seleccionar producto…"
                   value={selectedProductName}
                   selectedOptions={productId ? [productId] : []}
-                  onOptionSelect={(_, d) => {
-                    setProductId(d.optionValue || null);
-                    resetAvailability();
-                  }}
+                  onOptionSelect={(_, d) => setProductId(d.optionValue || null)}
                 >
                   {products.length === 0 ? (
                     <Option key="__none" value="__none" disabled>
@@ -439,10 +348,7 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
                   placeholder="Seleccionar doctor…"
                   value={selectedDoctorName}
                   selectedOptions={doctorId ? [doctorId] : []}
-                  onOptionSelect={(_, d) => {
-                    setDoctorId(d.optionValue || null);
-                    resetAvailability();
-                  }}
+                  onOptionSelect={(_, d) => setDoctorId(d.optionValue || null)}
                 >
                   {doctors.length === 0 ? (
                     <Option key="__none" value="__none" disabled>
@@ -467,10 +373,9 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
                   selectedOptions={branchId ? [branchId] : []}
                   onOptionSelect={(_, d) => {
                     setBranchId(d.optionValue || null);
-                    // Al cambiar de sede limpiamos el consultorio (puede no pertenecerle)
-                    // y la disponibilidad ya computada.
+                    // Al cambiar de sede limpiamos el consultorio (puede no pertenecerle);
+                    // el AvailabilityPicker invalida la disponibilidad al cambiar el insumo.
                     setOfficeId(null);
-                    resetAvailability();
                   }}
                 >
                   <Option value="">Cualquier sede</Option>
@@ -490,10 +395,7 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
                   placeholder="Cualquier consultorio"
                   value={selectedOffice?.name ?? ""}
                   selectedOptions={officeId ? [officeId] : []}
-                  onOptionSelect={(_, d) => {
-                    setOfficeId(d.optionValue || null);
-                    resetAvailability();
-                  }}
+                  onOptionSelect={(_, d) => setOfficeId(d.optionValue || null)}
                   disabled={officesQuery.isPending}
                 >
                   <Option value="">Cualquier consultorio</Option>
@@ -514,91 +416,19 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
           </div>
         ) : null}
 
-        {/* ── Paso 3: Disponibilidad ── */}
-        {step === 3 ? (
-          <div className={styles.panel}>
-            <div className={styles.twoCol}>
-              <FormField label="Desde" required>
-                {/* Fechas como strings "YYYY-MM-DD"; NO se parsean con el constructor Date. */}
-                <Input
-                  type="date"
-                  className={styles.control}
-                  value={fromDate}
-                  onChange={(_, d) => {
-                    setFromDate(d.value);
-                    resetAvailability();
-                  }}
-                />
-              </FormField>
-              <FormField label="Hasta" required>
-                <Input
-                  type="date"
-                  className={styles.control}
-                  value={toDate}
-                  onChange={(_, d) => {
-                    setToDate(d.value);
-                    resetAvailability();
-                  }}
-                />
-              </FormField>
-            </div>
-            <div>
-              <Button
-                appearance="primary"
-                icon={<CalendarLtrRegular />}
-                onClick={() => void handleSearchSlots()}
-                disabled={!fromDate || !toDate || loadingSlots}
-              >
-                {loadingSlots ? "Buscando…" : "Buscar horarios"}
-              </Button>
-            </div>
-
-            {slotsError ? (
-              <MessageBar intent="error">
-                <MessageBarBody>{slotsError}</MessageBarBody>
-              </MessageBar>
-            ) : null}
-
-            {loadingSlots ? (
-              <span className={styles.loadingRow}>
-                <Spinner size="small" />
-                <span className={styles.hint}>Calculando disponibilidad…</span>
-              </span>
-            ) : null}
-
-            {slots !== null && !loadingSlots && slots.length === 0 ? (
-              <div className={styles.emptyBox}>No hay horarios disponibles en ese rango.</div>
-            ) : null}
-
-            {dayGroups.map((group) => (
-              <div key={group.key} className={styles.dayGroup}>
-                <span className={styles.dayHeader}>
-                  <CalendarLtrRegular />
-                  {group.key}
-                </span>
-                <div className={styles.slotGrid}>
-                  {group.slots.map((slot) => {
-                    const selected =
-                      selectedSlot?.starts_at === slot.starts_at &&
-                      selectedSlot?.office_id === slot.office_id;
-                    return (
-                      <Button
-                        key={`${slot.starts_at}-${slot.office_id}`}
-                        className={styles.slotButton}
-                        appearance={selected ? "primary" : "outline"}
-                        icon={selected ? <CheckmarkCircleRegular /> : undefined}
-                        aria-pressed={selected}
-                        onClick={() => setSelectedSlot(slot)}
-                      >
-                        {formatTime(slot.starts_at)} · {slot.office_name}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        {/* ── Paso 3: Disponibilidad ── El picker se mantiene MONTADO (visibilidad por
+            display) para que la selección y los slots computados persistan al navegar
+            entre pasos; solo se invalidan cuando cambia un insumo del cómputo. */}
+        <div style={{ display: step === 3 ? undefined : "none" }}>
+          <AvailabilityPicker
+            doctorId={doctorId}
+            productId={productId}
+            branchId={branchId}
+            officeId={officeId}
+            selectedSlot={selectedSlot}
+            onSelectSlot={setSelectedSlot}
+          />
+        </div>
 
         {/* ── Paso 4: Resumen y confirmación ── */}
         {step === 4 ? (
@@ -629,7 +459,7 @@ export function BookingWizard({ doctors, products, branches, onClose, onCreated 
               </span>
               <span className={styles.summaryLabel}>Duración</span>
               <span className={styles.summaryValue}>
-                {slotDurationMin !== null ? `${slotDurationMin} min` : "—"}
+                {selectedDurationMin !== null ? `${selectedDurationMin} min` : "—"}
               </span>
             </div>
 
