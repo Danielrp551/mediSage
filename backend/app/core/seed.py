@@ -801,8 +801,18 @@ async def _seed_appointment_transition_matrix(db: AsyncSession, actor_id: str) -
 async def _seed_bot_tools(db: AsyncSession, actor_id: str) -> None:
     """Inserta las filas BotTool faltantes del catálogo (idempotente por code). El admin las
     ASIGNA a un bot vía el M:N; `is_registered` se deriva en runtime (code ∈ TOOL_REGISTRY) —
-    estas 3 quedan registradas por `bots/services/engine/tools/scheduling.py`."""
-    existing_codes = {t.code for t in (await db.execute(select(BotTool))).scalars().all()}
+    estas 3 quedan registradas por `bots/services/engine/tools/scheduling.py`.
+
+    Idempotencia sobre filas VIVAS: el UNIQUE de `bot_tool.code` es PARCIAL (solo deleted_at
+    IS NULL), a diferencia de appointment_status (UNIQUE no-parcial). Si un code quedó
+    soft-deleted (p.ej. un test previo), se re-crea una fila viva — el UNIQUE parcial lo
+    permite y la herramienta vuelve a estar disponible/asignable."""
+    existing_codes = {
+        t.code
+        for t in (await db.execute(select(BotTool).where(BotTool.deleted_at.is_(None))))
+        .scalars()
+        .all()
+    }
     now = datetime.now(UTC)
     for (
         code,
