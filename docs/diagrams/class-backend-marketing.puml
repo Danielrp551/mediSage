@@ -1,6 +1,6 @@
 @startuml class-backend-marketing
 ' Propósito: jerarquía OO del módulo marketing — modelos, repos y services funcionales
-' Última actualización: 2026-05-28
+' Última actualización: 2026-06-08
 ' Código de referencia: backend/app/modules/marketing/
 
 !theme plain
@@ -30,7 +30,7 @@ package "app.shared" <<Frame>> {
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Models
+' Models (3 entidades + 2 tablas M:N)
 ' ─────────────────────────────────────────────────────────────
 package "app.modules.marketing.models" <<Frame>> {
   class Campaign <<entity>> {
@@ -40,7 +40,7 @@ package "app.modules.marketing.models" <<Frame>> {
     +start_date: date
     +end_date: date?
     +status: str        ' draft/active/paused/ended
-    +target_vertical_id: str? <<FK>>
+    +target_vertical_id: str? <<FK vertical.id>>
     --
     +promotions: list<Promotion> <<M:N>>
   }
@@ -49,7 +49,7 @@ package "app.modules.marketing.models" <<Frame>> {
     +code: str <<unique>>
     +name: str
     +description: str?
-    +discount_type: str          ' percentage / fixed_amount
+    +discount_type: str          ' percentage / fixed_amount (inmutable)
     +discount_value: Decimal
     +currency: str = 'PEN'
     +start_date: date
@@ -58,24 +58,32 @@ package "app.modules.marketing.models" <<Frame>> {
     +max_uses_per_person: int?
     +applies_to_all_products: bool = false
     --
-    +products: list<Product> <<M:N>>
     +campaigns: list<Campaign> <<M:N>>
+    ' productos: por query propia (sin relationship en Product)
   }
 
   class PromotionUsage <<entity, immutable>> {
-    +promotion_id: str <<FK>>
-    +person_id: str <<FK>>
-    +appointment_id: str? <<FK>>
-    +campaign_id: str? <<FK>>
-    +applied_at: datetime
-    +applied_by: str? <<FK>>
+    +promotion_id: str <<FK promotion.id>>
+    +person_id: str <<FK person.id>>
+    +product_id: str <<FK product.id>>
+    +appointment_id: str? <<FK appointment.id>>
+    +campaign_id: str? <<FK campaign.id>>
     +original_amount: Decimal
     +discount_amount: Decimal
     +final_amount: Decimal
     +currency: str
     +notes: str?
     --
-    ' SIN SoftDelete
+    ' SIN SoftDelete · created_on/created_by = applied
+  }
+
+  class "campaign_promotion" as CampaignPromotionTable <<association>> {
+    +campaign_id: str <<PK, FK>>
+    +promotion_id: str <<PK, FK>>
+  }
+  class "promotion_product" as PromotionProductTable <<association>> {
+    +promotion_id: str <<PK, FK>>
+    +product_id: str <<PK, FK>>
   }
 }
 
@@ -102,61 +110,86 @@ package "app.modules.marketing.repositories" <<Frame>> {
   class CampaignRepository {
     +ALLOWED_FIELDS
     +get_by_code(db, code): Campaign?
-    +get_full(db, id): Campaign?  ' eager: promotions
-    +list_options(db, status?): list
+    +list_active(db): list<Campaign>
+    +get_by_ids(db, ids): list<Campaign>
+    +campaign_name_map(db, ids): dict<str,str>
   }
   class PromotionRepository {
     +ALLOWED_FIELDS
     +get_by_code(db, code): Promotion?
-    +get_full(db, id): Promotion?  ' eager: products, campaigns
-    +list_active_for(db, product_id, now): list  ' candidate promos
-    +list_options(db, active_only): list
-    +select_for_update_with_count(db, promotion_id): tuple<Promotion, int>
+    +list_active(db): list<Promotion>
+    +get_by_ids(db, ids): list<Promotion>
+    +get_for_update(db, promotion_id): Promotion?  ' with_for_update
+    +promotion_name_map(db, ids): dict<str,str>
+  }
+  class CampaignPromotionRepository {
+    +promotion_ids_for_campaign(db, campaign_id): list<str>
+    +campaign_ids_for_promotion(db, promotion_id): list<str>
+    +set_promotions(db, campaign_id, promotion_ids)  ' bulk-replace
+    +count_promotions_map(db, campaign_ids): dict<str,int>
+    +count_campaigns_map(db, promotion_ids): dict<str,int>
+  }
+  class PromotionProductRepository {
+    +product_ids_for_promotion(db, promotion_id): list<str>
+    +set_products(db, promotion_id, product_ids)  ' bulk-replace
+    +count_products_map(db, promotion_ids): dict<str,int>
+    +list_products_for_promotion(db, promotion_id): list<Product>  ' join propio a catalog
+    +covers_product(db, promotion_id, product_id): bool
   }
   class PromotionUsageRepository {
-    +list_for_promotion(db, promotion_id, query): tuple<list, int>
-    +list_for_person(db, person_id, promotion_id?): list
-    +list_for_appointment(db, appointment_id): list
+    +ALLOWED_FIELDS
+    +get_by_appointment(db, appointment_id): PromotionUsage?  ' pre-check no-stacking
     +count_for_promotion(db, promotion_id): int
-    +count_for_person_promotion(db, person_id, promotion_id): int
-    +append(db, usage): PromotionUsage
+    +count_for_promotion_person(db, promotion_id, person_id): int
+    +usage_summary(db, promotion_id): Row  ' count, sum_original, sum_discount, sum_final
   }
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Services
+' Services (módulos de funciones)
 ' ─────────────────────────────────────────────────────────────
 package "app.modules.marketing.services" <<Frame>> {
   class "campaign.py" as camp_svc <<module>> {
-    +get_by_id / list_paginated / create / update / soft_delete
-    +transition_status(db, campaign_id, to_status, actor_id)
-    +replace_promotions(db, campaign_id, promotion_ids, actor_id)
+    +list_paginated / get_by_id / create / update / remove
+    +list_active(db): list<CampaignOption>
+    +transition(db, id, to_status, *, actor_id)
+    +get_promotions(db, id): list<PromotionOption>
+    +set_promotions(db, id, promotion_ids, *, actor_id)
   }
   class "promotion.py" as prom_svc <<module>> {
-    +get_by_id / list_paginated / create / update / soft_delete
-    +replace_products(db, promotion_id, product_ids, actor_id)
-    +list_eligible_for(db, product_id, person_id, now): list<EligibilityResult>
-    +validate(db, promotion_id, product_id, person_id, now): EligibilityResult
-    +compute_price(db, product_id, person_id, promotion_id?, now): PriceResult
+    +list_paginated / get_by_id / create / update / remove
+    +list_active(db): list<PromotionOption>
+    +_validate_discount(discount_type, discount_value)
+    +get_products(db, id): list<ProductOption>
+    +set_products(db, id, product_ids, *, actor_id)
+    +usage_summary(db, id): PromotionUsageSummary
   }
   class "promotion_usage.py" as pu_svc <<module>> {
-    +list_for_promotion(db, promotion_id, query)
-    +list_for_person(db, person_id)
-    +apply(db, promotion_id, person_id, appointment_id, campaign_id?, actor_id?): PromotionUsage
+    +apply(db, *, promotion_id, person_id, product_id, appointment_id?, campaign_id?, actor_id, notes?): PromotionUsageDetail
+    +eligible_for(db, *, product_id, person_id): list<PromotionEligibility>
+    +validate(db, *, promotion_id, product_id, person_id): PromotionEligibility
+    +compute_price(db, *, product_id, person_id, promotion_id?): ComputePriceResponse
+    +list_paginated(db, query): PaginatedResponse<PromotionUsageItem>
     --
-    ' SELECT FOR UPDATE sobre promotion + recount
-    ' Valida no-stacking, max_uses, fechas, eligibility
+    +_compute_discount(promo, base_price): Decimal  ' puro · ROUND_HALF_UP · cap base_price
   }
 }
 
 ' ─────────────────────────────────────────────────────────────
-' Externos
+' Externos (otros módulos · solo lectura, salvo F4)
 ' ─────────────────────────────────────────────────────────────
 class "Vertical" as Vertical <<entity,external>> #lightgrey
 class "Product" as Product <<entity,external>> #lightgrey
 class "Person" as Person <<entity,external>> #lightgrey
 class "Appointment" as Appointment <<entity,external>> #lightgrey
 class "User" as User <<entity,external>> #lightgrey
+
+class "catalog.product_repository" as ProductRepo <<repo,external>> #lightgrey
+class "catalog.vertical_repository" as VerticalRepo <<repo,external>> #lightgrey
+class "crm.person_repository" as PersonRepo <<repo,external>> #lightgrey
+class "crm.services.person\n(person_option_map)" as PersonSvc <<module,external>> #lightgrey
+class "admin.user_repository" as UserRepo <<repo,external>> #lightgrey
+class "scheduling.services.appointment\n(create_appointment)" as ApptSvc <<module,external>> #lightblue
 
 ' ─────────────────────────────────────────────────────────────
 ' Herencia mixins
@@ -172,6 +205,8 @@ SoftDeleteMixin <|-- Promotion
 TimestampMixin  <|-- Promotion
 
 PrimaryKeyMixin <|-- PromotionUsage
+ActiveMixin     <|-- PromotionUsage
+TimestampMixin  <|-- PromotionUsage
 
 note bottom of TimestampMixin
   **Mixins por entidad**:
@@ -181,77 +216,124 @@ note bottom of TimestampMixin
   ""PromotionUsage"":
   PrimaryKey + Active + Timestamp.
   SIN SoftDelete — audit trail.
+  ""created_on/created_by"" = aplicación
+  (auto-aplicación → SYSTEM_USER_ID).
 end note
 
-' Repos extienden BaseRepository
-BaseRepository <|-- CampaignRepository      : "<Campaign>"
-BaseRepository <|-- PromotionRepository     : "<Promotion>"
+' Repos extienden BaseRepository (los 2 M:N no la extienden)
+BaseRepository <|-- CampaignRepository       : "<Campaign>"
+BaseRepository <|-- PromotionRepository      : "<Promotion>"
 BaseRepository <|-- PromotionUsageRepository : "<PromotionUsage>"
 
-' Relaciones dominio
-Campaign  "*" -- "*" Promotion : "campaign_promotion"
-Promotion "*" -- "*" Product   : "promotion_product"
+' Relaciones dominio (M:N vía tablas de asociación)
+Campaign  "*" -- "*" CampaignPromotionTable
+Promotion "*" -- "*" CampaignPromotionTable
+Promotion "*" -- "*" PromotionProductTable
+Product   "*" -- "*" PromotionProductTable
 
-Campaign  "0..1" -- "0..*" Vertical : "target"
+Campaign  "0..1" --> "0..*" Vertical : "target_vertical_id"
 
-Promotion "1" -- "0..*" PromotionUsage
+Promotion       "1" -- "0..*" PromotionUsage
+PromotionUsage  "*" --> "1"    Person      : "person_id"
+PromotionUsage  "*" --> "1"    Product     : "product_id"
+PromotionUsage  "*" --> "0..1" Appointment : "appointment_id"
+PromotionUsage  "*" --> "0..1" Campaign    : "campaign_id"
 
-PromotionUsage "*" -- "1" Person
-PromotionUsage "*" -- "0..1" Appointment
-PromotionUsage "*" -- "0..1" Campaign
-PromotionUsage "*" -- "0..1" User : "applied_by"
+' Enums tipan columnas
+CampaignStatus .. Campaign  : "status"
+DiscountType   .. Promotion : "discount_type"
 
 ' Repos manejan modelos
-CampaignRepository       ..> Campaign
-PromotionRepository      ..> Promotion
-PromotionUsageRepository ..> PromotionUsage
+CampaignRepository         ..> Campaign
+PromotionRepository        ..> Promotion
+CampaignPromotionRepository ..> CampaignPromotionTable
+PromotionProductRepository  ..> PromotionProductTable
+PromotionProductRepository  ..> Product : "join propio (lectura)"
+PromotionUsageRepository    ..> PromotionUsage
 
-' Services usan repos
+' Services usan repos del módulo
 camp_svc ..> CampaignRepository
+camp_svc ..> CampaignPromotionRepository
 camp_svc ..> PromotionRepository
 prom_svc ..> PromotionRepository
+prom_svc ..> CampaignPromotionRepository
+prom_svc ..> PromotionProductRepository
 prom_svc ..> PromotionUsageRepository
-pu_svc   ..> PromotionUsageRepository
 pu_svc   ..> PromotionRepository
+pu_svc   ..> PromotionProductRepository
+pu_svc   ..> PromotionUsageRepository
 
+' Dependencias cross-módulo (lectura, sin modificar otros módulos)
+camp_svc ..> VerticalRepo : "get_by_ids / VerticalOption"
+camp_svc ..> UserRepo     : "audit map"
+prom_svc ..> ProductRepo  : "validar productos"
+prom_svc ..> UserRepo     : "audit map"
+pu_svc   ..> ProductRepo  : "get_by_id (base_price/currency)"
+pu_svc   ..> PersonRepo   : "get_by_id"
+pu_svc   ..> PersonSvc    : "person_option_map (reportes)"
+pu_svc   ..> UserRepo     : "audit map"
+
+' F4 — wire cross-módulo: scheduling invoca apply (atómico, misma sesión)
+ApptSvc ..> pu_svc : "apply (F4 · apply_promotion_id)"
+
+' ─────────────────────────────────────────────────────────────
 ' Notas
+' ─────────────────────────────────────────────────────────────
 note right of Campaign
   **Atribución de leads**
-  Sin UTM/budget en MVP.
-  Status workflow validado en service.
+  ""status"" enum FIJO (no matriz BD).
+  Transiciones validadas en service:
+  draft→active · active→{paused,ended}
+  · paused→{active,ended} · ended=∅.
+  Cierra ADR-009 (FK forward a campaign).
 end note
 
 note right of Promotion
   **Descuento discriminado**
   ""discount_type"" + ""discount_value""
-  con validación cruzada.
-  ""applies_to_all_products=true""
-  ignora la M:N.
+  validados en SERVICE (_validate_discount):
+  percentage 0<v≤100 · fixed v>0.
+  ""discount_type"" inmutable post-create.
+  ""applies_to_all_products=true"" ignora M:N.
 end note
 
 note bottom of PromotionUsage
-  **Audit + reporte**
-  Snapshot del precio al momento.
-  No stacking: invariante en service
-  (si ya hay fila para appointment_id,
-  rechaza con PROMOTION_ALREADY_APPLIED).
+  **Audit + reporte (inmutable)**
+  Snapshot precio: original/discount/final + currency.
+  ""product_id"" = qué producto recibió el descuento.
+  No stacking: UNIQUE parcial sobre
+  ""appointment_id"" (WHERE NOT NULL) +
+  guard en service (PROMOTION_ALREADY_APPLIED).
 end note
 
 note bottom of pu_svc
-  **Concurrencia**
-  ""apply"" usa SELECT FOR UPDATE
-  sobre promotion + recount, para
-  evitar race en max_uses_total.
-  Lanza ""PROMOTION_LIMIT_REACHED""
-  si excede post-lock.
+  **apply — corazón de F3**
+  1. ""get_for_update"" (lock max_uses)
+  2. activa+vigente · 3. producto · 4. persona
+  5. cobertura (covers_product)
+  6. no-stacking · 7. max_uses_total
+  8. max_uses_per_person · 9. _compute_discount
+  10. insert PromotionUsage (created_by=actor).
+  El service NO commitea (atómico con la cita en F4).
 end note
 
 note right of prom_svc
-  **compute_price** es el punto
-  de validación común para
-  scheduling y para tools del bot.
-  Devuelve PriceResult con
-  original / discount / final.
+  **eligible_for / validate / compute_price**
+  punto de validación común para
+  scheduling y tools del bot
+  (list_eligible_promotions).
+  Devuelven amounts original/discount/final
+  SIN insertar (solo ""apply"" persiste).
+end note
+
+note right of ApptSvc
+  **F4 — auto-wire atómico**
+  ""AppointmentCreate.apply_promotion_id""
+  → ""create_appointment"" llama a
+  ""promotion_usage.apply"" en la MISMA
+  sesión (sin commit intermedio).
+  marketing NO importa scheduling
+  (FK ""appointment_id"" es columna, sin relationship).
 end note
 
 @enduml

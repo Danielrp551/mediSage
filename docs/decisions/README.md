@@ -52,10 +52,11 @@ PROPOSED → ACCEPTED → (SUPERSEDED | DEPRECATED)
 | [ADR-006](ADR-006-hybrid-calendar-slots.md) | Slots de calendario híbridos — solo Appointment persiste; disponibilidad on-the-fly | Accepted (act. 2026-05-29) | 2026-05-28 |
 | [ADR-007](ADR-007-doctor-availability-concrete-blocks.md) | Disponibilidad del doctor como bloques concretos por fecha (no patrón recurrente) | Accepted | 2026-05-29 |
 | [ADR-008](ADR-008-configurable-status-transition-matrix.md) | Matriz de transiciones de estado configurable (lead/customer) | Accepted | 2026-05-31 |
-| [ADR-009](ADR-009-forward-fk-deferred-cross-module.md) | FKs forward a módulos futuros diferidas (columna ahora, constraint después) | Accepted | 2026-05-31 |
+| [ADR-009](ADR-009-forward-fk-deferred-cross-module.md) | FKs forward a módulos futuros diferidas (columna ahora, constraint después) | Accepted (act. 2026-06-08: cerrado por marketing) | 2026-05-31 |
 | [ADR-010](ADR-010-runtime-secret-resolution.md) | Resolución de secretos por-cuenta vía Secret Manager SDK en runtime (cacheado) | Accepted | 2026-06-02 |
 | [ADR-011](ADR-011-firestore-message-stream-cqrs.md) | Stream de mensajes en Firestore (CQRS read-model) — control plane Postgres + outbox + Custom Tokens | Accepted | 2026-06-03 |
 | [ADR-012](ADR-012-cloud-tasks-bot-dispatch.md) | Despacho del turno del bot vía Cloud Tasks (no síncrono, no BackgroundTasks) | Accepted | 2026-06-04 |
+| [ADR-013](ADR-013-marketing-campaign-status-and-atomic-apply.md) | marketing — status de campaña enum fijo (no matriz ADR-008) + aplicación de promoción atómica cross-módulo | Accepted | 2026-06-08 |
 | _(pendiente)_ | JWT en cookie httpOnly (no localStorage)     | —      | —     |
 | _(pendiente)_ | Permisos viajan en el access token           | —      | —     |
 | _(pendiente)_ | Arquitectura backend en 5 capas              | —      | —     |

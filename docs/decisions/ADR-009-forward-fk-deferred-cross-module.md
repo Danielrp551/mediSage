@@ -1,9 +1,16 @@
 # ADR-009: FKs forward a módulos futuros diferidas ("columna ahora, constraint después")
 
-> **Status**: Accepted
+> **Status**: Accepted (act. 2026-06-08)
 > **Date**: 2026-05-31
 > **Deciders**: @daniel, @marco
-> **Relacionado**: aplica primero en `crm` (ADR-003); patrón reusable por cualquier módulo que referencie a otro construido más tarde.
+> **Relacionado**: aplica primero en `crm` (ADR-003); patrón reusable por cualquier módulo que referencie a otro construido más tarde. Cerrado para `campaign` por [ADR-013](ADR-013-marketing-campaign-status-and-atomic-apply.md).
+
+> **Actualización 2026-06-08 (cierre por `marketing` #8)**: las FK forward a `campaign` se **materializan** en la migración `0022_marketing_campaign` vía `ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY … REFERENCES campaign(id)` (cambio aditivo, todos los valores `NULL` hoy → seguro). Son **tres** columnas (la tabla `campaign` no existía cuando se construyeron crm/conversations):
+> - `crm.person_lead_status.source_campaign_id` → `campaign(id)`
+> - `crm.lead_status_history.source_campaign_id` → `campaign(id)`
+> - `conversations.channel_account.default_campaign_id` → `campaign(id)` (forward-FK agregada por `conversations` siguiendo este mismo patrón; ver `conversations`)
+>
+> Quedan como columna-sin-constraint (forward-FK aún abierta) las que apuntan a `conversation` desde `lead_activity.related_conversation_id` y cualquier otra cuyo módulo dueño no las haya cerrado. `lead_activity.related_appointment_id` la puebla `scheduling` (F3a); su constraint se cierra cuando/ si su migración lo agregue.
 
 ## Context
 

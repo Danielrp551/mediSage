@@ -1,6 +1,6 @@
 @startuml er-marketing
 ' Propósito: modelo relacional del módulo marketing (Campaign + Promotion + PromotionUsage + M:N)
-' Última actualización: 2026-05-28
+' Última actualización: 2026-06-08
 ' Código de referencia: backend/app/modules/marketing/models/
 
 !theme plain
@@ -31,7 +31,7 @@ entity "campaign" as t_camp {
   --
   * code : varchar(40) <<unique>>
   * name : varchar(120)
-  description : text <<nullable>>
+  description : varchar(500) <<nullable>>
   * start_date : date
   end_date : date <<nullable>>
   * status : varchar(20)            ' draft / active / paused / ended
@@ -53,8 +53,8 @@ entity "promotion" as t_prom {
   --
   * code : varchar(40) <<unique>>
   * name : varchar(120)
-  description : text <<nullable>>
-  * discount_type : varchar(20)     ' percentage / fixed_amount
+  description : varchar(500) <<nullable>>
+  * discount_type : varchar(20)     ' percentage / fixed_amount (INMUTABLE)
   * discount_value : numeric(10,2)
   * currency : varchar(3) = 'PEN'
   * start_date : date
@@ -83,10 +83,9 @@ entity "promotion_usage" as t_pu {
   --
   * promotion_id : varchar(36) <<FK→promotion>>
   * person_id : varchar(36) <<FK→person>>
+  * product_id : varchar(36) <<FK→product>>
   appointment_id : varchar(36) <<nullable, FK→appointment>>
   campaign_id : varchar(36) <<nullable, FK→campaign>>
-  * applied_at : timestamptz
-  applied_by : varchar(36) <<nullable, FK→user>>
   * original_amount : numeric(10,2)
   * discount_amount : numeric(10,2)
   * final_amount : numeric(10,2)
@@ -95,9 +94,12 @@ entity "promotion_usage" as t_pu {
   --
   ' Invariantes (en service):
   '   final_amount = original_amount - discount_amount
-  '   No stacking: si appointment_id ya tiene una fila, falla
+  '   No stacking: UNIQUE PARCIAL real en BD sobre
+  '     (appointment_id) WHERE appointment_id IS NOT NULL
   '   max_uses_total y max_uses_per_person validados antes de insertar
-  ' SIN SoftDelete — audit inmutable
+  ' SIN SoftDelete — audit inmutable (no deleted_at)
+  ' Timestamp/actor de aplicación = created_on / created_by
+  '   (created_by = SYSTEM_USER_ID si la aplicación es automática)
   * active : boolean
   * created_on : timestamptz
   * created_by : varchar(36)
@@ -143,21 +145,21 @@ entity "person" as t_per <<external>> #lightgrey {
 }
 entity "person_lead_status" as t_pls <<external>> #lightgrey {
   ' Módulo: crm
-  source_campaign_id : varchar(36) <<FK>>
+  source_campaign_id : varchar(36) <<FK→campaign>>
+  ...
+}
+entity "lead_status_history" as t_lsh <<external>> #lightgrey {
+  ' Módulo: crm
+  source_campaign_id : varchar(36) <<FK→campaign>>
   ...
 }
 entity "channel_account" as t_ca <<external>> #lightgrey {
   ' Módulo: conversations
-  default_campaign_id : varchar(36) <<FK>>
+  default_campaign_id : varchar(36) <<FK→campaign>>
   ...
 }
 entity "appointment" as t_appt <<external>> #lightgrey {
   ' Módulo: scheduling
-  * id : varchar(36) <<PK>>
-  ...
-}
-entity "user" as t_user <<external>> #lightgrey {
-  ' Módulo: admin
   * id : varchar(36) <<PK>>
   ...
 }
@@ -174,19 +176,20 @@ t_cp   }o--|| t_prom
 t_prom ||--o{ t_pp
 t_pp   }o--|| t_prod
 
-' Campaign → Vertical (opcional)
+' Campaign → Vertical (opcional, FK real)
 t_vert |o--o{ t_camp : "target"
 
-' Campaign atribuye leads (vía crm + conversations)
-t_camp ||--o{ t_pls : "source_campaign_id\n(crm)"
-t_camp ||--o{ t_ca  : "default_campaign_id\n(conversations)"
+' Campaign atribuye leads (FKs forward CERRADAS por marketing — ADR-009)
+t_camp ||--o{ t_pls : "source_campaign_id\n(crm · FK ALTER 0022)"
+t_camp ||--o{ t_lsh : "source_campaign_id\n(crm · FK ALTER 0022)"
+t_camp ||--o{ t_ca  : "default_campaign_id\n(conversations · FK ALTER 0022)"
 
 ' PromotionUsage
 t_prom ||--o{ t_pu   : "aplicaciones"
 t_per  ||--o{ t_pu   : "usado por"
-t_appt |o--o{ t_pu   : "(opcional)"
+t_prod ||--o{ t_pu   : "producto descontado"
+t_appt |o--o{ t_pu   : "(opcional, no-stacking)"
 t_camp |o--o{ t_pu   : "atribución (opcional)"
-t_user |o--o{ t_pu   : "applied_by (opcional)"
 
 ' ─────────────────────────────────────────────────────────────
 ' Notas
@@ -195,21 +198,22 @@ t_user |o--o{ t_pu   : "applied_by (opcional)"
 note right of t_camp
   **Iniciativa de marketing**
   Sin UTM / budget en MVP.
-  Status workflow:
+  Status workflow (enum fijo, validado en service):
   draft → active → paused → active → ended
   (ended es terminal).
 end note
 
 note right of t_prom
   **Descuento sobre productos**
-  ""discount_type"" discriminado:
+  ""discount_type"" discriminado (INMUTABLE post-create):
    • percentage (0-100)
    • fixed_amount (>0)
   ""applies_to_all_products=true""
   ignora la M:N promotion_product.
 
   ""max_uses_total"" / ""max_uses_per_person""
-  validados al aplicar (con FOR UPDATE).
+  validados al aplicar (lock FOR UPDATE
+  vía promotion_repository.get_for_update).
 end note
 
 note bottom of t_pu
@@ -218,8 +222,14 @@ note bottom of t_pu
    • original_amount (precio al momento)
    • discount_amount
    • final_amount
-  No-stacking: UNIQUE por
-  (appointment_id) en service.
+   • product_id (qué producto recibió el descuento)
+  Timestamp/actor = ""created_on"" / ""created_by""
+  (TimestampMixin; ""created_by=SYSTEM_USER_ID""
+  cuando la aplicación es automática — bot/scheduling).
+  No-stacking: índice ""uq_promotion_usage_appointment""
+  = UNIQUE PARCIAL real en BD sobre (appointment_id)
+  WHERE appointment_id IS NOT NULL (dialect-agnóstico:
+  postgresql_where + sqlite_where), NO solo en service.
 end note
 
 note bottom of t_cp
@@ -234,6 +244,17 @@ note bottom of t_pp
   Si promotion.applies_to_all_products=true,
   esta tabla puede estar vacía
   (la promo aplica a todo).
+end note
+
+note top of t_pls
+  **FKs forward cerradas por marketing (ADR-009)**
+  Las 3 columnas ""source_campaign_id"" /
+  ""default_campaign_id"" se crearon en crm /
+  conversations SIN constraint. La migración
+  ""0022_marketing_campaign"" agrega el FK real
+  vía ""op.create_foreign_key"" (ALTER) una vez
+  que la tabla ""campaign"" existe. Índices ya
+  existían → no se recrean.
 end note
 
 @enduml
