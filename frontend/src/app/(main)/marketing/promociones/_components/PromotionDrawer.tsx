@@ -27,6 +27,7 @@ import {
   createPromotion,
   getPromotion,
   getPromotionProducts,
+  getPromotionUsageSummary,
   setPromotionProducts,
   updatePromotion,
 } from "@/actions/promotion.actions";
@@ -38,13 +39,19 @@ import {
   CAMPAIGN_STATUS_META,
   DISCOUNT_TYPE_META,
   SUPPORTED_CURRENCIES,
+  formatCurrency,
   formatDiscount,
 } from "@/lib/constants/marketing";
 import { promotionCreateSchema, type PromotionCreateInput } from "@/lib/schemas/promotion.schema";
 import { appTokens } from "@/lib/theme/brand";
 import { formatDate } from "@/lib/utils/date";
 import type { ProductOption } from "@/types/catalog.types";
-import type { CampaignStatus, DiscountType, PromotionDetail } from "@/types/marketing.types";
+import type {
+  CampaignStatus,
+  DiscountType,
+  PromotionDetail,
+  PromotionUsageSummary,
+} from "@/types/marketing.types";
 import { DISCOUNT_TYPES } from "@/types/marketing.types";
 
 const useStyles = makeStyles({
@@ -72,6 +79,32 @@ const useStyles = makeStyles({
   },
   auditLabel: { color: appTokens.chromeTextMuted, fontSize: tokens.fontSizeBase200 },
   auditValue: { color: appTokens.chromeText, fontWeight: tokens.fontWeightMedium },
+  sectionTitle: {
+    margin: 0,
+    fontSize: tokens.fontSizeBase300,
+    fontWeight: tokens.fontWeightSemibold,
+    color: appTokens.chromeText,
+  },
+  metrics: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: tokens.spacingHorizontalM,
+  },
+  metricCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXXS,
+    padding: tokens.spacingVerticalM,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: appTokens.chromeBgHover,
+  },
+  metricLabel: { fontSize: tokens.fontSizeBase200, color: appTokens.chromeTextMuted },
+  metricValue: {
+    fontSize: tokens.fontSizeBase500,
+    fontWeight: tokens.fontWeightSemibold,
+    color: appTokens.chromeText,
+    fontVariantNumeric: "tabular-nums",
+  },
   emptyState: {
     fontSize: tokens.fontSizeBase200,
     color: appTokens.chromeTextMuted,
@@ -776,6 +809,86 @@ function CampaignsTab({
   );
 }
 
+/**
+ * Mini-panel de métricas de uso (gated PROMOTION_USAGES_READ). Lee usage-summary on-demand
+ * al montar el tab Auditoría. Montos formateados con la moneda de la promoción (los usos
+ * comparten la moneda del producto; la mezcla de monedas es un caso extremo no contemplado).
+ */
+function UsageMetrics({ promotion, styles }: { promotion: PromotionDetail; styles: Styles }) {
+  const { hasAnyPermission } = usePermissions();
+  const canRead = hasAnyPermission(["PROMOTION_USAGES_READ"]);
+
+  const [summary, setSummary] = useState<PromotionUsageSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!canRead) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    void getPromotionUsageSummary(promotion.id)
+      .then((s) => {
+        if (!cancelled) setSummary(s);
+      })
+      .catch(() => {
+        if (!cancelled) setError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [promotion.id, canRead]);
+
+  if (!canRead) return null;
+
+  return (
+    <>
+      <h4 className={styles.sectionTitle}>Uso de la promoción</h4>
+      {loading ? (
+        <div className={styles.loading}>
+          <Spinner size="small" label="Cargando métricas…" />
+        </div>
+      ) : error || !summary ? (
+        <MessageBar intent="error">
+          <MessageBarBody>No se pudieron cargar las métricas de uso.</MessageBarBody>
+        </MessageBar>
+      ) : (
+        <div className={styles.metrics}>
+          <div className={styles.metricCard}>
+            <span className={styles.metricLabel}>Total de usos</span>
+            <span className={styles.metricValue}>{summary.total_uses}</span>
+          </div>
+          <div className={styles.metricCard}>
+            <span className={styles.metricLabel}>Descuento total</span>
+            <span className={styles.metricValue}>
+              {formatCurrency(summary.total_discount_amount, promotion.currency)}
+            </span>
+          </div>
+          <div className={styles.metricCard}>
+            <span className={styles.metricLabel}>Precio original total</span>
+            <span className={styles.metricValue}>
+              {formatCurrency(summary.total_original_amount, promotion.currency)}
+            </span>
+          </div>
+          <div className={styles.metricCard}>
+            <span className={styles.metricLabel}>Precio final total</span>
+            <span className={styles.metricValue}>
+              {formatCurrency(summary.total_final_amount, promotion.currency)}
+            </span>
+          </div>
+        </div>
+      )}
+      <Divider />
+    </>
+  );
+}
+
 function AuditTab({ promotion, styles }: { promotion: PromotionDetail | null; styles: Styles }) {
   if (!promotion) {
     return (
@@ -786,6 +899,8 @@ function AuditTab({ promotion, styles }: { promotion: PromotionDetail | null; st
   }
   return (
     <div className={styles.tabPanel}>
+      <UsageMetrics promotion={promotion} styles={styles} />
+
       <div className={styles.audit}>
         <div>
           <div className={styles.auditLabel}>Descuento</div>

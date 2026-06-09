@@ -246,8 +246,7 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Marketing",
     icon: "MegaphoneRegular", // icono del grupo (sólo label + chevron en el sidebar)
     children: [
-      // Campañas (F1) + Promociones (F2). "Usos de promoción" (F3) se agrega en su fase
-      // para no dejar links muertos prolongados.
+      // Campañas (F1) + Promociones (F2) + Usos de promoción (F3, reporte read-only).
       {
         key: "campaigns",
         label: "Campañas",
@@ -261,6 +260,13 @@ export const NAV_ITEMS: NavItem[] = [
         icon: "TicketDiagonalRegular",
         url: "/marketing/promociones",
         permissions: ["PROMOTIONS_READ"],
+      },
+      {
+        key: "promotion-usages",
+        label: "Usos de promoción",
+        icon: "ReceiptRegular",
+        url: "/marketing/usos",
+        permissions: ["PROMOTION_USAGES_READ"],
       },
     ],
   },

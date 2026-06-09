@@ -3,9 +3,6 @@ Promotion repository. `ALLOWED_FIELDS` = solo columnas REALES (lección cd10c78:
 products_count/campaigns_count denormalizados). El M:N campaign_promotion se opera por el
 relationship `Promotion.campaigns` (mold role/permission); el M:N promotion_product por
 `promotion_product_repository` (join propio, sin relationship en Product).
-
-⚠ SUBSET F2: `get_for_update` (lock de max_uses en apply) y `promotion_name_map` (denorm en
-usage) llegan en F3.
 """
 
 from __future__ import annotations
@@ -56,6 +53,29 @@ class PromotionRepository(BaseRepository[Promotion]):
             select(Promotion).where(Promotion.id.in_(ids), Promotion.deleted_at.is_(None))
         )
         return list(result.scalars().all())
+
+    async def get_for_update(self, db: AsyncSession, promotion_id: str) -> Promotion | None:
+        """SELECT ... FOR UPDATE para serializar el chequeo de max_uses en `apply` (caso
+        válido de FOR UPDATE: lockea la fila promotion EXISTENTE, §13). Postgres-only; no-op
+        en sqlite/smoke. Se usa SIEMPRE en apply por simplicidad."""
+        result = await db.execute(
+            select(Promotion)
+            .where(Promotion.id == promotion_id, Promotion.deleted_at.is_(None))
+            .with_for_update()
+        )
+        return result.scalars().first()
+
+    async def promotion_name_map(self, db: AsyncSession, ids: list[str]) -> dict[str, str]:
+        """Batch id→name para denormalizar promotion_name en PromotionUsage (mold
+        campaign_name_map). Solo promos vivas."""
+        if not ids:
+            return {}
+        result = await db.execute(
+            select(Promotion.id, Promotion.name).where(
+                Promotion.id.in_(ids), Promotion.deleted_at.is_(None)
+            )
+        )
+        return {row[0]: row[1] for row in result.all()}
 
 
 promotion_repository = PromotionRepository()

@@ -1,9 +1,8 @@
 """
-Promotion CRUD + M:N de productos. `/active` (literal) ANTES de `/{id}`. PUT no PATCH;
-el M:N de productos es bulk-replace por PUT. `actor: CurrentAuth` para las audit columns.
-
-⚠ SUBSET F2: `GET /{id}/usage-summary` (y el cómputo de total_uses) llega en F3 (depende de
-la tabla promotion_usage). El tab Campañas del detalle es read-only (se edita desde Campaña).
+Promotion CRUD + M:N de productos + resumen de uso. `/active` (literal) ANTES de `/{id}`.
+PUT no PATCH; el M:N de productos es bulk-replace por PUT. `actor: CurrentAuth` para las
+audit columns. `GET /{id}/usage-summary` (gated PROMOTION_USAGES_READ) lee la tabla
+promotion_usage. El tab Campañas del detalle es read-only (se edita desde Campaña).
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from app.modules.marketing.schemas.promotion import (
     PromotionProductsReplace,
     PromotionUpdate,
 )
+from app.modules.marketing.schemas.promotion_usage import PromotionUsageSummary
 from app.modules.marketing.services import promotion as promotion_service
 from app.shared.base_schemas import PaginatedResponse, QueryRequest, SingleResponse
 
@@ -121,3 +121,14 @@ async def set_promotion_products(
     return await promotion_service.set_products(
         db, promotion_id, payload.product_ids, actor_id=actor.id
     )
+
+
+@router.get(
+    "/{promotion_id}/usage-summary",
+    response_model=SingleResponse[PromotionUsageSummary],
+    dependencies=[Depends(RequirePermission("PROMOTION_USAGES_READ"))],
+)
+async def get_promotion_usage_summary(
+    promotion_id: PromotionIdPath, db: DBSession
+) -> SingleResponse[PromotionUsageSummary]:
+    return await promotion_service.usage_summary(db, promotion_id)

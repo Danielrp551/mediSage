@@ -1622,6 +1622,10 @@ async def apply_promotion(payload: ApplyPromotionRequest, db: DBSession, actor: 
 | `PROMOTION_EXPIRED` | 400 | BadRequest | apply paso 2 |
 | `PROMOTION_LIMIT_REACHED` | 400 | BadRequest | apply paso 7 |
 | `PROMOTION_PERSON_LIMIT_REACHED` | 400 | BadRequest | apply paso 8 |
+| `APPOINTMENT_NOT_FOUND` | 404 | NotFound | apply: `appointment_id` provisto pero inexistente/borrado (evita el 500 del FK) |
+| `CAMPAIGN_NOT_FOUND` | 404 | NotFound | apply: `campaign_id` provisto pero inexistente/borrado (evita el 500 del FK) |
+
+> **Orden de validación de `apply`** (review F3): promo → **vigencia** (activa/fechas) → producto → persona → cita (existe + no-stacking) → campaña (existe) → cobertura/límites → snapshot. La vigencia se chequea ANTES de la existencia de producto/persona (precedencia del contrato). `APPOINTMENT_NOT_FOUND`/`CAMPAIGN_NOT_FOUND` son adiciones defensivas (los `appointment_id`/`campaign_id` son FK reales nullables; un id type-válido inexistente debe dar 404, no 500 — lección "los services nunca 500 con input type-válido").
 
 ## Migrations
 

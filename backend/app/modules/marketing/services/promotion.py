@@ -2,9 +2,9 @@
 Promotion service. CRUD + validación del descuento en el SERVICE (`_validate_discount`,
 create Y update, para que update sin discount_type lo imponga uniforme) + M:N de productos
 (join propio, sin relationship en Product) + M:N de campañas (read-only, vía el relationship
-`Promotion.campaigns`). Denormaliza products_count/campaigns_count. NO commitea.
+`Promotion.campaigns`). Denormaliza products_count/campaigns_count + `total_uses` (count de
+PromotionUsage) + `usage_summary` (montos agregados). NO commitea.
 
-⚠ SUBSET F2: `total_uses` = 0 y NO hay `usage_summary` (PromotionUsage + apply llegan en F3).
 Cuando `applies_to_all_products`=true, el M:N de productos se IGNORA → products=[]/count=0.
 """
 
@@ -30,6 +30,7 @@ from app.modules.marketing.enums import DiscountType
 from app.modules.marketing.models.promotion import Promotion
 from app.modules.marketing.repositories.promotion import promotion_repository
 from app.modules.marketing.repositories.promotion_product import promotion_product_repository
+from app.modules.marketing.repositories.promotion_usage import promotion_usage_repository
 from app.modules.marketing.schemas.campaign import CampaignOption
 from app.modules.marketing.schemas.promotion import (
     PromotionCreate,
@@ -38,6 +39,7 @@ from app.modules.marketing.schemas.promotion import (
     PromotionOption,
     PromotionUpdate,
 )
+from app.modules.marketing.schemas.promotion_usage import PromotionUsageSummary
 from app.shared.base_schemas import (
     PaginatedData,
     PaginatedResponse,
@@ -126,6 +128,7 @@ def _to_detail(
     audit_users: dict[str, User],
     *,
     products: list[Product],
+    total_uses: int,
 ) -> PromotionDetail:
     # `promotion.campaigns` debe venir eager-loaded por el caller (selectinload).
     item = _to_item(
@@ -140,7 +143,7 @@ def _to_detail(
         campaigns=[
             CampaignOption.model_validate(c, from_attributes=True) for c in promotion.campaigns
         ],
-        total_uses=0,  # SUBSET F2: el cómputo real llega en F3.
+        total_uses=total_uses,
     )
 
 
@@ -189,10 +192,13 @@ async def _detail_response(
         if promotion.applies_to_all_products
         else await promotion_product_repository.list_products_for_promotion(db, promotion.id)
     )
+    total_uses = await promotion_usage_repository.count_for_promotion(db, promotion.id)
     audit_users = await user_repository.get_audit_info_map(
         db, {promotion.created_by, promotion.updated_by}
     )
-    return SingleResponse(data=_to_detail(promotion, audit_users, products=products))
+    return SingleResponse(
+        data=_to_detail(promotion, audit_users, products=products, total_uses=total_uses)
+    )
 
 
 async def get_by_id(db: AsyncSession, promotion_id: str) -> SingleResponse[PromotionDetail]:
@@ -303,3 +309,20 @@ async def set_products(
     promotion.updated_on = utc_now()
     await db.flush()
     return await get_by_id(db, promotion_id)
+
+
+async def usage_summary(
+    db: AsyncSession, promotion_id: str
+) -> SingleResponse[PromotionUsageSummary]:
+    """Resumen de uso de una promo (count + montos agregados). 404 si la promo no existe."""
+    await _get_full(db, promotion_id)  # 404 PROMOTION_NOT_FOUND si no existe
+    row = await promotion_usage_repository.usage_summary(db, promotion_id)
+    return SingleResponse(
+        data=PromotionUsageSummary(
+            promotion_id=promotion_id,
+            total_uses=row[0],
+            total_original_amount=row[1],
+            total_discount_amount=row[2],
+            total_final_amount=row[3],
+        )
+    )

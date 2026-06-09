@@ -51,18 +51,21 @@ export const DISCOUNT_TYPE_META: Record<DiscountType, { label: string }> = {
 // front lo acota. Lo reusa el Zod de promotion en F2 (single source).
 export const SUPPORTED_CURRENCIES = ["PEN", "USD", "EUR"] as const;
 
+// Símbolo de moneda para los formatos (ISO 4217 → símbolo; fallback al code).
+export function currencySymbol(currency: string): string {
+  return currency === "PEN" ? "S/" : currency === "USD" ? "$" : currency === "EUR" ? "€" : currency;
+}
+
 // Formato de descuento para badges/columnas: "10%" o "S/ 25.00" según el tipo.
 export function formatDiscount(
   p: Pick<PromotionOption, "discount_type" | "discount_value" | "currency">,
 ): string {
   if (p.discount_type === "percentage") return `${p.discount_value}%`;
-  const symbol =
-    p.currency === "PEN"
-      ? "S/"
-      : p.currency === "USD"
-        ? "$"
-        : p.currency === "EUR"
-          ? "€"
-          : p.currency;
-  return `${symbol} ${p.discount_value}`;
+  return `${currencySymbol(p.currency)} ${p.discount_value}`;
+}
+
+// Formato de un monto Decimal-string del backend con su moneda: "S/ 90.00". NO convertir
+// `value` a Number (perdería precisión; ya viene con 2 decimales del backend).
+export function formatCurrency(value: string, currency: string): string {
+  return `${currencySymbol(currency)} ${value}`;
 }

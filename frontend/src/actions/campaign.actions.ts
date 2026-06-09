@@ -22,6 +22,8 @@ import type { MutationResult } from "./user.actions";
 
 const CAMPAIGNS_TAG = "marketing:campaigns";
 const PROMOTIONS_TAG = "marketing:promotions";
+// Renombrar/eliminar una campaña cambia el `campaign_name` denormalizado del reporte de usos.
+const USAGES_TAG = "marketing:promotion-usages";
 
 export async function listCampaigns(query: QueryRequest): Promise<ApiPaginated<CampaignItem>> {
   return backendClient.post<ApiPaginated<CampaignItem>>(ENDPOINTS.CAMPAIGNS.LIST, query, {
@@ -76,6 +78,7 @@ export async function updateCampaign(
       parsed.data,
     );
     revalidateTag(CAMPAIGNS_TAG, "max");
+    revalidateTag(USAGES_TAG, "max"); // el campaign_name denormalizado en el reporte de usos
     return { ok: true, data };
   } catch (e) {
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
@@ -86,6 +89,7 @@ export async function deleteCampaign(id: string): Promise<MutationResult<null>> 
   try {
     await backendClient.delete(ENDPOINTS.CAMPAIGNS.DELETE(id));
     revalidateTag(CAMPAIGNS_TAG, "max");
+    revalidateTag(USAGES_TAG, "max"); // el campaign_name denormalizado en el reporte de usos
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };

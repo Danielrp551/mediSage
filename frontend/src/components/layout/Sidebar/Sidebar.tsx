@@ -23,6 +23,7 @@ import {
   PersonMailRegular,
   PersonRegular,
   PlugConnectedRegular,
+  ReceiptRegular,
   SettingsRegular,
   ShieldRegular,
   TagMultipleRegular,
@@ -71,6 +72,7 @@ const ICONS: Record<string, ReactElement> = {
   // Marketing module
   MegaphoneRegular: <MegaphoneRegular />,
   TicketDiagonalRegular: <TicketDiagonalRegular />,
+  ReceiptRegular: <ReceiptRegular />,
 };
 
 const useStyles = makeStyles({

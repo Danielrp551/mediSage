@@ -1,9 +1,8 @@
 """
 M:N `promotion_product` (promociones ↔ productos cubiertos). Se resuelve por query propia
 (NO relationship en catalog.Product — no tocar catalog). bulk-replace (`set_products`),
-conteo batch (`count_products_map`) y join de lectura (`list_products_for_promotion`).
-
-⚠ SUBSET F2: `covers_product` (apply paso 5) y `product_ids_for_promotion` llegan en F3.
+conteo batch (`count_products_map`), join de lectura (`list_products_for_promotion`) y
+`covers_product` (validación de cobertura en `apply`).
 """
 
 from __future__ import annotations
@@ -68,6 +67,18 @@ class PromotionProductRepository:
             .order_by(Product.name.asc())
         )
         return list(result.scalars().all())
+
+    async def covers_product(self, db: AsyncSession, promotion_id: str, product_id: str) -> bool:
+        """¿El producto está en el M:N de la promo? (apply paso 5, cuando NO
+        applies_to_all_products). Chequea solo la fila puente (no valida que el product
+        esté vivo — eso lo hace el caller / la elegibilidad lo da por sentado)."""
+        result = await db.execute(
+            select(promotion_product.c.product_id).where(
+                promotion_product.c.promotion_id == promotion_id,
+                promotion_product.c.product_id == product_id,
+            )
+        )
+        return result.first() is not None
 
 
 promotion_product_repository = PromotionProductRepository()
