@@ -10,6 +10,7 @@ const CRM = "/api/v1/crm";
 const CONVERSATIONS = "/api/v1/conversations";
 const BOTS = "/api/v1/bots";
 const SCHEDULING = "/api/v1/scheduling";
+const MARKETING = "/api/v1/marketing";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -277,5 +278,40 @@ export const ENDPOINTS = {
   ME_SCHEDULING: {
     APPOINTMENTS_LIST: `${SCHEDULING}/me/appointments/list`, // POST + QueryRequest — mi agenda (doctor)
     CALENDAR: `${SCHEDULING}/me/calendar`, // GET → CalendarResponse
+  },
+  // ── Marketing module (#8) ────────────────────────────────
+  // Declarado en F0 (Prep), INERTE: ninguna pantalla lo consume aún. Las rutas
+  // backend se montan por fase (campaign F1, promotion + M:N F2, usage + apply F3).
+  // El apply atómico desde scheduling (apply_promotion_id en create_appointment) NO
+  // va acá: lo invoca el backend de scheduling, no el frontend.
+  CAMPAIGNS: {
+    LIST: `${MARKETING}/campaigns/list`, // POST + QueryRequest. PaginatedResponse[CampaignItem]
+    CREATE: `${MARKETING}/campaigns`,
+    ACTIVE: `${MARKETING}/campaigns/active`, // raw CampaignOption[] (selects / M:N)
+    GET: (id: string) => `${MARKETING}/campaigns/${id}`, // SingleResponse[CampaignDetail]
+    UPDATE: (id: string) => `${MARKETING}/campaigns/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${MARKETING}/campaigns/${id}`, // soft delete
+    TRANSITION: (id: string) => `${MARKETING}/campaigns/${id}/transition`, // POST {to_status} (matriz §2)
+    PROMOTIONS_LIST: (id: string) => `${MARKETING}/campaigns/${id}/promotions`, // GET PromotionOption[]
+    PROMOTIONS_UPDATE: (id: string) => `${MARKETING}/campaigns/${id}/promotions`, // PUT bulk {promotion_ids}
+  },
+  PROMOTIONS: {
+    LIST: `${MARKETING}/promotions/list`, // POST + QueryRequest. PaginatedResponse[PromotionItem]
+    CREATE: `${MARKETING}/promotions`,
+    ACTIVE: `${MARKETING}/promotions/active`, // raw PromotionOption[]
+    GET: (id: string) => `${MARKETING}/promotions/${id}`, // SingleResponse[PromotionDetail]
+    UPDATE: (id: string) => `${MARKETING}/promotions/${id}`, // PUT (not PATCH)
+    DELETE: (id: string) => `${MARKETING}/promotions/${id}`, // soft delete
+    PRODUCTS_LIST: (id: string) => `${MARKETING}/promotions/${id}/products`, // GET ProductOption[]
+    PRODUCTS_UPDATE: (id: string) => `${MARKETING}/promotions/${id}/products`, // PUT bulk {product_ids}
+    USAGE_SUMMARY: (id: string) => `${MARKETING}/promotions/${id}/usage-summary`, // GET PromotionUsageSummary
+    // Validación / elegibilidad (PROMOTION_VALIDATE; read-only, no insertan)
+    ELIGIBLE_FOR: `${MARKETING}/promotions/eligible-for`, // POST {product_id, person_id} → PromotionEligibility[]
+    VALIDATE: (id: string) => `${MARKETING}/promotions/${id}/validate`, // POST {product_id, person_id} → PromotionEligibility
+  },
+  PROMOTION_USAGES: {
+    APPLY: `${MARKETING}/promotion-usages`, // POST (PROMOTION_APPLY) → crea PromotionUsage
+    LIST: `${MARKETING}/promotion-usages/list`, // POST + QueryRequest (PROMOTION_USAGES_READ)
+    COMPUTE_PRICE: `${MARKETING}/compute-price`, // POST {product_id, person_id, promotion_id?} (PROMOTION_VALIDATE)
   },
 } as const;

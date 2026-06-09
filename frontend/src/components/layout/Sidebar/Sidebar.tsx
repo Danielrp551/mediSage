@@ -17,6 +17,7 @@ import {
   HomeRegular,
   LockClosedRegular,
   MailInboxRegular,
+  MegaphoneRegular,
   PeopleRegular,
   PeopleTeamRegular,
   PersonMailRegular,
@@ -66,6 +67,8 @@ const ICONS: Record<string, ReactElement> = {
   PlugConnectedRegular: <PlugConnectedRegular />,
   // Bots module
   BotRegular: <BotRegular />,
+  // Marketing module
+  MegaphoneRegular: <MegaphoneRegular />,
 };
 
 const useStyles = makeStyles({

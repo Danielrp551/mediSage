@@ -190,6 +190,23 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "APPOINTMENTS_RESCHEDULE", "name": "Reschedule appointments", "module": "SCHEDULING"},
     {"code": "AVAILABILITY_READ", "name": "Read availability", "module": "SCHEDULING"},
     {"code": "MY_APPOINTMENTS_READ", "name": "Read my appointments", "module": "SCHEDULING"},
+    # ── Module: marketing (12 permisos) ─────────────────────────────────
+    {"code": "MENU-MARKETING", "name": "Menu Marketing", "module": "MARKETING"},
+    {"code": "CAMPAIGNS_READ", "name": "Read campaigns", "module": "MARKETING"},
+    {"code": "CAMPAIGNS_CREATE", "name": "Create campaigns", "module": "MARKETING"},
+    {"code": "CAMPAIGNS_UPDATE", "name": "Update campaigns", "module": "MARKETING"},
+    {"code": "CAMPAIGNS_DELETE", "name": "Delete campaigns", "module": "MARKETING"},
+    {"code": "PROMOTIONS_READ", "name": "Read promotions", "module": "MARKETING"},
+    {"code": "PROMOTIONS_CREATE", "name": "Create promotions", "module": "MARKETING"},
+    {"code": "PROMOTIONS_UPDATE", "name": "Update promotions", "module": "MARKETING"},
+    {"code": "PROMOTIONS_DELETE", "name": "Delete promotions", "module": "MARKETING"},
+    {
+        "code": "PROMOTION_VALIDATE",
+        "name": "Validate promotion eligibility/price",
+        "module": "MARKETING",
+    },
+    {"code": "PROMOTION_APPLY", "name": "Apply promotion (create usage)", "module": "MARKETING"},
+    {"code": "PROMOTION_USAGES_READ", "name": "Read promotion usages", "module": "MARKETING"},
 ]
 
 

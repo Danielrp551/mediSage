@@ -242,6 +242,22 @@ export const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    key: "marketing",
+    label: "Marketing",
+    icon: "MegaphoneRegular", // icono del grupo (sólo label + chevron en el sidebar)
+    children: [
+      // F0 declara SOLO Campañas (lo entrega F1). "Promociones" (F2) y "Usos de
+      // promoción" (F3) se agregan en su fase para no dejar links muertos prolongados.
+      {
+        key: "campaigns",
+        label: "Campañas",
+        icon: "MegaphoneRegular",
+        url: "/marketing/campanas",
+        permissions: ["CAMPAIGNS_READ"],
+      },
+    ],
+  },
+  {
     key: "admin",
     label: "Administración",
     icon: "SettingsRegular",
