@@ -16,18 +16,23 @@ Llega en F2 (junto con `models/associations.py`); en F1 `promotions_count`=0 y
 from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Date, ForeignKey, Index, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.modules.marketing.enums import CampaignStatus
+from app.modules.marketing.models.associations import campaign_promotion
 from app.shared.base_model import (
     ActiveMixin,
     PrimaryKeyMixin,
     SoftDeleteMixin,
     TimestampMixin,
 )
+
+if TYPE_CHECKING:  # pragma: no cover
+    from app.modules.marketing.models.promotion import Promotion
 
 
 class Campaign(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Base):
@@ -48,4 +53,10 @@ class Campaign(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Ba
     # FK REAL a catalog.vertical (NULL = transversal). SIN relationship ORM.
     target_vertical_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("vertical.id"), nullable=True
+    )
+
+    # M:N campaign_promotion ↔ Promotion (mismo módulo). lazy="raise": se carga con
+    # selectinload() explícito en el service cuando se necesita (lista/detalle).
+    promotions: Mapped[list[Promotion]] = relationship(
+        secondary=campaign_promotion, back_populates="campaigns", lazy="raise"
     )

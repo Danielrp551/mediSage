@@ -27,6 +27,7 @@ import {
   ShieldRegular,
   TagMultipleRegular,
   TagRegular,
+  TicketDiagonalRegular,
 } from "@fluentui/react-icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -69,6 +70,7 @@ const ICONS: Record<string, ReactElement> = {
   BotRegular: <BotRegular />,
   // Marketing module
   MegaphoneRegular: <MegaphoneRegular />,
+  TicketDiagonalRegular: <TicketDiagonalRegular />,
 };
 
 const useStyles = makeStyles({

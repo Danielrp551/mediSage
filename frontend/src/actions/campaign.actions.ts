@@ -5,16 +5,23 @@ import { revalidateTag } from "next/cache";
 import { ENDPOINTS } from "@/lib/constants/endpoints";
 import {
   campaignCreateSchema,
+  campaignPromotionsReplaceSchema,
   campaignTransitionSchema,
   campaignUpdateSchema,
 } from "@/lib/schemas/campaign.schema";
 import { backendClient } from "@/services/backend.client";
 import { HttpError, type ApiPaginated, type ApiSingle } from "@/types/api.types";
-import type { CampaignDetail, CampaignItem, CampaignOption } from "@/types/marketing.types";
+import type {
+  CampaignDetail,
+  CampaignItem,
+  CampaignOption,
+  PromotionOption,
+} from "@/types/marketing.types";
 import type { QueryRequest } from "@/types/query.types";
 import type { MutationResult } from "./user.actions";
 
 const CAMPAIGNS_TAG = "marketing:campaigns";
+const PROMOTIONS_TAG = "marketing:promotions";
 
 export async function listCampaigns(query: QueryRequest): Promise<ApiPaginated<CampaignItem>> {
   return backendClient.post<ApiPaginated<CampaignItem>>(ENDPOINTS.CAMPAIGNS.LIST, query, {
@@ -103,6 +110,39 @@ export async function transitionCampaign(
     return { ok: true, data };
   } catch (e) {
     // 400 CAMPAIGN_TRANSITION_NOT_ALLOWED (detalle en español).
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
+}
+
+// ── M:N campaign_promotion (editor de promociones de la campaña) ────────────
+
+export async function getCampaignPromotions(id: string): Promise<PromotionOption[]> {
+  // GET enveloped SingleResponse[list[PromotionOption]] → leer .data.
+  const res = await backendClient.get<ApiSingle<PromotionOption[]>>(
+    ENDPOINTS.CAMPAIGNS.PROMOTIONS_LIST(id),
+    { tags: [CAMPAIGNS_TAG] },
+  );
+  return res.data;
+}
+
+export async function setCampaignPromotions(
+  id: string,
+  input: unknown, // { promotion_ids: [...] } — reemplaza el set completo
+): Promise<MutationResult<ApiSingle<CampaignDetail>>> {
+  const parsed = campaignPromotionsReplaceSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+  try {
+    const data = await backendClient.put<ApiSingle<CampaignDetail>>(
+      ENDPOINTS.CAMPAIGNS.PROMOTIONS_UPDATE(id),
+      parsed.data,
+    );
+    revalidateTag(CAMPAIGNS_TAG, "max"); // promotions_count + detalle de la campaña
+    revalidateTag(PROMOTIONS_TAG, "max"); // campaigns_count de las promos afectadas
+    return { ok: true, data };
+  } catch (e) {
+    // 404 PROMOTION_NOT_FOUND si algún promotion_id no existe vivo.
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
   }
 }

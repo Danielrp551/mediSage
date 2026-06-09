@@ -27,22 +27,29 @@ import { Controller, useForm } from "react-hook-form";
 import {
   createCampaign,
   getCampaign,
+  getCampaignPromotions,
+  setCampaignPromotions,
   transitionCampaign,
   updateCampaign,
 } from "@/actions/campaign.actions";
+import { listActivePromotions } from "@/actions/promotion.actions";
 import { PermissionGuard } from "@/components/guards/PermissionGuard";
 import { Drawer } from "@/components/ui/Drawer/Drawer";
 import { FormField } from "@/components/ui/Form/FormField";
+import { SearchableOptionList } from "@/components/ui/SearchableOptionList/SearchableOptionList";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   CAMPAIGN_STATUS_META,
   CAMPAIGN_TRANSITIONS,
   CAMPAIGN_TRANSITION_VERB,
+  DISCOUNT_TYPE_META,
+  formatDiscount,
 } from "@/lib/constants/marketing";
 import { campaignCreateSchema, type CampaignCreateInput } from "@/lib/schemas/campaign.schema";
 import { appTokens } from "@/lib/theme/brand";
 import { formatDate } from "@/lib/utils/date";
 import type { VerticalOption } from "@/types/catalog.types";
-import type { CampaignDetail, CampaignStatus } from "@/types/marketing.types";
+import type { CampaignDetail, CampaignStatus, PromotionOption } from "@/types/marketing.types";
 
 const TRANSVERSAL_VALUE = "__transversal__";
 
@@ -97,6 +104,8 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
   },
   statusLabel: { fontSize: tokens.fontSizeBase300, color: appTokens.chromeText },
+  loading: { display: "flex", justifyContent: "center", padding: tokens.spacingVerticalXXL },
+  footerRow: { display: "flex", justifyContent: "flex-end" },
 });
 
 interface Props {
@@ -107,7 +116,7 @@ interface Props {
   onChanged?: () => void;
 }
 
-type TabId = "details" | "audit";
+type TabId = "details" | "promociones" | "audit";
 
 /** Badge de estado con color FIJO del front (ADR-013). */
 function StatusBadge({ status }: { status: CampaignStatus }) {
@@ -264,6 +273,7 @@ export function CampaignDrawer({ mode, campaignId, verticals, onClose, onChanged
         onTabSelect={(_e: SelectTabEvent, d: SelectTabData) => setTab(d.value as TabId)}
       >
         <Tab value="details">Datos</Tab>
+        <Tab value="promociones">Promociones</Tab>
         {hasAudit ? <Tab value="audit">Auditoría</Tab> : null}
       </TabList>
 
@@ -414,6 +424,13 @@ export function CampaignDrawer({ mode, campaignId, verticals, onClose, onChanged
             </FormField>
           ) : null}
         </div>
+      ) : tab === "promociones" ? (
+        <CampaignPromotionsTab
+          campaignId={campaignId}
+          readOnly={readOnly}
+          onSaved={onChanged}
+          styles={styles}
+        />
       ) : (
         <AuditTab campaign={campaign} styles={styles} />
       )}
@@ -477,6 +494,143 @@ function PermissionGuardedStatus({
         ) : null}
       </div>
     </PermissionGuard>
+  );
+}
+
+/**
+ * Tab Promociones: editor M:N gated CAMPAIGNS_UPDATE. Carga las promociones ya
+ * vinculadas (`getCampaignPromotions`) → preselección, y el catálogo de promociones
+ * activas (`listActivePromotions`) como candidatas. Guardar reemplaza el set
+ * completo con `setCampaignPromotions(id, { promotion_ids })`. En create (sin id),
+ * solo un hint: el M:N requiere el id de la campaña.
+ */
+function CampaignPromotionsTab({
+  campaignId,
+  readOnly,
+  onSaved,
+  styles,
+}: {
+  campaignId: string | null;
+  readOnly: boolean;
+  onSaved?: () => void;
+  styles: Styles;
+}) {
+  const { hasAnyPermission } = usePermissions();
+  const canWrite = !readOnly && hasAnyPermission(["CAMPAIGNS_UPDATE"]);
+
+  const [pending, startTransition] = useTransition();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<PromotionOption[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedOk, setSavedOk] = useState(false);
+
+  useEffect(() => {
+    // Sin id (create antes de guardar) no hay set que cargar ni catálogo que mostrar.
+    if (!campaignId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    void Promise.all([listActivePromotions(), getCampaignPromotions(campaignId)])
+      .then(([active, assigned]) => {
+        if (cancelled) return;
+        setCatalog(active);
+        setSelected(assigned.map((p) => p.id));
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError("No se pudieron cargar las promociones.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId]);
+
+  const handleToggle = (id: string) => {
+    setSavedOk(false);
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const handleSave = () => {
+    if (!campaignId) return;
+    setSaveError(null);
+    setSavedOk(false);
+    startTransition(async () => {
+      const result = await setCampaignPromotions(campaignId, { promotion_ids: selected });
+      if (!result.ok) {
+        setSaveError(result.error ?? "No se pudieron guardar las promociones.");
+        return;
+      }
+      setSavedOk(true);
+      onSaved?.();
+    });
+  };
+
+  // Cada opción muestra el nombre + el descuento, y el código como secundario.
+  const options = catalog.map((p) => ({
+    id: p.id,
+    primary: `${p.name} · ${formatDiscount({
+      discount_type: p.discount_type,
+      discount_value: p.discount_value,
+      currency: p.currency,
+    })} (${DISCOUNT_TYPE_META[p.discount_type].label})`,
+    secondary: p.code,
+  }));
+
+  return (
+    <div className={styles.tabPanel}>
+      {!campaignId ? (
+        <p className={styles.emptyState}>Guarda la campaña primero para asignar promociones.</p>
+      ) : loading ? (
+        <div className={styles.loading}>
+          <Spinner size="small" label="Cargando promociones…" />
+        </div>
+      ) : loadError ? (
+        <MessageBar intent="error">
+          <MessageBarBody>{loadError}</MessageBarBody>
+        </MessageBar>
+      ) : catalog.length === 0 ? (
+        <p className={styles.emptyState}>
+          No hay promociones activas. Crea promociones en Promociones.
+        </p>
+      ) : (
+        <>
+          {saveError ? (
+            <MessageBar intent="error">
+              <MessageBarBody>{saveError}</MessageBarBody>
+            </MessageBar>
+          ) : null}
+          {savedOk ? (
+            <MessageBar intent="success">
+              <MessageBarBody>Promociones actualizadas.</MessageBarBody>
+            </MessageBar>
+          ) : null}
+
+          <SearchableOptionList
+            options={options}
+            selected={selected}
+            disabled={!canWrite || pending}
+            onToggle={handleToggle}
+            searchPlaceholder="Buscar promociones…"
+            emptyMessage="No hay promociones activas en el catálogo."
+          />
+          <p className={styles.hint}>La campaña incluirá las promociones marcadas.</p>
+          {canWrite ? (
+            <div className={styles.footerRow}>
+              <Button appearance="secondary" disabled={pending} onClick={handleSave}>
+                {pending ? "Guardando…" : "Guardar promociones"}
+              </Button>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }
 

@@ -13,8 +13,10 @@ por endpoint.
 from fastapi import APIRouter
 
 from app.modules.marketing.routers.campaign import router as campaign_router
+from app.modules.marketing.routers.promotion import router as promotion_router
 
 router = APIRouter(prefix="/marketing")
-router.include_router(campaign_router)  # /campaigns/* (+ /{id}/transition)
+router.include_router(campaign_router)  # /campaigns/* (+ /{id}/transition + M:N promociones)
+router.include_router(promotion_router)  # /promotions/* (+ M:N productos)
 
 __all__ = ["router"]

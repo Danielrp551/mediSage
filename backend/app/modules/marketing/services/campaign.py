@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import (
     AlreadyExistsException,
@@ -34,6 +35,7 @@ from app.modules.catalog.schemas.vertical import VerticalOption
 from app.modules.marketing.enums import CampaignStatus
 from app.modules.marketing.models.campaign import Campaign
 from app.modules.marketing.repositories.campaign import campaign_repository
+from app.modules.marketing.repositories.promotion import promotion_repository
 from app.modules.marketing.schemas.campaign import (
     CampaignCreate,
     CampaignDetail,
@@ -41,6 +43,7 @@ from app.modules.marketing.schemas.campaign import (
     CampaignOption,
     CampaignUpdate,
 )
+from app.modules.marketing.schemas.promotion import PromotionOption
 from app.shared.base_schemas import (
     PaginatedData,
     PaginatedResponse,
@@ -105,13 +108,13 @@ def _to_detail(
     audit_users: dict[str, User],
     *,
     vertical: Vertical | None,
-    promotions_count: int = 0,
 ) -> CampaignDetail:
+    # `campaign.promotions` debe venir eager-loaded por el caller (selectinload).
     item = _to_item(
         campaign,
         audit_users,
         vertical_name=(vertical.name if vertical is not None else None),
-        promotions_count=promotions_count,
+        promotions_count=len(campaign.promotions),
     )
     return CampaignDetail(
         **item.model_dump(),
@@ -120,7 +123,9 @@ def _to_detail(
             if vertical is not None
             else None
         ),
-        promotions=[],  # SUBSET F1: el M:N llega en F2.
+        promotions=[
+            PromotionOption.model_validate(p, from_attributes=True) for p in campaign.promotions
+        ],
     )
 
 
@@ -154,7 +159,9 @@ async def _resolve_vertical(db: AsyncSession, target_vertical_id: str | None) ->
 async def list_paginated(
     db: AsyncSession, query_request: QueryRequest
 ) -> PaginatedResponse[CampaignItem]:
-    items, total = await campaign_repository.get_paginated(db, query_request)
+    items, total = await campaign_repository.get_paginated(
+        db, query_request, load=(selectinload(Campaign.promotions),)
+    )
     vertical_ids = [c.target_vertical_id for c in items if c.target_vertical_id is not None]
     verticals = await vertical_repository.get_by_ids(db, vertical_ids)
     vertical_names = {v.id: v.name for v in verticals}
@@ -170,7 +177,7 @@ async def list_paginated(
                         if c.target_vertical_id is not None
                         else None
                     ),
-                    promotions_count=0,  # SUBSET F1
+                    promotions_count=len(c.promotions),
                 )
                 for c in items
             ],
@@ -182,7 +189,9 @@ async def list_paginated(
 
 
 async def get_by_id(db: AsyncSession, campaign_id: str) -> SingleResponse[CampaignDetail]:
-    campaign = await campaign_repository.get_by_id(db, campaign_id)
+    campaign = await campaign_repository.get_by_id(
+        db, campaign_id, load=(selectinload(Campaign.promotions),)
+    )
     if campaign is None:
         raise NotFoundException("Campaña no encontrada", code="CAMPAIGN_NOT_FOUND")
     vertical = (
@@ -288,3 +297,41 @@ async def remove(db: AsyncSession, campaign_id: str, *, actor_id: str) -> None:
     campaign.updated_by = actor_id
     campaign.updated_on = utc_now()
     await campaign_repository.soft_delete(db, campaign)
+
+
+async def get_promotions(
+    db: AsyncSession, campaign_id: str
+) -> SingleResponse[list[PromotionOption]]:
+    campaign = await campaign_repository.get_by_id(
+        db, campaign_id, load=(selectinload(Campaign.promotions),)
+    )
+    if campaign is None:
+        raise NotFoundException("Campaña no encontrada", code="CAMPAIGN_NOT_FOUND")
+    return SingleResponse(
+        data=[PromotionOption.model_validate(p, from_attributes=True) for p in campaign.promotions]
+    )
+
+
+async def set_promotions(
+    db: AsyncSession, campaign_id: str, promotion_ids: list[str], *, actor_id: str
+) -> SingleResponse[CampaignDetail]:
+    """Bulk-replace del M:N (relationship directo, mold role/permission). Valida que cada
+    promotion_id exista vivo → PROMOTION_NOT_FOUND (404)."""
+    campaign = await campaign_repository.get_by_id(
+        db, campaign_id, load=(selectinload(Campaign.promotions),)
+    )
+    if campaign is None:
+        raise NotFoundException("Campaña no encontrada", code="CAMPAIGN_NOT_FOUND")
+    if promotion_ids:
+        promos = await promotion_repository.get_by_ids(db, promotion_ids)
+        found = {p.id for p in promos}
+        missing = [pid for pid in promotion_ids if pid not in found]
+        if missing:
+            raise NotFoundException("Promoción no encontrada", code="PROMOTION_NOT_FOUND")
+        campaign.promotions = promos
+    else:
+        campaign.promotions = []
+    campaign.updated_by = actor_id
+    campaign.updated_on = utc_now()
+    await db.flush()
+    return await get_by_id(db, campaign_id)

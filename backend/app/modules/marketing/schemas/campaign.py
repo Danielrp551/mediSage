@@ -21,7 +21,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.modules.admin.schemas.audit import UserAuditInfo
 from app.modules.catalog.schemas.vertical import VerticalOption  # FK cross-módulo (read)
 from app.modules.marketing.enums import CampaignStatus
-from app.modules.marketing.schemas.promotion import PromotionOption
 
 # Slug en minúsculas/dígitos/guion_bajo (patrón catalog.Vertical.code). Inmutable post-create.
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,38}[a-z0-9]$")
@@ -113,8 +112,16 @@ class CampaignItem(BaseModel):
 
 
 class CampaignDetail(CampaignItem):
-    """Detalle: agrega la vertical resuelta + las promos del M:N (read-only en el
-    detalle; se editan por PUT /campaigns/{id}/promotions). En F1 promotions = []."""
+    """Detalle: agrega la vertical resuelta + las promos del M:N (read-only en el detalle;
+    se editan por PUT /campaigns/{id}/promotions)."""
 
     target_vertical: VerticalOption | None = None
-    promotions: list[PromotionOption] = Field(default_factory=list)
+    promotions: list[PromotionOption] = Field(default_factory=list)  # forward-ref → model_rebuild
+
+
+# Late import + model_rebuild para romper el ciclo bidireccional con promotion.py (mold
+# bots/schemas/bot_configuration). `CampaignOption` ya está definido arriba, así que el
+# import de promotion.py puede resolverlo aunque entremos por cualquiera de los dos módulos.
+from app.modules.marketing.schemas.promotion import PromotionOption  # noqa: E402
+
+CampaignDetail.model_rebuild()

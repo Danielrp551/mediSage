@@ -3,8 +3,7 @@ Campaign CRUD + transición de estado. Permission gating vía `dependencies=[...
 decorator; `actor: CurrentAuth` aparte cuando el handler necesita el id para audit.
 `/active` (literal) se declara ANTES de `/{id}` (evita la captura de ruta).
 
-⚠ SUBSET F1: los endpoints del M:N de promociones (`GET`/`PUT /campaigns/{id}/promotions`)
-llegan en F2 (la tabla `promotion` no existe aún) → hoy dan 404.
+El M:N de promociones (`GET`/`PUT /campaigns/{id}/promotions`) se cablea en F2 (bulk-replace).
 """
 
 from __future__ import annotations
@@ -19,9 +18,11 @@ from app.modules.marketing.schemas.campaign import (
     CampaignDetail,
     CampaignItem,
     CampaignOption,
+    CampaignPromotionsReplace,
     CampaignTransitionRequest,
     CampaignUpdate,
 )
+from app.modules.marketing.schemas.promotion import PromotionOption
 from app.modules.marketing.services import campaign as campaign_service
 from app.shared.base_schemas import PaginatedResponse, QueryRequest, SingleResponse
 
@@ -106,3 +107,30 @@ async def transition_campaign(
     actor: CurrentAuth,
 ) -> SingleResponse[CampaignDetail]:
     return await campaign_service.transition(db, campaign_id, payload.to_status, actor_id=actor.id)
+
+
+@router.get(
+    "/{campaign_id}/promotions",
+    response_model=SingleResponse[list[PromotionOption]],
+    dependencies=[Depends(RequirePermission("CAMPAIGNS_READ"))],
+)
+async def get_campaign_promotions(
+    campaign_id: CampaignIdPath, db: DBSession
+) -> SingleResponse[list[PromotionOption]]:
+    return await campaign_service.get_promotions(db, campaign_id)
+
+
+@router.put(
+    "/{campaign_id}/promotions",
+    response_model=SingleResponse[CampaignDetail],
+    dependencies=[Depends(RequirePermission("CAMPAIGNS_UPDATE"))],
+)
+async def set_campaign_promotions(
+    campaign_id: CampaignIdPath,
+    payload: CampaignPromotionsReplace,
+    db: DBSession,
+    actor: CurrentAuth,
+) -> SingleResponse[CampaignDetail]:
+    return await campaign_service.set_promotions(
+        db, campaign_id, payload.promotion_ids, actor_id=actor.id
+    )
