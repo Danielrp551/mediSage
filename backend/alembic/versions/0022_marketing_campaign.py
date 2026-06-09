@@ -58,7 +58,19 @@ def upgrade() -> None:
     op.create_index("ix_campaign_status", "campaign", ["status"])
 
     # ── Cierre de las 3 FK forward (ADR-009). campaign YA existe. Los índices de estas
-    #    columnas YA existen (0013/0015) → NO recrearlos, solo la FK. Hoy todo es NULL. ──
+    #    columnas YA existen (0013/0015) → NO recrearlos, solo la FK. ──
+    # ⚠ Limpieza defensiva ANTES de cada ADD CONSTRAINT: estas columnas forward-FK
+    #    (varchar sin FK) pudieron quedar con un valor HUÉRFANO en algún entorno (se vio
+    #    'test' en prod) ANTES de que campaign existiera. Como campaign se acaba de crear y
+    #    está vacía, cualquier valor no-NULL apunta a una campaña inexistente → el ADD
+    #    CONSTRAINT lo rechazaría (ForeignKeyViolation, container won't boot). Nulificamos
+    #    esos huérfanos (eran junk: la columna nunca tuvo FK ni referenció nada real).
+    #    No-op en BD limpia (qa / fresh): no hay filas con valor → 0 rows updated.
+    op.execute(
+        "UPDATE person_lead_status SET source_campaign_id = NULL "
+        "WHERE source_campaign_id IS NOT NULL "
+        "AND source_campaign_id NOT IN (SELECT id FROM campaign)"
+    )
     op.create_foreign_key(
         "fk_person_lead_status_campaign",
         "person_lead_status",
@@ -66,12 +78,22 @@ def upgrade() -> None:
         ["source_campaign_id"],
         ["id"],
     )
+    op.execute(
+        "UPDATE lead_status_history SET source_campaign_id = NULL "
+        "WHERE source_campaign_id IS NOT NULL "
+        "AND source_campaign_id NOT IN (SELECT id FROM campaign)"
+    )
     op.create_foreign_key(
         "fk_lead_status_history_campaign",
         "lead_status_history",
         "campaign",
         ["source_campaign_id"],
         ["id"],
+    )
+    op.execute(
+        "UPDATE channel_account SET default_campaign_id = NULL "
+        "WHERE default_campaign_id IS NOT NULL "
+        "AND default_campaign_id NOT IN (SELECT id FROM campaign)"
     )
     op.create_foreign_key(
         "fk_channel_account_campaign",
