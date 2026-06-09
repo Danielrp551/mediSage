@@ -12,6 +12,11 @@ export const appointmentCreateSchema = z.object({
   product_id: z.string().min(1, "Selecciona un producto"),
   scheduled_for: z.string().min(1, "Selecciona un horario disponible"),
   notes: z.string().max(2000, "Máximo 2000 caracteres").nullable().optional().or(z.literal("")),
+  // F4 (marketing): promo opcional a aplicar a la cita (el backend la aplica atómico). El
+  // wizard puede no setearla (MVP); el selector de promo elegible es nice-to-have. `min(1)`
+  // como los otros ids: ausente (undefined) o null = sin promo; "" se rechaza client-side (el
+  // backend lo trataría como falsy → sin promo, pero evitamos mandar un id vacío).
+  apply_promotion_id: z.string().min(1).nullable().optional(),
 });
 
 export type AppointmentCreateInput = z.infer<typeof appointmentCreateSchema>;

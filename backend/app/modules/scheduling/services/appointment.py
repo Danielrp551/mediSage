@@ -19,6 +19,7 @@ from app.core.exceptions import BadRequestException, NotFoundException
 from app.modules.admin.models.user import User
 from app.modules.admin.repositories.user import user_repository
 from app.modules.admin.schemas.audit import UserAuditInfo
+from app.modules.marketing.services import promotion_usage as marketing_promotion_usage
 from app.modules.scheduling.models.appointment import Appointment
 from app.modules.scheduling.models.appointment_change_log import AppointmentChangeLog
 from app.modules.scheduling.models.appointment_status import AppointmentStatus
@@ -277,6 +278,20 @@ async def create_appointment(
         )
     )
     await db.flush()
+    # F4 (marketing): aplicar la promo en la MISMA sesión (atómico, sin commit). Si la promo
+    # es inválida (PROMOTION_* de dominio), la excepción propaga → el rollback global del
+    # request revierte la cita Y el history (NO se persiste nada). NO se usa savepoint: ningún
+    # except escribe sobre la sesión aquí (lección §15). Reschedule crea la cita nueva por otro
+    # camino (transition.reschedule) → NO re-aplica la promo (queda en la cita vieja).
+    if payload.apply_promotion_id:
+        await marketing_promotion_usage.apply(
+            db,
+            promotion_id=payload.apply_promotion_id,
+            person_id=payload.person_id,
+            product_id=payload.product_id,
+            appointment_id=appt.id,
+            actor_id=actor_id,
+        )
     return SingleResponse(data=await _to_detail(db, appt))
 
 

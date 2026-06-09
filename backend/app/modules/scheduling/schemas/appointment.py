@@ -38,6 +38,10 @@ class AppointmentCreate(BaseModel):
     scheduled_for: datetime  # inicio, UTC
     source: AppointmentSource = AppointmentSource.advisor
     notes: str | None = None
+    # F4 (marketing): si viene, se aplica una promo a la cita recién creada en la MISMA
+    # sesión (atómico). NO es columna de Appointment — el vínculo vive en promotion_usage.
+    # appointment_id. Si la promo es inválida, el rollback global revierte la cita.
+    apply_promotion_id: str | None = None
 
 
 class AppointmentUpdate(BaseModel):

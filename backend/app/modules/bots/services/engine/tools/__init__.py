@@ -46,4 +46,5 @@ def register_tool(code: str) -> Callable[[ToolFn], ToolFn]:
 # Va al final, tras definir register_tool/BotInvocationContext (los módulos importan de aquí).
 from app.modules.bots.services.engine.tools import catalog as catalog  # noqa: E402,F401
 from app.modules.bots.services.engine.tools import crm as crm  # noqa: E402,F401
+from app.modules.bots.services.engine.tools import marketing as marketing  # noqa: E402,F401
 from app.modules.bots.services.engine.tools import scheduling as scheduling  # noqa: E402,F401

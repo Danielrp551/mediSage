@@ -129,11 +129,25 @@ async def book_appointment(
             scheduled_for=scheduled_for,
             source=AppointmentSource.bot,
             notes=args.get("notes"),
+            # F4 (marketing): si el LLM pasó una promo elegible (de list_eligible_promotions),
+            # create_appointment la aplica en la MISMA sesión. Una promo inválida lanza una
+            # excepción de dominio de marketing (BadRequest/Conflict/NotFound) → la captura el
+            # `except DomainException` de abajo y devuelve {ok:false, error:code}.
+            apply_promotion_id=args.get("apply_promotion_id"),
         )
     except KeyError:
         return {"ok": False, "error": "missing_required_argument"}
     try:
-        result = await appointment_service.create_appointment(db, payload, actor_id=SYSTEM_USER_ID)
+        # F4: savepoint propio alrededor de create_appointment para que el book sea ATÓMICO en el
+        # path del bot. Si `apply` (marketing) falla DESPUÉS de flushear la cita+history, el
+        # begin_nested revierte ese trabajo parcial antes de que el except devuelva el code. Sin
+        # esto, como el tool CAPTURA la excepción y retorna normal, el savepoint que el engine
+        # (embedded.py) abre por tool se RELEASEaría → commitearía una cita huérfana SIN promo.
+        # (El path HTTP ya es atómico por el rollback de get_db; el bot lo necesita aquí.)
+        async with db.begin_nested():
+            result = await appointment_service.create_appointment(
+                db, payload, actor_id=SYSTEM_USER_ID
+            )
     except DomainException as exc:
         return _domain_error(exc)
     appt = result.data

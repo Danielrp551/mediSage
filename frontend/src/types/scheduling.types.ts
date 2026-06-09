@@ -253,6 +253,9 @@ export interface AppointmentCreatePayload {
   scheduled_for: string; // ISO 8601 UTC del slot elegido
   source?: AppointmentSource; // default advisor (lo setea la action según el rol)
   notes?: string | null;
+  // F4 (marketing): si viene, el backend aplica una promo a la cita en la MISMA sesión
+  // (atómico). Promo inválida → la cita NO se crea (rollback). El selector UI es nice-to-have.
+  apply_promotion_id?: string | null;
 }
 
 // Body de PUT /appointments/{id} — SOLO columnas no-estado (→ change_log). scheduled_for

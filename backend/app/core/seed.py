@@ -462,6 +462,12 @@ BOT_TOOL_SEED: list[tuple[str, str, str, dict[str, Any], str, bool]] = [
                     "description": "Inicio de la cita en ISO 8601 (el starts_at del slot elegido)",
                 },
                 "notes": {"type": "string", "description": "Opcional: notas internas de la cita"},
+                "apply_promotion_id": {
+                    "type": "string",
+                    "description": "Opcional: ID de una promo ELEGIBLE (de list_eligible_promotions) "
+                    "para aplicar a la cita (descuento). Si la promo ya no es válida, la reserva se "
+                    "rechaza con el motivo y NO se crea la cita.",
+                },
             },
             "required": ["doctor_id", "office_id", "product_id", "scheduled_for"],
         },
@@ -486,6 +492,23 @@ BOT_TOOL_SEED: list[tuple[str, str, str, dict[str, Any], str, bool]] = [
         },
         "scheduling.transition.cancel",
         True,
+    ),
+    (
+        "list_eligible_promotions",
+        "Listar promociones elegibles",
+        "Lista las promociones vigentes que aplican al contacto de la conversación para un "
+        "producto/servicio, con el descuento ya calculado. Úsala antes de reservar para "
+        "ofrecerle un descuento al paciente; luego pasa el promotion_id elegido a "
+        "book_appointment en apply_promotion_id.",
+        {
+            "type": "object",
+            "properties": {
+                "product_id": {"type": "string", "description": "ID del producto/servicio"},
+            },
+            "required": ["product_id"],
+        },
+        "marketing.promotion_usage.eligible_for",
+        False,
     ),
 ]
 
