@@ -13,12 +13,17 @@ El update (PUT, changelog), las transiciones y el calendario llegan en fases sig
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.modules.admin.models.user import User
 from app.modules.admin.repositories.user import user_repository
 from app.modules.admin.schemas.audit import UserAuditInfo
+from app.modules.crm.repositories.lead_status import lead_status_repository
+from app.modules.crm.repositories.person_lead_status import person_lead_status_repository
+from app.modules.crm.services import person_lead_status as crm_person_lead_status
 from app.modules.marketing.services import promotion_usage as marketing_promotion_usage
 from app.modules.scheduling.models.appointment import Appointment
 from app.modules.scheduling.models.appointment_change_log import AppointmentChangeLog
@@ -61,6 +66,8 @@ from app.shared.base_schemas import (
     SingleResponse,
 )
 from app.shared.utils import generate_uuid, utc_now
+
+logger = logging.getLogger(__name__)
 
 
 def _audit_info(user: User | None) -> UserAuditInfo | None:
@@ -291,6 +298,33 @@ async def create_appointment(
             product_id=payload.product_id,
             appointment_id=appt.id,
             actor_id=actor_id,
+        )
+    # Funnel CRM: crear una cita ⇒ lead al estado GANADO del catálogo (is_won, sin codes en
+    # duro) — para TODOS los caminos (bot, consola, import), espejo de attend()→customer en
+    # transition.py. Best-effort A PROPÓSITO (a diferencia de attend): una reserva válida
+    # NUNCA se revierte por el funnel (lead en estado final, matriz, catálogo sin is_won →
+    # no-op). TODO el bloque va dentro de su begin_nested: si transition falla a mitad, el
+    # rollback del savepoint deja la sesión limpia (lección §15: el except no escribe sobre
+    # una sesión sucia).
+    try:
+        async with db.begin_nested():
+            won = await lead_status_repository.get_won(db)
+            current = await person_lead_status_repository.get_active_for_person(
+                db, payload.person_id
+            )
+            if won is not None and current is not None and current.lead_status_id != won.id:
+                await crm_person_lead_status.transition(
+                    db,
+                    payload.person_id,
+                    won.id,
+                    actor_id=actor_id,
+                    reason="Cita agendada",
+                )
+    except Exception:  # noqa: BLE001 — el rollback del savepoint ya limpió; la cita manda
+        logger.warning(
+            "create_appointment.lead_promotion_skipped person_id=%s appointment_id=%s",
+            payload.person_id,
+            appt.id,
         )
     return SingleResponse(data=await _to_detail(db, appt))
 

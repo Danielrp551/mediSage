@@ -52,6 +52,17 @@ class LeadStatusRepository(BaseRepository[LeadStatus]):
         )
         return result.scalars().first()
 
+    async def get_won(self, db: AsyncSession) -> LeadStatus | None:
+        """El estado GANADO del funnel (is_won) — resuelto por flag, no por code en duro:
+        renombrar el code en el catálogo no rompe las automatizaciones. Si hubiera varios
+        is_won, gana el de menor display_order."""
+        result = await db.execute(
+            select(LeadStatus)
+            .where(LeadStatus.is_won.is_(True), LeadStatus.deleted_at.is_(None))
+            .order_by(LeadStatus.display_order)
+        )
+        return result.scalars().first()
+
     async def count_initial(self, db: AsyncSession, exclude_id: str | None = None) -> int:
         """Guard de "exactamente un is_initial". Lo usa create/update para detectar
         un segundo inicial (MULTIPLE_INITIAL_STATUS)."""
