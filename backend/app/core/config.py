@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
     BOT_DEFAULT_MODEL: str = "gpt-4.1-mini"  # default de BotConfigurationVersion.model_name
+    # TZ del negocio para el anclaje temporal del bot (tool get_current_datetime).
+    BOT_TIMEZONE: str = "America/Lima"
     # Corta el loop de tool-calling de un turno (anti-runaway / cost guard).
     MAX_TOOL_ITERATIONS_PER_TURN: int = 5
     # Cloud Tasks: el turno del bot se despacha async (ADR-012). El webhook encola →
@@ -173,6 +175,22 @@ class Settings(BaseSettings):
                 "CORS_ORIGINS contains '*' but the app sends credentials (httpOnly cookies). "
                 "List explicit origins (comma-separated) or a JSON array."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_bot_timezone(self) -> Settings:
+        """Un typo en BOT_TIMEZONE (zona IANA) fallaría recién al invocar la tool
+        get_current_datetime en runtime — atraparlo RUIDOSO al boot (mismo principio
+        que el resto de validadores: nada que solo falle en prod)."""
+        from zoneinfo import ZoneInfo
+
+        try:
+            ZoneInfo(self.BOT_TIMEZONE)
+        except Exception as exc:
+            raise ValueError(
+                f"BOT_TIMEZONE={self.BOT_TIMEZONE!r} no es una zona IANA válida "
+                "(ej. 'America/Lima')."
+            ) from exc
         return self
 
     @model_validator(mode="after")
