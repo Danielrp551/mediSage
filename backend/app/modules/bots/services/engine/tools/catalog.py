@@ -44,5 +44,18 @@ async def list_products_by_vertical(
     args: dict[str, Any], ctx: BotInvocationContext, db: AsyncSession
 ) -> dict[str, Any]:
     # MVP: catalog.product.list_active scopea por service_id (ver docstring del módulo).
+    # Devuelve precio/moneda/duración: el catálogo en BD es la fuente de verdad que el
+    # LLM debe citar (los precios NO van hardcodeados en el system_prompt).
     rows = await catalog_product.list_active(db, service_id=args.get("service_id"))
-    return {"products": [{"id": p.id, "name": p.name} for p in rows]}
+    return {
+        "products": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "price": str(p.base_price),
+                "currency": p.currency,
+                "duration_min": p.duration_min,
+            }
+            for p in rows
+        ]
+    }
