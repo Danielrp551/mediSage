@@ -2,7 +2,7 @@
 
 > **Última actualización**: 2026-05-31
 > **Audiencia**: developer implementando `backend/app/modules/crm/`.
-> **Pre-requisito**: leer [`README.md`](README.md) (overview del módulo), [`../../../backend/CLAUDE.md`](../../../backend/CLAUDE.md) (patrones del template), [`ADR-003`](../../decisions/ADR-003-person-with-separated-lifecycle-statuses.md) (Person raíz + estados lead/customer en tablas hijas — base estructural), [`_seed-and-roles.md`](../_seed-and-roles.md) (los 16 permisos CRM + el user/role `SYSTEM` + roles `ASESOR`/`DOCTOR` ya canónicos), y los deep-dives molde [`../staff/backend.md`](../staff/backend.md) (creación NESTED, denormalización batch sin N+1, `/me`), [`../clinic/backend.md`](../clinic/backend.md) (catálogo con `code` UNIQUE + guard `*_IN_USE` 409) y [`../catalog/backend.md`](../catalog/backend.md) (CRUD + dropdown `/active`).
+> **Pre-requisito**: leer [`README.md`](README.md) (overview del módulo), [`../../../backend/CLAUDE.md`](../../../backend/CLAUDE.md) (patrones del template), [`ADR-003`](../../decisions/ADR-003-person-with-separated-lifecycle-statuses.md) (Person raíz + estados lead/customer en tablas hijas — base estructural), [`_seed-and-roles.md`](../_seed-and-roles.md) (los 15 permisos CRM + el user/role `SYSTEM` + roles `ASESOR`/`DOCTOR` ya canónicos), y los deep-dives molde [`../staff/backend.md`](../staff/backend.md) (creación NESTED, denormalización batch sin N+1, `/me`), [`../clinic/backend.md`](../clinic/backend.md) (catálogo con `code` UNIQUE + guard `*_IN_USE` 409) y [`../catalog/backend.md`](../catalog/backend.md) (CRUD + dropdown `/active`).
 
 > **Contrato autoritativo**: este doc respeta la spec compartida de `crm` (entidades, campos, endpoints, permisos, códigos de error). Si algo aquí discrepa de la spec o de [`README.md`](README.md)/[`ui.md`](ui.md)/[`frontend.md`](frontend.md), **gana la spec** y hay que corregir este doc. El overview viejo de `crm` (que usaba `PATCH`/`/options`) queda **deprecado** y se consolida en [`README.md`](README.md) (el archivo `docs/modules/crm.md` ya fue borrado).
 
@@ -180,6 +180,7 @@ class ActivityType(str, Enum):
     CONVERSATION_RELEASED = "CONVERSATION_RELEASED"
     APPOINTMENT_BOOKED = "APPOINTMENT_BOOKED"
     APPOINTMENT_CANCELLED = "APPOINTMENT_CANCELLED"
+    APPOINTMENT_ATTENDED = "APPOINTMENT_ATTENDED"
 
 
 class ActivityOutcome(str, Enum):
@@ -808,12 +809,14 @@ class PersonDetail(PersonItem):
 
 
 class PersonOption(BaseModel):
-    """Dropdown shape — GET /persons/active. Used by future modules (scheduling)."""
+    """Dropdown shape — GET /persons/active. Used by future modules (scheduling)
+    and by /persons/search (the bot path)."""
 
     model_config = ConfigDict(from_attributes=True)
     id: str
     full_name: str
     document_number: str | None = None
+    primary_identifier: PrimaryIdentifierInfo | None = None
 ```
 
 > **`full_name` denormalizado**: `Person` no tiene una columna `full_name`; el service lo arma (`f"{first_name} {last_name} {second_last_name or ''}".strip()`). Por eso `_to_item`/`_to_detail` lo pasan como kwarg explícito (mismo patrón que `staff.DoctorItem.full_name`).
@@ -1588,7 +1591,7 @@ Soft-deletea la `Person`; identifiers/lead/customer/assignment/activities quedan
 
 #### `GET /api/v1/crm/persons/active` — `PERSONS_READ` → lista cruda `list[PersonOption]`
 ```json
-[ { "id": "p1a2...", "full_name": "Lucía Fernández Soto", "document_number": "70123456" } ]
+[ { "id": "p1a2...", "full_name": "Lucía Fernández Soto", "document_number": "70123456", "primary_identifier": { "channel_type": "whatsapp", "identifier": "+51999111222", "verified": true } } ]
 ```
 
 #### `GET /api/v1/crm/persons/search?q=&channel_type=&identifier=` — `PERSONS_READ` → `SingleResponse[list[PersonOption]]`
@@ -2382,7 +2385,7 @@ CREATE INDEX ix_customer_status_history_person ON customer_status_history (perso
 
 ## Seed
 
-Los **16 permisos** de `crm` ya están consolidados en [`_seed-and-roles.md`](../_seed-and-roles.md) (`MENU-CRM`, `PERSONS_READ/CREATE/UPDATE/DELETE`, `LEAD_STATUSES_READ/WRITE`, `CUSTOMER_STATUSES_READ/WRITE`, `LEAD_ASSIGNMENTS_READ/WRITE`, `LEAD_ACTIVITIES_READ/WRITE`, `LEAD_STATUS_HISTORY_READ`, `MY_LEADS_READ`; `module="CRM"`). **NO redefinir** — solo agregarlos a `SEED_PERMISSIONS` si aún no están. El subset de `ASESOR` (corazón del trabajo: PERSONS_*, LEAD_*, MY_LEADS_READ) y de `DOCTOR` (`PERSONS_READ`) también están canónicos ahí — el helper `_seed_role` los filtra por código (idempotente, a prueba de orden de módulos).
+Los **15 permisos** de `crm` ya están consolidados en [`_seed-and-roles.md`](../_seed-and-roles.md) (`MENU-CRM`, `PERSONS_READ/CREATE/UPDATE/DELETE`, `LEAD_STATUSES_READ/WRITE`, `CUSTOMER_STATUSES_READ/WRITE`, `LEAD_ASSIGNMENTS_READ/WRITE`, `LEAD_ACTIVITIES_READ/WRITE`, `LEAD_STATUS_HISTORY_READ`, `MY_LEADS_READ`; `module="CRM"`). **NO redefinir** — solo agregarlos a `SEED_PERMISSIONS` si aún no están. El subset de `ASESOR` (corazón del trabajo: PERSONS_*, LEAD_*, MY_LEADS_READ) y de `DOCTOR` (`PERSONS_READ`) también están canónicos ahí — el helper `_seed_role` los filtra por código (idempotente, a prueba de orden de módulos).
 
 ### F0 introduce el user/role `SYSTEM` (diferido desde staff)
 
@@ -2449,14 +2452,14 @@ CUSTOMER_TRANSITIONS: list[tuple[str, str]] = [
 ## Checklist de implementación (mapeado a fases F0–F5)
 
 ### F0 — Prep (sin migración; solo seed + skeleton)
-- [ ] Agregar los 16 permisos `CRM` a `app/core/seed.py:SEED_PERMISSIONS` (ya canónicos en [`_seed-and-roles.md`](../_seed-and-roles.md); no redefinir).
+- [ ] Agregar los 15 permisos `CRM` a `app/core/seed.py:SEED_PERMISSIONS` (ya canónicos en [`_seed-and-roles.md`](../_seed-and-roles.md); no redefinir).
 - [ ] **Introducir el `SYSTEM` user (`active=false`) + role `SYSTEM` (perms vacíos)** vía `_seed_system_user`/`_seed_role` (diferido desde staff).
 - [ ] Verificar que `_seed_role` aplique los subsets `ASESOR`/`DOCTOR` ya con los códigos CRM (el filtro por código los toma al existir el permiso).
 - [ ] Crear el skeleton `backend/app/modules/crm/{enums,models,schemas,repositories,services,routers}/` (`enums.py` con `ChannelType`/`ActivityType` completo/`ActivityOutcome`).
 - [ ] Registrar el módulo en `app/modules/__init__.py` (`from app.modules import admin, catalog, clinic, crm, staff`).
 - [ ] Incluir el aggregator router en `app/main.py` (`prefix="/crm"`).
 - [ ] (Frontend F0) nav grupo "CRM" (`MENU-CRM`) + iconos; `endpoints.ts` (bloque CRM); `types/crm.types.ts` — ver [`frontend.md`](frontend.md).
-- [ ] Smoke test: login admin → el JWT contiene los 16 permisos CRM; el user `system@medisage.internal` existe con `active=false`.
+- [ ] Smoke test: login admin → el JWT contiene los 15 permisos CRM; el user `system@medisage.internal` existe con `active=false`.
 
 ### F1 — Person + Identifiers (migración `0011_crm_person`)
 - [ ] `models/person.py` + `models/person_contact_identifier.py` (UNIQUE parcial `(channel_type, identifier) WHERE deleted_at IS NULL`) + migración `0011_crm_person` (`down_revision="0010_staff_doctor_availability"`).

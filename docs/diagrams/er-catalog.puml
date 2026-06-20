@@ -1,6 +1,6 @@
 @startuml er-catalog
 ' Propósito: modelo relacional del módulo catalog (Vertical → Service → Product)
-' Última actualización: 2026-05-28
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/catalog/models/
 
 !theme plain
@@ -66,7 +66,10 @@ entity "service" as t_svc {
 entity "product" as t_prod {
   * id : varchar(36) <<PK>>
   --
-  * service_id : varchar(36) <<FK→service>>
+  * service_id : varchar(36) <<FK→service, indexed>>
+  ' Denormalizado del service padre (inmutable). Permite filtrar/contar
+  ' productos por vertical sin join. Índice ix_product_vertical_id.
+  * vertical_id : varchar(36) <<FK→vertical, indexed>>
   * code : varchar(60)
   * name : varchar(160)
   description : varchar(1000) <<nullable>>
@@ -94,6 +97,8 @@ entity "product" as t_prod {
 
 t_vert ||--o{ t_svc  : "tiene\nservicios"
 t_svc  ||--o{ t_prod : "tiene\nproductos"
+' FK denormalizada vertical→product (copiada del service en el create).
+t_vert ||..o{ t_prod : "vertical_id\n(denormalizado)"
 
 ' ─────────────────────────────────────────────────────────────
 ' Referencias externas (informativas — definidas en otros módulos)
@@ -103,6 +108,19 @@ entity "doctor_vertical" as t_dv <<external,join>> #lightgrey {
   ' Módulo: staff
   * doctor_id : varchar(36) <<PK, FK→doctor>>
   * vertical_id : varchar(36) <<PK, FK→vertical>>
+}
+
+entity "office_vertical" as t_ov <<external,join>> #lightgrey {
+  ' Módulo: clinic
+  * office_id : varchar(36) <<PK, FK→office>>
+  * vertical_id : varchar(36) <<PK, FK→vertical>>
+}
+
+entity "campaign" as t_camp <<external>> #lightgrey {
+  ' Módulo: marketing
+  * id : varchar(36) <<PK>>
+  target_vertical_id : varchar(36) <<FK→vertical, nullable>>
+  ...
 }
 
 entity "appointment" as t_appt <<external>> #lightgrey {
@@ -118,9 +136,19 @@ entity "promotion_product" as t_pp <<external,join>> #lightgrey {
   * product_id : varchar(36) <<PK, FK→product>>
 }
 
+entity "promotion_usage" as t_pu <<external>> #lightgrey {
+  ' Módulo: marketing
+  * id : varchar(36) <<PK>>
+  * product_id : varchar(36) <<FK→product>>
+  ...
+}
+
 t_vert ||--o{ t_dv   : "doctores\nasignados (staff)"
+t_vert ||--o{ t_ov   : "sedes que la\nhospedan (clinic)"
+t_vert ||--o{ t_camp : "campañas\nsegmentadas (marketing)"
 t_prod ||--o{ t_appt : "se agenda en (scheduling)"
 t_prod ||--o{ t_pp   : "tiene\npromos (marketing)"
+t_prod ||--o{ t_pu   : "redenciones\nde promo (marketing)"
 
 ' ─────────────────────────────────────────────────────────────
 ' Notas

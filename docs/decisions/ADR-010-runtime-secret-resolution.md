@@ -31,7 +31,7 @@ Hay que decidir **ahora** cómo resuelve `conversations` esas credenciales, porq
 - `conversations.services.channel_account.get_credentials(ca) -> dict` orquesta:
   - Si `ca.secret_name` está poblado **y** no estamos en modo local → `await secrets.resolve(ca.secret_name)`.
   - Si `ca.secret_name` es `NULL`, o `ENV_NAME=dev`, o `USE_LOCAL_SECRETS` está activo → **fallback a env** vía `Settings` (`GCP_PROJECT_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_PHONE_NUMBER_ID`; defaults vacíos).
-  - Si no resuelve nada (ni secreto ni fallback) → excepción de dominio `CHANNEL_CREDENTIALS_MISSING` (500 — mala configuración del operador).
+  - Si no resuelve nada (ni secreto ni fallback) → excepción de dominio `CHANNEL_CREDENTIALS_MISSING` (`BadRequestException` → HTTP 400 — mala configuración del operador).
 - El **valor** del secreto **nunca** viaja a un schema ni a la UI: los schemas exponen solo `secret_name` + un flag derivado `credentials_configured: bool`. `get_credentials` es **server-only**.
 - La Service Account de Cloud Run **ya tiene** `roles/secretmanager.secretAccessor`; los secretos por entorno (`medisage-whatsapp-*-{qa,prod}`) se crean al desplegar F1/F2.
 

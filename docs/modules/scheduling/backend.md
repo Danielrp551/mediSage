@@ -48,17 +48,17 @@ backend/app/modules/scheduling/
 │   ├── __init__.py
 │   ├── appointment_status.py           # catálogo + matriz (1 is_initial, delete guard)
 │   ├── availability.py                 # compute_available_slots (ADR-006/007) + check_slot
-│   ├── appointment.py                  # 9 invariantes + create/get/list/update + reschedule + calendar
-│   ├── transition.py                   # transition genérica (matriz) + shortcuts + attend→promote
-│   └── bot_facade.py                   # book_from_bot / cancel_from_bot (SYSTEM)
+│   ├── appointment.py                  # 9 invariantes + create/get/list/update + reschedule
+│   └── transition.py                   # transition genérica (matriz) + shortcuts + attend→promote
 └── routers/
     ├── __init__.py                     # aggregator: prefix="/scheduling"
     ├── appointment_status.py           # /appointment-statuses/* (+ matriz)
     ├── availability.py                 # /availability/compute, /availability/check-slot
-    ├── appointment.py                  # /appointments/* (CRUD + lifecycle + calendar)
-    ├── me.py                           # /me/appointments/list + /me/calendar (doctor self-service)
-    └── bot_facade.py                   # /appointments/from-bot + /appointments/{id}/cancel-from-bot
+    ├── appointment.py                  # /appointments/* (CRUD + lifecycle)
+    └── me.py                           # /me/appointments/list (doctor self-service)
 ```
+
+> **No hay `bot_facade.py`** (ni service ni router): el bot no tiene endpoints HTTP. La integración del bot vive en `bots/services/engine/tools/scheduling.py` (3 tools que llaman a los services de scheduling directo, ver §Bot tools cross-módulo). Tampoco hay un endpoint `/appointments/calendar` ni `/me/calendar`: el calendario es frontend-only (combina `/appointments/list` + `/me/appointments/list` + `/availability/compute`).
 
 **No hay `models/associations.py`**: `scheduling` no introduce M:N nuevas. La tabla de transición (`appointment_status_transition`) parece una asociación pero es una **entidad** (PK propia, mixins, `active`, CRUD-eable vía la matriz), igual que `crm.lead_status_transition`. Por eso va como modelo normal, no como `Table()` pura.
 
@@ -81,8 +81,8 @@ El aggregator `routers/__init__.py` replica el patrón de `crm/routers/__init__.
 ```python
 """
 Aggregates the scheduling sub-routers under one prefix. `main.py` includes este
-`router` una vez. El orden importa solo dentro de cada sub-router (/active y
-/calendar antes de /{id}); el orden del aggregator es informativo.
+`router` una vez. El orden importa solo dentro de cada sub-router (/active antes de
+/{id}); el orden del aggregator es informativo.
 """
 
 from fastapi import APIRouter
@@ -90,20 +90,18 @@ from fastapi import APIRouter
 from app.modules.scheduling.routers.appointment import router as appointment_router
 from app.modules.scheduling.routers.appointment_status import router as status_router
 from app.modules.scheduling.routers.availability import router as availability_router
-from app.modules.scheduling.routers.bot_facade import router as bot_facade_router
 from app.modules.scheduling.routers.me import router as me_router
 
 router = APIRouter(prefix="/scheduling")
 router.include_router(status_router)        # /appointment-statuses/* (+ matriz)
 router.include_router(availability_router)  # /availability/compute, /availability/check-slot
-router.include_router(appointment_router)   # /appointments/* (CRUD + lifecycle + calendar)
-router.include_router(me_router)            # /me/appointments/list + /me/calendar
-router.include_router(bot_facade_router)    # /appointments/from-bot + /appointments/{id}/cancel-from-bot
+router.include_router(appointment_router)   # /appointments/* (CRUD + lifecycle)
+router.include_router(me_router)            # /me/appointments/list
 
 __all__ = ["router"]
 ```
 
-> ⚠ El `bot_facade_router` también cuelga de `/appointments/...` (`/appointments/from-bot`, `/appointments/{id}/cancel-from-bot`). Para que `from-bot` no lo capture la ruta dinámica `/{id}`, los paths estáticos del `appointment_router` (`/calendar`) y los del bot facade van declarados **antes** de `/{id}` dentro de su propio router; como `from-bot` y `cancel-from-bot` viven en otro router incluido **después**, usar paths inequívocos (`from-bot` no colisiona con un UUID, pero `cancel-from-bot` sí cuelga de `/{id}/...`, lo cual es seguro porque es un segmento literal extra). Ver §Routers.
+> ⚠ Dentro del `appointment_router` el orden de declaración importa: las rutas **estáticas** (`/list`, `POST ""`) van **antes** de la ruta dinámica `/{id}` para que un segmento literal no lo capture la ruta paramétrica. No hay rutas `/calendar` ni `/from-bot`/`cancel-from-bot` que ordenar: el calendario es frontend-only (sin endpoint) y el bot no tiene endpoints HTTP (corre in-process, ver §Bot tools cross-módulo). Ver §Routers.
 
 ## Enums — `enums.py` (en código, NO en BD)
 
@@ -113,7 +111,7 @@ __all__ = ["router"]
 """
 Scheduling enums (code-level value sets, NO DB catalogs).
 - AppointmentSource: cómo se originó la cita. Persistido como varchar(20).
-  `bot` = creada por el bot facade (SYSTEM); `advisor`/`admin` = backoffice;
+  `bot` = creada por el bot vía tool in-process (SYSTEM); `advisor`/`admin` = backoffice;
   `import` = carga masiva; `api` = integración externa.
 """
 
@@ -617,21 +615,9 @@ class CheckSlotRequest(BaseModel):
 class CheckSlotResponse(BaseModel):
     available: bool
     reason: str | None = None  # code del primer invariante que falla (None si available)
-
-
-class CalendarResponse(BaseModel):
-    """GET /appointments/calendar + /me/calendar. Citas + slots libres del rango.
-    SIN campo timezone: la grilla resuelve la TZ del branch client-side por branch_id
-    (soporta multi-sede en un mismo rango). Importa AppointmentItem de schemas/appointment.py
-    (o se declara en appointment.py si el import cruzado molesta)."""
-
-    appointments: list["AppointmentItem"] = Field(default_factory=list)
-    free_slots: list[AvailabilitySlot] = Field(default_factory=list)
-    from_date: date_type
-    to_date: date_type
 ```
 
-> **Nota forward-ref/import**: `AppointmentItem` vive en `schemas/appointment.py`; aquí se referencia como forward-ref (string) para evitar el import circular — `model_rebuild()` o un `from app.modules.scheduling.schemas.appointment import AppointmentItem` al pie del módulo lo resuelve. Si el import cruzado molesta, declarar `CalendarResponse` en `schemas/appointment.py` reusando `AvailabilitySlot`; lo vinculante es el shape `{appointments, free_slots, from_date, to_date}` **sin** `timezone`.
+> **No hay `CalendarResponse`**: el calendario es **frontend-only** (no existe `/appointments/calendar` ni `/me/calendar`). La grilla arma su ventana en el cliente combinando `POST /appointments/list` + `POST /me/appointments/list` + `POST /availability/compute`, y resuelve la TZ del branch client-side por `branch_id` (multi-sede). No se persiste ni se serializa un envelope de calendario dedicado.
 
 ### `schemas/appointment.py` (Appointment + requests de lifecycle)
 
@@ -1389,7 +1375,7 @@ async def cancel(db, appointment_id, payload: AppointmentCancelRequest, *, actor
                            reason=payload.cancellation_reason)
 ```
 
-> El permiso `APPOINTMENTS_CANCEL_OVERRIDE` se chequea **en el service** (necesita `actor.permissions`, no solo el id) — por eso `cancel` recibe `actor: CurrentAuth` completo, no solo `actor_id`. El bot facade NO hace override (corre como SYSTEM sin ese permiso → respeta `min_hours_to_cancel`).
+> El permiso `APPOINTMENTS_CANCEL_OVERRIDE` se chequea **en el service** (necesita `actor.permissions`, no solo el id) — por eso `cancel` recibe `actor: AuthContext` completo, no solo `actor_id`. El bot NO hace override: su tool `cancel_appointment` arma un `AuthContext(user=SYSTEM, permissions=frozenset())` (permisos vacíos) → respeta `min_hours_to_cancel` (`CANCEL_TOO_LATE`).
 
 ### `reschedule` — nueva cita + `previous_appointment_id` + `exclude_id` + revalida invariantes
 
@@ -1460,51 +1446,19 @@ async def attend(db, appointment_id, *, actor_id):
 
 > **Misma transacción**: el shortcut `attended` + el `promote_from_lead` + el `LeadActivity` corren en la sesión del request (commit al final). Si `promote_from_lead` falla con `NO_INITIAL_CUSTOMER_STATUS` (no hay estado cliente inicial configurado), la atención entera se revierte — es preferible no marcar ATTENDED si el promote es imposible (decisión a confirmar con el orquestador; alternativa: hacer el promote best-effort y NO revertir la atención). **Ver cross_doc_notes.** El `ActivityType.APPOINTMENT_ATTENDED` debe agregarse al enum de `crm` (cross-módulo §9).
 
-## Bot facade — `services/bot_facade.py` (SYSTEM, sin CurrentAuth)
+## Integración del bot — 3 tools in-process (SYSTEM, sin endpoints HTTP)
 
-`book_from_bot` / `cancel_from_bot` corren como SYSTEM (`created_by = SYSTEM_USER_ID`, `source='bot'`), respetan **TODOS** los invariantes (incluido `min_hours_to_cancel` — el bot NO hace override), y emiten `LeadActivity` (`APPOINTMENT_BOOKED`/`APPOINTMENT_CANCELLED`, `related_appointment_id`). Reschedule por bot = cancel+book (sin 4ta tool en MVP).
+**No hay `services/bot_facade.py` ni `routers/bot_facade.py`**: el bot NO consume `scheduling` por HTTP. La integración vive en el módulo `bots`, en `bots/services/engine/tools/scheduling.py`: **3 tools** (`check_availability`, `book_appointment`, `cancel_appointment`) registradas en el `TOOL_REGISTRY` que el motor invoca in-process y que llaman a los services de `scheduling` **directo**, en la MISMA sesión del turno. Corren como SYSTEM (`actor_id = SYSTEM_USER_ID`, `source='bot'`), reusan los services existentes (no hay un wrapper de scheduling) y respetan **TODOS** los invariantes (incluido `min_hours_to_cancel` — el bot NO hace override). Reschedule por bot = `cancel_appointment` + `book_appointment` (sin 4ta tool).
 
-```python
-SYSTEM_USER_ID = crm_person.SYSTEM_USER_ID  # "00000000-0000-0000-0000-000000000002"
+Las tools reusan las **firmas reales** de los services:
 
-async def book_from_bot(db, ctx: BotInvocationContext, *, doctor_id, office_id, product_id,
-                        scheduled_for, person_id=None) -> SingleResponse[AppointmentDetail]:
-    pid = person_id or ctx.person_id
-    if pid is None:
-        raise BadRequestException("Falta el contacto", code="PERSON_REQUIRED")
-    payload = AppointmentCreate(
-        person_id=pid, doctor_id=doctor_id, office_id=office_id, product_id=product_id,
-        scheduled_for=scheduled_for, source=AppointmentSource.bot, notes=None)
-    result = await create_appointment(db, payload, actor_id=SYSTEM_USER_ID)  # respeta los 9 invariantes
-    appt = result.data
-    await crm_lead_activity.log(
-        db, pid, ActivityType.APPOINTMENT_BOOKED, advisor_user_id=None, actor_id=SYSTEM_USER_ID,
-        content="Cita agendada por el bot", related_appointment_id=appt.id,
-        related_conversation_id=ctx.conversation_id,
-        payload={"source": "bot", "appointment_id": appt.id})
-    return result
+- `check_availability` → `availability.compute_available_slots(db, *, doctor_id, product_id, branch_id=None, office_id=None, from_date, to_date)`.
+- `book_appointment` → `appointment.create_appointment(db, AppointmentCreate(..., source=bot, apply_promotion_id=...), actor_id=SYSTEM_USER_ID)`, envuelto en `async with db.begin_nested()` propio (el path del bot necesita ser atómico: el tool captura las excepciones de dominio para reportarlas al LLM, así que sin el savepoint propio el engine commitearía trabajo parcial — p.ej. una cita huérfana si `apply_promotion_id` falla; el path HTTP ya es atómico por el rollback de `get_db`). Reserva **SIEMPRE** para `ctx.person_id` (anti-suplantación): nunca un id que venga del LLM. Si el hilo aún no resolvió contacto → `no_person`.
+- `cancel_appointment` → guard anti-IDOR (la cita debe ser de `ctx.person_id`, si no → `appointment_not_found`, sin filtrar la existencia de citas ajenas) + `transition.cancel(db, appointment_id, AppointmentCancelRequest, actor=AuthContext(user=SYSTEM, permissions=frozenset(), roles=frozenset()))`. Los permisos vacíos hacen que respete `CANCEL_TOO_LATE` (no tiene `APPOINTMENTS_CANCEL_OVERRIDE`).
 
-async def cancel_from_bot(db, ctx: BotInvocationContext, appointment_id) -> SingleResponse[AppointmentDetail]:
-    appt = await appointment_repository.get_by_id(db, appointment_id)
-    if appt is None:
-        raise NotFoundException("Cita no encontrada", code="APPOINTMENT_NOT_FOUND")
-    # El bot NO tiene APPOINTMENTS_CANCEL_OVERRIDE → respeta min_hours_to_cancel.
-    product = await catalog_product_repository.get_by_id(db, appt.product_id)
-    if product and product.min_hours_to_cancel is not None:
-        if (appt.scheduled_for - utc_now()) < timedelta(hours=product.min_hours_to_cancel):
-            raise BadRequestException("Muy tarde para cancelar", code="CANCEL_TOO_LATE")
-    cancelled = await appointment_status_repository.get_by_code(db, "cancelled")
-    result = await transition(db, appointment_id, cancelled.id, actor_id=SYSTEM_USER_ID,
-                              reason="Cancelada por el bot")
-    await crm_lead_activity.log(
-        db, appt.person_id, ActivityType.APPOINTMENT_CANCELLED, advisor_user_id=None,
-        actor_id=SYSTEM_USER_ID, content="Cita cancelada por el bot",
-        related_appointment_id=appt.id, related_conversation_id=ctx.conversation_id,
-        payload={"source": "bot", "appointment_id": appt.id})
-    return result
-```
+Las excepciones de DOMINIO (`BadRequest`/`Conflict`/`NotFound`, que scheduling lanza ANTES de escribir) se capturan y se devuelven como `{"ok": False, "error": code}` para que el LLM las explique al usuario; lo inesperado propaga al savepoint del engine. El código completo de las 3 tools está en §Bot tools cross-módulo (F5).
 
-> `BotInvocationContext` se importa de `app.modules.bots.services.engine.tools` (`conversation_id`, `person_id`, `bot_tool_call_id`, `bot_configuration_id`). Los endpoints `/appointments/from-bot` y `/appointments/{id}/cancel-from-bot` reciben un `BotInvocationContext` en el body (sin RBAC; los protege la red interna / OIDC del dispatch de bots, igual que el resto de la superficie SYSTEM). Ver §Bot tools cross-módulo (F5).
+> `BotInvocationContext` se importa de `app.modules.bots.services.engine.tools` (`conversation_id`, `person_id`, `bot_tool_call_id`, `bot_configuration_id`). El motor las invoca dentro de su propio request/dispatch; no hay superficie HTTP de scheduling para el bot que haya que proteger ni rutear.
 
 ## API contracts
 
@@ -1514,7 +1468,7 @@ Envelopes del template (idénticos a [`../crm/backend.md`](../crm/backend.md#api
 - **Lista cruda** (`/active`): el body es directamente `[...]`.
 - **Error**: `{ "success": false, "detail": "...", "code"?: "...", "errors"?: [...] }`
 
-Prefijo común: `/api/v1/scheduling/`. Listados paginados con `POST /<recurso>/list` + `QueryRequest`. `PUT` (no `PATCH`); `/active` y `/calendar` antes de `/{id}` en el router.
+Prefijo común: `/api/v1/scheduling/`. Listados paginados con `POST /<recurso>/list` + `QueryRequest`. `PUT` (no `PATCH`); las rutas estáticas (`/active`, `/list`) antes de `/{id}` en el router.
 
 ### AppointmentStatus (catálogo + matriz)
 
@@ -1664,16 +1618,7 @@ Incluye `status_history` + `change_log`.
 
 Edita SOLO columnas no-estado/no-tiempo (`doctor_id`/`office_id`/`product_id`/`notes`). Cada cambio → `AppointmentChangeLog`. Si cambia `office_id`, se re-deriva `branch_id` y se revalidan invariantes 1-8 sobre el nuevo (sin tocar `scheduled_for`). `status_id`/`scheduled_for` NO son editables acá.
 
-#### `GET /api/v1/scheduling/appointments/calendar?from=&to=&doctor_id=&office_id=&branch_id=` — `APPOINTMENTS_READ` → `SingleResponse[CalendarResponse]`
-
-Citas (bloques sólidos por estado) + slots libres (overlay) en el rango, para la grilla. `from`/`to` ISO 8601 (obligatorios). `doctor_id`/`office_id`/`branch_id` opcionales acotan.
-```json
-{ "success": true, "data": {
-  "appointments": [ { "id": "a1...", "scheduled_for": "...", "duration_min": 45, "status": {"...":"..."}, "doctor_name": "...", "person_name": "...", "office_name": "..." } ],
-  "free_slots": [ { "starts_at": "...", "ends_at": "...", "doctor_id": "...", "office_id": "..." } ]
-} }
-```
-> `free_slots` se computa con `compute_available_slots` cuando `doctor_id` + `product_id` vienen; si no, el calendario muestra solo `appointments` (la grilla pide los libres bajo demanda al abrir el wizard). `CalendarResponse` se define en `schemas/availability.py` (junto a Availability*/CheckSlot*), SIN campo `timezone` — la grilla resuelve la TZ del branch client-side por `branch_id`.
+> **Calendario: sin endpoint dedicado (frontend-only)**. NO existe `GET /appointments/calendar`. La grilla del calendario arma su ventana en el cliente combinando los endpoints ya existentes: `POST /appointments/list` (citas del rango por `scheduled_for`) + `POST /availability/compute` (slots libres, solo cuando hay doctor + producto). Resuelve la TZ del branch client-side por `branch_id` (multi-sede). La idea original de un `CalendarResponse`/`/calendar` dedicado se descartó.
 
 #### Lifecycle (transition + shortcuts)
 
@@ -1705,30 +1650,17 @@ Todos devuelven `SingleResponse[AppointmentDetail]` (reschedule devuelve la NUEV
 
 Filtra `doctor_id == current.doctor.id` (resuelto desde `CurrentAuth` → `staff.Doctor` del user). Body = `QueryRequest`.
 
-#### `GET /api/v1/scheduling/me/calendar?from=&to=` — `MY_APPOINTMENTS_READ` → `SingleResponse[CalendarResponse]`
-
-La agenda del doctor logueado (sus citas en el rango). Read-only (la grilla del doctor no abre wizard).
+> **Sin `/me/calendar`**: la "Mi agenda" del doctor es frontend-only, igual que el calendario general — la grilla combina `POST /me/appointments/list` (sus citas del rango) client-side; no hay un endpoint de calendario dedicado.
 
 > **Scoping anti-IDOR**: el DOCTOR con `APPOINTMENTS_READ` global ve todas las citas; el DOCTOR con solo `MY_APPOINTMENTS_READ` (sin `APPOINTMENTS_READ`) ve solo las suyas. El service de `/appointments/list` y `/appointments/{id}` aplica el filtro `doctor_id == current.doctor.id` cuando el actor tiene solo `MY_*` (espeja `_assert_can_access` de `conversations`). Resolver `current.doctor.id` requiere un lookup `staff.doctor_repository.get_by_user_id(current.user.id)` — si el user no tiene perfil Doctor y solo tiene `MY_*`, devuelve vacío / 403.
 
-### Bot facade (sin RBAC, SYSTEM)
+### Bot — sin superficie HTTP (in-process)
 
-#### `POST /api/v1/scheduling/appointments/from-bot` → `201 SingleResponse[AppointmentDetail]`
-
-**Request**:
-```json
-{ "ctx": { "conversation_id": "c1...", "person_id": "p1...", "bot_tool_call_id": "tc1..." },
-  "doctor_id": "d1...", "office_id": "o1...", "product_id": "pr1...", "scheduled_for": "2026-06-08T13:00:00Z" }
-```
-Respeta los 9 invariantes (incl. min_hours_to_cancel en cancel-from-bot). Emite `LeadActivity(APPOINTMENT_BOOKED)`.
-
-#### `POST /api/v1/scheduling/appointments/{id}/cancel-from-bot` → `SingleResponse[AppointmentDetail]`
-
-**Request**: `{ "ctx": { "conversation_id": "c1...", "person_id": "p1...", "bot_tool_call_id": "tc1..." } }`. Respeta `min_hours_to_cancel` (el bot NO hace override → `CANCEL_TOO_LATE` si aplica). Emite `LeadActivity(APPOINTMENT_CANCELLED)`.
+El bot **no** tiene endpoints en `scheduling`: no existe `/appointments/from-bot` ni `/appointments/{id}/cancel-from-bot`. Reserva y cancela vía las 3 tools in-process (`check_availability`/`book_appointment`/`cancel_appointment`) que corren como SYSTEM y llaman a los services directo. Ver §Integración del bot y §Bot tools cross-módulo (F5).
 
 ## Routers — ejemplos
 
-Patrón shipped: permiso vía `dependencies=[Depends(RequirePermission("CODE"))]`; `actor: CurrentAuth` aparte cuando se necesita el id (o los permisos, como `cancel`) para audit/override; `/active` y `/calendar` antes de `/{id}`.
+Patrón shipped: permiso vía `dependencies=[Depends(RequirePermission("CODE"))]`; `actor: CurrentAuth` aparte cuando se necesita el id (o los permisos, como `cancel`) para audit/override; las rutas estáticas (`/list`, `POST ""`) antes de `/{id}`.
 
 ```python
 # routers/appointment.py (extracto)
@@ -1750,19 +1682,6 @@ from app.shared.base_schemas import PaginatedResponse, QueryRequest, SingleRespo
 router = APIRouter(prefix="/appointments", tags=["scheduling · appointments"])
 
 ApptIdPath = Annotated[str, Path(min_length=1, description="Appointment UUID")]
-
-
-@router.get("/calendar", response_model=SingleResponse[...],
-            dependencies=[Depends(RequirePermission("APPOINTMENTS_READ"))])
-async def get_calendar(
-    db: DBSession,
-    from_: Annotated[str, Query(alias="from")],
-    to: Annotated[str, Query()],
-    doctor_id: Annotated[str | None, Query()] = None,
-    office_id: Annotated[str | None, Query()] = None,
-    branch_id: Annotated[str | None, Query()] = None,
-) -> SingleResponse[...]:
-    return await appt_service.calendar(db, from_, to, doctor_id, office_id, branch_id)
 
 
 @router.post("/list", response_model=PaginatedResponse[AppointmentItem],
@@ -1806,16 +1725,7 @@ async def list_my_appointments(query: QueryRequest, db: DBSession, auth: Current
     return await appt_service.list_for_current_doctor(db, query, auth=auth)
 ```
 
-```python
-# routers/bot_facade.py — sin RequirePermission (SYSTEM); protegido por la red interna/OIDC
-router = APIRouter(prefix="/appointments", tags=["scheduling · bot facade"])
-
-@router.post("/from-bot", response_model=SingleResponse[AppointmentDetail], status_code=status.HTTP_201_CREATED)
-async def book_from_bot(payload: BotBookRequest, db: DBSession) -> SingleResponse[AppointmentDetail]:
-    return await bot_facade.book_from_bot(db, payload.ctx, doctor_id=payload.doctor_id, ...)
-```
-
-> El `Query(alias="from")` evita la palabra reservada `from` (mismo truco que `clinic.list_closures`). El `me_router` y el `bot_facade_router` se exportan e incluyen en el aggregator; `/me/appointments/list` resuelve el doctor desde `CurrentAuth`.
+> No hay `routers/bot_facade.py`: el bot corre in-process, sin endpoints HTTP (ver §Integración del bot). El `me_router` se exporta e incluye en el aggregator; `/me/appointments/list` resuelve el doctor desde `CurrentAuth`.
 
 ## Lógica adicional importante
 
@@ -1860,7 +1770,7 @@ async def update(db, appointment_id, payload: AppointmentUpdate, *, actor_id):
 
 ### Audit columns con `created_by` / `updated_by`
 
-Cada service que persiste recibe `actor_id` explícito desde el router (`actor: CurrentAuth`). El bot facade usa el `SYSTEM` user (`00000000-0000-0000-0000-000000000002`) como `created_by`/`actor_id`. `changed_by`/`cancelled_by` NULL o SYSTEM cuando son automáticos.
+Cada service que persiste recibe `actor_id` explícito desde el router (`actor: CurrentAuth`). Las tools del bot pasan el `SYSTEM` user (`00000000-0000-0000-0000-000000000002`) como `created_by`/`actor_id`. `changed_by`/`cancelled_by` NULL o SYSTEM cuando son automáticos.
 
 ### `BaseRepository` filtra `deleted_at IS NULL`
 
@@ -1967,7 +1877,7 @@ CREATE INDEX ix_appointment_change_log_appointment ON appointment_change_log (ap
 -- down_revision = "0020_scheduling_status"
 ```
 
-> `"user"` entre comillas (palabra reservada en Postgres). La **self-FK** `previous_appointment_id → appointment(id)` se puede declarar inline (la tabla ya existe en el momento del `CREATE`/`ADD`) — a diferencia de la FK circular de `bots` (config↔version), aquí la referencia es a la MISMA tabla, lo que Postgres acepta inline. F0, F3, F4 y F5 NO llevan migración (F0 = solo seed/skeleton; F3 = lifecycle sobre tablas ya creadas; F4 = calendar es read; F5 = bot facade reusa lo existente).
+> `"user"` entre comillas (palabra reservada en Postgres). La **self-FK** `previous_appointment_id → appointment(id)` se puede declarar inline (la tabla ya existe en el momento del `CREATE`/`ADD`) — a diferencia de la FK circular de `bots` (config↔version), aquí la referencia es a la MISMA tabla, lo que Postgres acepta inline. F0, F3, F4 y F5 NO llevan migración (F0 = solo seed/skeleton; F3 = lifecycle sobre tablas ya creadas; F4 = calendar frontend-only; F5 = las tools del bot reusan los services existentes).
 
 **Cadena de revids** (ambos ≤32): `0020_scheduling_status` (22) → `0021_scheduling_appointment` (27).
 
@@ -2036,58 +1946,86 @@ Si `Person` no tiene `PersonCustomerStatus` activo → `crm.person_customer_stat
 
 ### 3) `bots/services/engine/tools/scheduling.py` nuevo (fase final, F5)
 
-Registrar 3 tools en el `TOOL_REGISTRY` de bots (sin migración). Indexadas por `code`. Pasan de `TOOL_NOT_REGISTERED` a operativas. Reusa el patrón verificado de `bots/services/engine/tools/crm.py` (`@register_tool` + `BotInvocationContext` + corren como SYSTEM, capturan la excepción y la reportan como result al LLM en vez de romper el turno):
+Registrar 3 tools en el `TOOL_REGISTRY` de bots (sin migración). Indexadas por `code`. Pasan de `TOOL_NOT_REGISTERED` a operativas. Reusa el patrón verificado de `bots/services/engine/tools/crm.py` (`@register_tool` + `BotInvocationContext` + corren como SYSTEM, capturan **solo** las excepciones de DOMINIO y las reportan como result `{ok:false, error:code}` al LLM en vez de romper el turno). Las tools llaman a los services de scheduling **directo** (no hay wrapper `bot_facade`):
 
 ```python
 # backend/app/modules/bots/services/engine/tools/scheduling.py
 from __future__ import annotations
 
+from datetime import date as date_type
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.dependencies import AuthContext
+from app.core.exceptions import BadRequestException, ConflictException, NotFoundException
+from app.modules.admin.repositories.user import user_repository
 from app.modules.bots.services.engine.tools import BotInvocationContext, register_tool
-from app.modules.scheduling.services import availability as sched_availability
-from app.modules.scheduling.services import bot_facade as sched_bot
+from app.modules.crm.services import person as crm_person
+from app.modules.scheduling.enums import AppointmentSource
+from app.modules.scheduling.repositories.appointment import appointment_repository
+from app.modules.scheduling.schemas.appointment import (
+    AppointmentCancelRequest, AppointmentCreate,
+)
+from app.modules.scheduling.services import appointment as appointment_service
+from app.modules.scheduling.services import availability as availability_service
+from app.modules.scheduling.services import transition as transition_service
+
+SYSTEM_USER_ID = crm_person.SYSTEM_USER_ID
+DomainException = (BadRequestException, ConflictException, NotFoundException)
 
 
 @register_tool("check_availability")
 async def check_availability(args: dict[str, Any], ctx: BotInvocationContext, db: AsyncSession) -> dict[str, Any]:
-    """Lista slots libres para (doctor, product, rango). → /availability/compute."""
-    resp = await sched_availability.compute_available_slots(
-        db, doctor_id=args["doctor_id"], product_id=args["product_id"],
+    """Lista slots libres para (doctor, product, rango). → availability.compute_available_slots."""
+    result = await availability_service.compute_available_slots(
+        db, doctor_id=str(args["doctor_id"]), product_id=str(args["product_id"]),
         branch_id=args.get("branch_id"), office_id=args.get("office_id"),
-        from_date=datetime.fromisoformat(args["from_date"]).date(),
-        to_date=datetime.fromisoformat(args["to_date"]).date())
-    return {"slots": [s.model_dump(mode="json") for s in resp.slots[:20]],
-            "duration_min": resp.duration_min}
+        from_date=date_type.fromisoformat(str(args["from_date"])),
+        to_date=date_type.fromisoformat(str(args["to_date"])))
+    return {"ok": True, "slots": [...], "duration_min": result.duration_min}  # cap MAX_SLOTS_RETURNED
 
 
 @register_tool("book_appointment")
 async def book_appointment(args: dict[str, Any], ctx: BotInvocationContext, db: AsyncSession) -> dict[str, Any]:
-    """Reserva una cita como SYSTEM. → bot_facade.book_from_bot. Captura el code del invariante."""
+    """Reserva para ctx.person_id (anti-suplantación) como SYSTEM. begin_nested propio → atómico."""
+    if ctx.person_id is None:
+        return {"ok": False, "error": "no_person"}
+    payload = AppointmentCreate(
+        person_id=ctx.person_id, doctor_id=str(args["doctor_id"]), office_id=str(args["office_id"]),
+        product_id=str(args["product_id"]), scheduled_for=datetime.fromisoformat(str(args["scheduled_for"])),
+        source=AppointmentSource.bot, notes=args.get("notes"),
+        apply_promotion_id=args.get("apply_promotion_id"))  # F4 marketing
     try:
-        result = await sched_bot.book_from_bot(
-            db, ctx, doctor_id=args["doctor_id"], office_id=args["office_id"],
-            product_id=args["product_id"], scheduled_for=datetime.fromisoformat(args["scheduled_for"]),
-            person_id=args.get("person_id"))
-        return {"ok": True, "appointment_id": result.data.id}
-    except Exception as exc:  # noqa: BLE001 — invariante → reportar al LLM, no romper el turno
-        return {"ok": False, "error": getattr(exc, "code", None) or str(exc)[:255]}
+        async with db.begin_nested():  # savepoint propio: el tool captura la excepción, así que sin
+            result = await appointment_service.create_appointment(  # esto el engine commitearía parcial
+                db, payload, actor_id=SYSTEM_USER_ID)
+    except DomainException as exc:
+        return {"ok": False, "error": exc.code or exc.detail}
+    return {"ok": True, "appointment_id": result.data.id}
 
 
 @register_tool("cancel_appointment")
 async def cancel_appointment(args: dict[str, Any], ctx: BotInvocationContext, db: AsyncSession) -> dict[str, Any]:
-    """Cancela una cita como SYSTEM (respeta min_hours_to_cancel). → bot_facade.cancel_from_bot."""
+    """Cancela una cita del contacto del hilo. Guard anti-IDOR + SYSTEM sin override → CANCEL_TOO_LATE."""
+    if ctx.person_id is None:
+        return {"ok": False, "error": "no_person"}
+    owned = await appointment_repository.get_by_id(db, str(args["appointment_id"]))
+    if owned is None or owned.person_id != ctx.person_id:  # no filtra existencia de citas ajenas
+        return {"ok": False, "error": "appointment_not_found"}
+    system_user = await user_repository.get_by_id(db, SYSTEM_USER_ID)
+    actor = AuthContext(user=system_user, permissions=frozenset(), roles=frozenset())  # respeta override
     try:
-        await sched_bot.cancel_from_bot(db, ctx, args["appointment_id"])
-        return {"ok": True}
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": getattr(exc, "code", None) or str(exc)[:255]}
+        result = await transition_service.cancel(
+            db, str(args["appointment_id"]),
+            AppointmentCancelRequest(cancellation_reason=args.get("cancellation_reason")), actor=actor)
+    except DomainException as exc:
+        return {"ok": False, "error": exc.code or exc.detail}
+    return {"ok": True, "appointment_id": result.data.id, "status": result.data.status.code}
 ```
 
-> Reschedule por bot = `cancel_appointment` + `book_appointment` (sin 4ta tool en MVP, decisión #4). Las 3 tools se registran al importar el módulo (el motor las invoca en runtime). Hay que **importar** `app.modules.bots.services.engine.tools.scheduling` en el `tools/__init__.py` de bots (o donde se haga el import de `crm`/`catalog`) para que el `@register_tool` corra al boot.
+> Reschedule por bot = `cancel_appointment` + `book_appointment` (sin 4ta tool, decisión #4). Las 3 tools se registran al importar el módulo (el motor las invoca en runtime). Hay que **importar** `app.modules.bots.services.engine.tools.scheduling` en el `tools/__init__.py` de bots (donde se importan `crm`/`catalog`) para que el `@register_tool` corra al boot. Detalle del patrón en §Integración del bot.
 
 ## Checklist de implementación (mapeado a fases F0–F5)
 
@@ -2113,7 +2051,7 @@ async def cancel_appointment(args: dict[str, Any], ctx: BotInvocationContext, db
 - [ ] `schemas/appointment.py` + `availability.py` + `audit.py`.
 - [ ] `repositories/appointment.py` (`list_overlapping_*` con FOR UPDATE, `list_in_range`, batch maps) + history/changelog repos.
 - [ ] `services/availability.py` (`compute_available_slots` ADR-006/007 con TZ branch + N contiguos; `check_slot`) + `services/appointment.py` (9 invariantes + create FOR UPDATE→SLOT_TAKEN + get/list/update + scoping anti-IDOR).
-- [ ] `routers/availability.py` (`/compute`, `/check-slot`) + `routers/appointment.py` (CRUD + `/calendar` antes de `/{id}`) + `routers/me.py`.
+- [ ] `routers/availability.py` (`/compute`, `/check-slot`) + `routers/appointment.py` (CRUD; rutas estáticas antes de `/{id}`) + `routers/me.py`.
 - [ ] (Frontend F2) tabla de citas + wizard de reserva (llama `/availability/compute`) — ver [`ui.md`](ui.md).
 - [ ] Test invariantes 1-8 (cada code) + `SLOT_TAKEN` con 2 creates concurrentes/secuenciales sobre el mismo slot. Test `check-slot` available/reason. Test TZ: branch en `America/Lima` → slot local 08:00 → `13:00:00+00:00`.
 
@@ -2125,15 +2063,16 @@ async def cancel_appointment(args: dict[str, Any], ctx: BotInvocationContext, db
 - [ ] (Frontend F3) detalle + control de estado (gated por matriz) + timeline — ver [`ui.md`](ui.md).
 - [ ] Test transición válida (history) / inválida (`APPOINTMENT_TRANSITION_NOT_ALLOWED`); `cancel` con `min_hours_to_cancel` → `CANCEL_TOO_LATE` salvo override; `reschedule` (vieja RESCHEDULED + nueva con `previous_appointment_id` + revalida invariantes + `exclude_id`); `attend` → promote (lead is_won cierra, customer is_initial creado) + `APPOINTMENT_ATTENDED`; doble attend de un cliente ya cliente → no-op CRM + activity.
 
-### F4 — Calendar grid (sin migración)
-- [ ] `services/appointment.py:calendar` + `/appointments/calendar` + `/me/calendar`.
+### F4 — Calendar grid (frontend-only, sin migración ni endpoint)
+- [ ] El calendario NO agrega backend: la grilla combina `POST /appointments/list` + `POST /me/appointments/list` + `POST /availability/compute` en el cliente (sin `/appointments/calendar` ni `/me/calendar`).
 - [ ] (Frontend F4) grilla semanal (citas = bloques por color, slots libres = overlay → wizard prefilled; TZ del branch) + Mi agenda del doctor — ver [`ui.md`](ui.md).
-- [ ] Test calendar: rango devuelve citas + free_slots; `/me/calendar` scoped al doctor.
+- [ ] Test calendar (front): el rango pinta citas + free_slots; "Mi agenda" scoped al doctor vía `/me/appointments/list`.
 
-### F5 — Bot facade + tools (sin migración)
-- [ ] `services/bot_facade.py` (`book_from_bot`/`cancel_from_bot` SYSTEM, respetan invariantes incl. min_hours_to_cancel, emiten `LeadActivity`).
-- [ ] `routers/bot_facade.py` (`/from-bot`, `/{id}/cancel-from-bot`, sin RBAC).
-- [ ] `bots/services/engine/tools/scheduling.py` (3 tools `@register_tool`) + importarlo para que se registren.
-- [ ] Test from-bot: respeta invariantes + emite `APPOINTMENT_BOOKED`; cancel-from-bot respeta `min_hours_to_cancel` (`CANCEL_TOO_LATE`, sin override) + emite `APPOINTMENT_CANCELLED`; las 3 tools pasan de `is_registered=false` a operativas.
+### F5 — Bot tools (sin migración; NO hay bot_facade)
+- [ ] `bots/services/engine/tools/scheduling.py`: 3 tools `@register_tool` (`check_availability`/`book_appointment`/`cancel_appointment`) que corren como SYSTEM y llaman a los services de scheduling **directo** (no hay `services/bot_facade.py` ni `routers/bot_facade.py`).
+- [ ] `book_appointment`: reserva SIEMPRE para `ctx.person_id` (anti-suplantación), `source=bot`, `apply_promotion_id` opcional, dentro de `begin_nested` propio (atomicidad del path del bot).
+- [ ] `cancel_appointment`: guard anti-IDOR (cita de `ctx.person_id`) + `transition.cancel` con `AuthContext(SYSTEM, permisos vacíos)` → respeta `CANCEL_TOO_LATE` sin override.
+- [ ] Importar el módulo en el `tools/__init__.py` de bots (junto a `crm`/`catalog`) para que el `@register_tool` corra al boot.
+- [ ] Test: `book_appointment` respeta invariantes y crea la cita SYSTEM; `cancel_appointment` respeta `min_hours_to_cancel` (`CANCEL_TOO_LATE`, sin override) y el guard anti-IDOR (`appointment_not_found` para citas ajenas); las 3 tools pasan de `is_registered=false` a operativas.
 
 Molde global = **crm** (catálogo+matriz+history+transición+promote) + **clinic/staff** (las fuentes de disponibilidad + `/me`). Lecciones operativas transversales [[feedback-medisage-operational-lessons]]: TZ client-only en el front (cualquier `new Date()`/now que afecte el render); el smoke (create_all + JSON directo) NO caza drift TS↔Pydantic ni bugs de render — la review adversaria sí; verificar que el verificador CORRIÓ (RESULT=PASS + conteo); 1 comando por tool-call (canal de tooling); gate de prod = AskUserQuestion separado del merge.

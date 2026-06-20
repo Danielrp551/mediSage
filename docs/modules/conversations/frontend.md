@@ -44,7 +44,8 @@ frontend/src/
 │   ├── schemas/
 │   │   ├── channel-account.schema.ts     ← channelAccountCreate/Update (channel_type enum,
 │   │   │                                    external_identifier, secret_name?, webhook_verify_token?)
-│   │   └── message.schema.ts             ← messageSend (content no-vacío + content_type=text MVP)
+│   │   └── conversation.schema.ts        ← sendMessageSchema (content no-vacío + content_type=text MVP)
+│   │                                        + releaseConversationSchema + takeConversationSchema
 │   └── constants/
 │       ├── endpoints.ts                  ← EXTEND con bloque CONVERSATIONS (CHANNEL_ACCOUNTS,
 │       │                                    CONVERSATIONS list/get/messages/take/release/close/
@@ -56,10 +57,9 @@ frontend/src/
 │                                            CONVERSATION_STATUS_META, INBOX_FILTER_PRESETS
 ├── actions/
 │   ├── channel-account.actions.ts        ← list/active/get/create/update/delete (tag conversations:channel-accounts)
-│   ├── realtime.actions.ts               ← NUEVO (redesign): getRealtimeToken() → POST
-│   │                                        /conversations/realtime/token (server-side con el JWT);
-│   │                                        devuelve { token, firebase_config? } para el Web SDK
 │   └── conversation.actions.ts           ← listConversations/getConversation/listMessages(fallback)/
+│                                            getRealtimeToken (→ POST /conversations/realtime/token,
+│                                            server-side con el JWT; devuelve { token, firebase_config })/
 │                                            sendMessage/take/release/close/reopen/markRead/
 │                                            listMyConversations (tags conversations:list,
 │                                            conversations:thread:{id})
@@ -91,7 +91,7 @@ frontend/src/
         ├── MessageDayGroup.tsx           ← sección "Hoy"/"Ayer"/fecha (client-only por TZ)
         ├── MessageBubble.tsx             ← burbuja memoizada (React.memo): in/out/system + estado msg
         ├── MessageStatusTicks.tsx        ← ✓ / ✓✓ / leído / ⚠ + Reintentar (outbound)
-        ├── Composer.tsx                  ← textarea + enviar (useTransition; gated MESSAGES_SEND + assignee)
+        ├── MessageComposer.tsx           ← textarea + enviar (useTransition; gated MESSAGES_SEND + assignee)
         └── HandoffControls.tsx           ← Tomar/Liberar/Cerrar/Reabrir + AssigneeBadge
 ```
 
@@ -403,32 +403,39 @@ export type ChannelAccountCreateInput = z.infer<typeof channelAccountCreateSchem
 export type ChannelAccountUpdateInput = z.infer<typeof channelAccountUpdateSchema>;
 ```
 
-> **Lo que Zod NO puede validar** (queda como error de servidor en español): `CHANNEL_ACCOUNT_EXTERNAL_TAKEN` (409, viola la UNIQUE parcial `(channel_type, external_identifier) WHERE deleted_at IS NULL` contra BD — el front no conoce las otras cuentas) y `CHANNEL_CREDENTIALS_MISSING` (500/400, si el `secret_name` apunta a un secreto inexistente/vacío y no hay fallback env — se descubre recién al enviar). Se muestran en `MessageBar`.
+> **Lo que Zod NO puede validar** (queda como error de servidor en español): `CHANNEL_ACCOUNT_EXTERNAL_TAKEN` (409, viola la UNIQUE parcial `(channel_type, external_identifier) WHERE deleted_at IS NULL` contra BD — el front no conoce las otras cuentas) y `CHANNEL_CREDENTIALS_MISSING` (400, `BadRequestException`, si el `secret_name` apunta a un secreto inexistente/vacío y no hay fallback env — se descubre recién al enviar). Se muestran en `MessageBar`.
 
 > **El secreto JAMÁS se captura en claro en el front**: la decisión (spec §1.2 / ADR-010) es que las credenciales (`access_token`, `app_secret`) viven en GCP Secret Manager y se resuelven server-only por el `secret_resolver`. El admin captura el **nombre** del secreto (`secret_name`); crear/rotar el secreto en sí es una tarea de ops (gcloud), NO un campo del drawer. El drawer muestra un estado "Credenciales: configuradas / sin configurar" derivado de `credentials_configured` (read-only).
 
-### `lib/schemas/message.schema.ts`
+### `lib/schemas/conversation.schema.ts`
 
-Enviar un mensaje outbound. MVP solo `content_type=text` → el Zod fija el default y rechaza otros (espeja el `UNSUPPORTED_CONTENT_TYPE` 400 del backend). `content` no-vacío + largo razonable (WhatsApp tope ~4096 chars por mensaje de texto).
+Los Zod de las mutaciones del inbox (F3): enviar un mensaje (`sendMessageSchema`), liberar (`releaseConversationSchema`) y tomar (`takeConversationSchema`). Viven todos en este archivo (no hay `message.schema.ts` separado). MVP solo `content_type=text` → el Zod lo fija y rechaza otros (espeja el `UNSUPPORTED_CONTENT_TYPE` 400 del backend); el release solo libera a `unassigned` (release a `advisor` → `INVALID_ASSIGNEE` en el backend). `content` no-vacío + largo razonable (WhatsApp tope ~4096 chars por mensaje de texto).
 
 ```ts
 import { z } from "zod";
 
-export const messageSendSchema = z.object({
-  content: z
-    .string()
-    .trim()
-    .min(1, "Escribe un mensaje")
-    .max(4096, "Máximo 4096 caracteres"), // tope de WhatsApp text
-  // MVP solo texto. El backend rechaza otros con UNSUPPORTED_CONTENT_TYPE (400); lo
-  // fijamos a "text" para no permitir enviar otra cosa desde el composer.
-  content_type: z.literal("text").default("text"),
+// Enviar outbound. MVP: solo texto. Límite 4096 (límite práctico de WhatsApp text).
+export const sendMessageSchema = z.object({
+  content: z.string().min(1, "Escribe un mensaje").max(4096, "Máximo 4096 caracteres"),
+  // MVP solo texto. El backend rechaza otros con UNSUPPORTED_CONTENT_TYPE (400).
+  content_type: z.literal("text").optional(),
 });
 
-export type MessageSendInput = z.infer<typeof messageSendSchema>;
+// Liberar la conversación. En el MVP la UI solo libera a `unassigned`.
+export const releaseConversationSchema = z.object({
+  to_assignee_type: z.enum(["unassigned"]),
+  reason: z.string().max(255, "Máximo 255 caracteres").optional().nullable(),
+});
+
+// Tomar la conversación (assignee = actor). `reason?` opcional (queda en el log).
+export const takeConversationSchema = z.object({
+  reason: z.string().max(255, "Máximo 255 caracteres").optional().nullable(),
+});
+
+export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 ```
 
-> **`content` se `.trim()` en el Zod** (no se envían mensajes en blanco/solo-espacios). El composer también deshabilita el botón "Enviar" si el textarea está vacío tras trim (defensa de UX antes del submit). Adjuntos (F4) agregarán `attachments` a este schema; hoy no existen.
+> **El composer** deshabilita el botón "Enviar" si el textarea está vacío tras trim (defensa de UX antes del submit) y vuelve a recortar antes de mandar. Adjuntos (F4) agregarán `attachments` a `sendMessageSchema`; hoy no existen.
 
 ## Constantes de presentación — `lib/constants/conversations.ts`
 
@@ -540,12 +547,6 @@ export const ENDPOINTS = {
     DELETE: (id: string) => `${CONVERSATIONS}/channel-accounts/${id}`, // soft delete
     ACTIVE: `${CONVERSATIONS}/channel-accounts/active`, // raw ChannelAccountOption list
   },
-  REALTIME: {
-    // NUEVO (redesign Firestore): minta un Firebase Custom Token (server-side, con el JWT)
-    // para que el browser abra listeners READ-ONLY sobre el stream de mensajes. Gated
-    // CONVERSATIONS_READ o MY_CONVERSATIONS_READ (no es un permiso nuevo — reusa los existentes).
-    TOKEN: `${CONVERSATIONS}/realtime/token`, // POST → { token, firebase_config? }
-  },
   CONVERSATIONS_API: {
     LIST: `${CONVERSATIONS}/list`, // inbox global. PaginatedResponse[ConversationListItem]
     GET: (id: string) => `${CONVERSATIONS}/${id}`, // SingleResponse[ConversationDetail]
@@ -553,6 +554,11 @@ export const ENDPOINTS = {
     // PRIMARIO de lectura del hilo es el cliente Firestore real-time (onSnapshot). Útil para
     // SSR/degradación si el Web SDK no carga.
     MESSAGES_LIST: (id: string) => `${CONVERSATIONS}/${id}/messages/list`, // POST + QueryRequest (FALLBACK)
+    // NUEVO (redesign Firestore): minta un Firebase Custom Token (server-side, con el JWT)
+    // para que el browser abra listeners READ-ONLY sobre el stream de mensajes. Key PLANA
+    // dentro de CONVERSATIONS_API (NO un objeto REALTIME aparte). Gated CONVERSATIONS_READ o
+    // MY_CONVERSATIONS_READ (no es un permiso nuevo — reusa los existentes).
+    REALTIME_TOKEN: `${CONVERSATIONS}/realtime/token`, // POST → SingleResponse<{ token, firebase_config }>
     SEND_MESSAGE: (id: string) => `${CONVERSATIONS}/${id}/messages`, // POST outbound (real Meta + Firestore via Admin SDK)
     TAKE: (id: string) => `${CONVERSATIONS}/${id}/take`, // POST
     RELEASE: (id: string) => `${CONVERSATIONS}/${id}/release`, // POST
@@ -622,7 +628,7 @@ export const NAV_ITEMS: NavItem[] = [
 
 > **Gating del grupo vs items** (spec §11): el grupo "Conversaciones" está gated `MENU-CONVERSATIONS` (lo tiene ADMIN + ASESOR; DOCTOR no — spec §10). Cada item lleva además su permiso fino: Bandeja `CONVERSATIONS_READ`, Mi bandeja `MY_CONVERSATIONS_READ`, Canales `CHANNEL_ACCOUNTS_READ`. El page RSC valida con `requirePermission(...)`. El `ASESOR` ve Bandeja + Mi bandeja (tiene `CONVERSATIONS_READ` + `MY_CONVERSATIONS_READ`) pero **NO** Canales (no tiene `CHANNEL_ACCOUNTS_*` — solo admin configura canales, spec §10). El **grupo** se muestra si el usuario tiene alguno de los permisos hijos (el Sidebar colapsa grupos sin hijos visibles); `MENU-CONVERSATIONS` es el toggle "de entrada" del módulo. **No** redefinir los 12 permisos aquí — son canónicos en [`../_seed-and-roles.md`](../_seed-and-roles.md) / spec §10.
 
-> **Íconos** (verificar que existan en `@fluentui/react-icons` v9; fallback si no): grupo Conversaciones `ChatRegular`, Bandeja `MailInboxRegular`, Mi bandeja `PersonMailRegular`, Canales `PlugConnectedRegular`. Registrarlos en el `iconMap` del `Sidebar.tsx` (mismo paso que catalog/clinic/staff/crm). Alternativas: `MailInboxRegular` → `MailRegular`; `PersonMailRegular` → `MailRegular`/`PersonRegular`; `PlugConnectedRegular` → `PlugRegular`/`ChannelRegular`. **Verificar `ChannelRegular`** (mencionado en spec §11 como candidato) — si existe, es buen candidato para "Canales".
+> **Íconos** (verificar que existan en `@fluentui/react-icons` v9; fallback si no): grupo Conversaciones `ChatRegular`, Bandeja `MailInboxRegular`, Mi bandeja `PersonMailRegular`, Canales `PlugConnectedRegular` (el shipped). Registrarlos en el `iconMap` del `Sidebar.tsx` (mismo paso que catalog/clinic/staff/crm). Alternativas: `MailInboxRegular` → `MailRegular`; `PersonMailRegular` → `MailRegular`/`PersonRegular`; `PlugConnectedRegular` → `PlugRegular`/`ChannelRegular`.
 
 > El sidebar (`components/layout/Sidebar/Sidebar.tsx`) ya filtra items por `permissions` vs `useAuth().permissions`. El detalle de la conversación NO está en `NAV_ITEMS` (vive en `?c=` dentro de Bandeja/Mi bandeja) — su gating es el del page contenedor.
 
@@ -682,9 +688,9 @@ export async function getRealtimeDb(token: string): Promise<Firestore> {
 
 > **El cliente Firebase NUNCA escribe** (brief §3): no se exponen helpers de `setDoc`/`addDoc`/`updateDoc` desde `client.ts` — solo lectura (`onSnapshot`/`getDocs`). Las Security Rules ya bloquean todo write (`allow write: if false`), pero la **disciplina del front es no llamarlas** — todo write pasa por server action → backend (Admin SDK). Si el ID token expira o las Security Rules niegan (ej. cambió la asignación y el `uid` ya no está en `allowed_reader_ids`), el `onSnapshot` emite un error `permission-denied` → el componente cae al fallback (ver [ConversationThread](#conversationthreadtsx-panel-derecho)).
 
-### Server action `getRealtimeToken()` — `actions/realtime.actions.ts`
+### Server action `getRealtimeToken()` — en `actions/conversation.actions.ts`
 
-Mintea el Custom Token **server-side** (con el JWT del usuario en la cookie httpOnly). Es el único punto donde el front obtiene credencial de Firebase; el browser jamás llama directo al endpoint (igual que todo el resto — pasa por Next server). Gated por el backend con `CONVERSATIONS_READ` **o** `MY_CONVERSATIONS_READ` (no es un permiso nuevo; reusa los existentes — brief §3/§5). Los `developer_claims` (`is_advisor`, `can_read_all`) los decide el backend según el RBAC del actor (`can_read_all=true` para quien tiene `CONVERSATIONS_READ` = bandeja global/supervisor; los demás solo sus conversaciones asignadas).
+Mintea el Custom Token **server-side** (con el JWT del usuario en la cookie httpOnly). Vive en `conversation.actions.ts` (no hay un `realtime.actions.ts` separado). Es el único punto donde el front obtiene credencial de Firebase; el browser jamás llama directo al endpoint (igual que todo el resto — pasa por Next server). Gated por el backend con `CONVERSATIONS_READ` **o** `MY_CONVERSATIONS_READ` (no es un permiso nuevo; reusa los existentes — brief §3/§5). Los `developer_claims` (`is_advisor`, `can_read_all`) los decide el backend según el RBAC del actor (`can_read_all=true` para quien tiene `CONVERSATIONS_READ` = bandeja global/supervisor; los demás solo sus conversaciones asignadas).
 
 ```ts
 "use server";
@@ -711,7 +717,10 @@ export interface RealtimeToken {
 // ID token resultante). El cliente la pide al montar el inbox y reusa el sign-in (idempotente).
 export async function getRealtimeToken(): Promise<MutationResult<RealtimeToken>> {
   try {
-    const res = await backendClient.post<ApiSingle<RealtimeToken>>(ENDPOINTS.REALTIME.TOKEN, {});
+    const res = await backendClient.post<ApiSingle<RealtimeToken>>(
+      ENDPOINTS.CONVERSATIONS_API.REALTIME_TOKEN,
+      {},
+    );
     return { ok: true, data: res.data };
   } catch (e) {
     // 403 si el actor no tiene CONVERSATIONS_READ ni MY_CONVERSATIONS_READ (en español).
@@ -842,7 +851,7 @@ export async function deleteChannelAccount(id: string): Promise<MutationResult<n
 
 ### `actions/conversation.actions.ts`
 
-El corazón del módulo: lecturas del inbox (taggeadas + polleadas por la lista) + el `detail` de la conversación (`getConversation`) + el **fallback** `listMessages` (el path primario del hilo es el listener Firestore — ver [Lectura real-time del hilo](#lectura-real-time-del-hilo-firestore)) + las acciones de handoff/outbound (mutaciones que cruzan `conversations:list` + `conversations:thread:{id}`).
+El corazón del módulo: lecturas del inbox (taggeadas + polleadas por la lista) + el `detail` de la conversación (`getConversation`) + el **fallback** `listMessages` (el path primario del hilo es el listener Firestore — ver [Lectura real-time del hilo](#lectura-real-time-del-hilo-firestore)) + `getRealtimeToken` (el Custom Token de Firebase — ver [Server action `getRealtimeToken()`](#server-action-getrealtimetoken--en-actionsconversationactionsts)) + las acciones de handoff/outbound (mutaciones que cruzan `conversations:list` + `conversations:thread:{id}`).
 
 ```ts
 "use server";
@@ -850,7 +859,7 @@ El corazón del módulo: lecturas del inbox (taggeadas + polleadas por la lista)
 import { revalidateTag } from "next/cache";
 
 import { ENDPOINTS } from "@/lib/constants/endpoints";
-import { messageSendSchema } from "@/lib/schemas/message.schema";
+import { sendMessageSchema } from "@/lib/schemas/conversation.schema";
 import { backendClient } from "@/services/backend.client";
 import { HttpError, type ApiPaginated, type ApiSingle } from "@/types/api.types";
 import type {
@@ -917,7 +926,7 @@ export async function sendMessage(
   conversationId: string,
   input: unknown,
 ): Promise<MutationResult<ApiSingle<MessageItem>>> {
-  const parsed = messageSendSchema.safeParse(input);
+  const parsed = sendMessageSchema.safeParse(input);
   if (!parsed.success) return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
   try {
     // IMPORTANTE: el backend devuelve 200 incluso si Meta falló — el MessageItem viene
@@ -1290,7 +1299,7 @@ ConversationThread          (orquesta: detail por action + mensajes REAL-TIME po
 ├── (scroll de mensajes)
 │   └── MessageDayGroup[]   (una sección por día: "Hoy"/"Ayer"/"12 may" — client-only)
 │       └── MessageBubble[] (burbuja memoizada: in/out/system + MessageStatusTicks)
-└── Composer                (textarea + enviar; gated MESSAGES_SEND + ser el assignee)
+└── MessageComposer         (textarea + enviar; gated MESSAGES_SEND + ser el assignee)
 ```
 
 **Props**: `{ conversationId: string; scope: "all" | "mine"; realtimeToken: string | null; onMutated: () => void }` (`realtimeToken` lo provee `InboxShell` desde `getRealtimeToken()`; `onMutated` refresca la lista tras una mutación que cambia el preview/unread/assignee).
@@ -1416,7 +1425,7 @@ export function useThreadMessages(conversationId: string, realtimeToken: string 
 
 > **El listener Firestore reemplaza el polling del hilo** (brief §4): el inbound nuevo del contacto, el outbound recién escrito por el backend (status `pending` → el asesor lo ve **instantáneo**), y los cambios de `external_status` (sent→delivered→read→failed, que el backend escribe al doc Firestore vía Admin SDK al recibir el status callback de Meta) llegan **en vivo** — sin `setInterval`, sin refetch, sin latencia de ~10 s. El `onSnapshot` entrega el set completo de la colección (o solo los `docChanges()` si se optimiza); indexar por id conserva el merge incremental (las burbujas que no cambiaron mantienen su referencia → `React.memo` evita re-render — ver [MessageBubble](#messagebubbletsx-memoizada)). El scroll "stick to bottom" condicional se mantiene igual (no arrastra al usuario que lee arriba).
 
-> **El cliente NUNCA escribe Firestore** (brief §3): `useThreadMessages` solo usa `onSnapshot`/`query`/`collection` (lectura). Enviar un mensaje = `Composer` → `sendMessage` server action → backend (Admin SDK escribe el doc) → el listener lo ve aparecer. No hay `setDoc`/`addDoc` en el front. Las Security Rules además bloquean todo write del cliente (`allow write: if false`).
+> **El cliente NUNCA escribe Firestore** (brief §3): `useThreadMessages` solo usa `onSnapshot`/`query`/`collection` (lectura). Enviar un mensaje = `MessageComposer` → `sendMessage` server action → backend (Admin SDK escribe el doc) → el listener lo ve aparecer. No hay `setDoc`/`addDoc` en el front. Las Security Rules además bloquean todo write del cliente (`allow write: if false`).
 
 > **Orden por `created_at`** (campo del doc Firestore, brief §1): el listener ordena por `created_at asc` (cronológico, más antiguo arriba — como un chat). **Nota de mapeo**: en el modelo previo el sort del hilo era `sent_at asc` sobre la tabla Postgres; en el doc Firestore el campo de orden es **`created_at`** (el timestamp de creación del mensaje en el read-model). El shape del resto de campos del doc (`direction`, `sender_type`, `content`, `external_status`, `sent_at`, `delivered_at`, `read_at`, `failed_at`, …) es **el mismo `MessageItem`** (snake_case, brief §6) que devolvía la API — el render de las burbujas no cambia. El **fallback** `listMessages` usa el mismo `created_at asc` (el backend lee Firestore vía Admin SDK y respeta el mismo orden). Confirmar el nombre exacto del campo de orden con [`backend.md`](./backend.md) (brief §1 lo nombra `created_at`).
 
@@ -1498,7 +1507,7 @@ function deriveStatus(m: MessageItem): MessageExternalStatus | "pending" {
 
 > **El estado `read` (✓✓ azul) y `delivered` llegan por el status callback de Meta** (webhook `statuses[]`, spec §5 paso 5) → el backend actualiza el **doc Firestore** del mensaje (`delivered_at`/`read_at`/`external_status`) vía Admin SDK → el **listener `onSnapshot`** del hilo trae el cambio **en vivo** (no hay polling de ~10 s) → la burbuja se re-renderiza con el tick actualizado. Latencia ms–seg (proyección eventual Postgres→Firestore + push del listener), no el ciclo de ~10 s del polling previo — pero sigue siendo eventual (depende de cuándo Meta envía el callback), no instantáneo en el sentido de "garantizado al toque".
 
-### Composer.tsx (enviar outbound)
+### MessageComposer.tsx (enviar outbound)
 
 Gated por `MESSAGES_SEND` **y** por ser el assignee (`detail.assignee_type === "advisor" && detail.assignee_user?.id === currentUser.id`, con `currentUser` de `useAuth()`) **y** `detail.status === "open"`. Si no se cumple, el composer se reemplaza por un hint:
 
@@ -1577,7 +1586,7 @@ useEffect(() => {
 
 > **Refetch silencioso = sin flash** (lección crm F5: refetch silencioso sin parpadeo): el polling de la lista NO setea `loading=true` (que mostraría skeletons); hace el fetch en segundo plano y reemplaza el estado **solo si cambió** (merge por id que conserva referencias). El usuario no ve el inbox "saltar" cada 10 s — solo aparecen conversaciones nuevas suavemente. El primer load (no-polling) SÍ muestra skeletons. (Los mensajes nuevos del **hilo** aparecen aún más suavemente — por el listener Firestore, no por este ciclo.)
 
-> **El polling de la lista pausa cuando**: (1) la pestaña pierde foco (`document.hidden` → no gastar requests en background). (El composer con texto sin enviar ya **no** obliga a pausar el hilo — el listener Firestore no toca el textarea; ver [Composer](#composertsx-enviar-outbound).) Documentar estas reglas; el detalle de UX vive en [`ui.md`](./ui.md). El **listener Firestore del hilo** se puede pausar/cerrar en background como mejora (desuscribir al ocultar la pestaña), pero el MVP puede mantenerlo abierto (Firestore optimiza listeners ociosos).
+> **El polling de la lista pausa cuando**: (1) la pestaña pierde foco (`document.hidden` → no gastar requests en background). (El composer con texto sin enviar ya **no** obliga a pausar el hilo — el listener Firestore no toca el textarea; ver [MessageComposer](#messagecomposertsx-enviar-outbound).) Documentar estas reglas; el detalle de UX vive en [`ui.md`](./ui.md). El **listener Firestore del hilo** se puede pausar/cerrar en background como mejora (desuscribir al ocultar la pestaña), pero el MVP puede mantenerlo abierto (Firestore optimiza listeners ociosos).
 
 > **`new Date()` / relojes en el polling = client-only**: el cálculo de "hace X min" (hora relativa del `last_message_at` en la lista) y "Hoy"/"Ayer" (separadores del hilo) usan `new Date()` (hoy del navegador) → **client-only** (lección TZ recurrente — SSR en UTC desfasa el día en TZ negativas). El `InboxShell`/`ConversationThread` son `"use client"`; estos cálculos NUNCA se hacen en SSR. Para evitar mismatch de hidratación con un "reloj" que cambia, el primer render del relativo puede usar `useState(null) + useEffect` (renderiza la hora absoluta o un placeholder en SSR, el relativo tras montar) — mismo patrón que el timeline de crm.
 
@@ -1658,7 +1667,7 @@ Resumen del ciclo de vida de un mensaje outbound (visto desde el front):
 - [ ] Registrar íconos `ChatRegular`/`MailInboxRegular`/`PersonMailRegular`/`PlugConnectedRegular` en el `iconMap` del `Sidebar.tsx` (con fallbacks verificados).
 - [ ] Crear `src/types/conversations.types.ts` (TODAS las interfaces + enums conversations-owned; **reusa** `ChannelType` de crm.types + `UserAuditInfo` de audit.types).
 - [ ] Crear `src/lib/constants/conversations.ts` (`MESSAGE_STATUS_META`, `SENDER_TYPE_META`, `ASSIGNEE_TYPE_META`, `CONVERSATION_STATUS_META`, `INBOX_FILTER_PRESETS`; re-export `CHANNEL_TYPE_META` de crm).
-- [ ] **(redesign)** Extender `endpoints.ts` con `REALTIME.TOKEN` (`POST /conversations/realtime/token`). Agregar las envs `NEXT_PUBLIC_FIREBASE_*` (apiKey/authDomain/projectId/appId/databaseId — config pública, NO secretos) a `.env.example` + Vercel (qa/prod). (El cableado del cliente Firebase + el listener = F2.)
+- [ ] **(redesign)** Extender `endpoints.ts` con `CONVERSATIONS_API.REALTIME_TOKEN` (key plana, `POST /conversations/realtime/token`). Agregar las envs `NEXT_PUBLIC_FIREBASE_*` (apiKey/authDomain/projectId/appId/databaseId — config pública, NO secretos) a `.env.example` + Vercel (qa/prod). (El cableado del cliente Firebase + el listener = F2.)
 - [ ] **Permisos test (F0)**: como user con `MENU-CONVERSATIONS` (rol ASESOR), el grupo "Conversaciones" aparece con Bandeja + Mi bandeja (NO Canales — sin `CHANNEL_ACCOUNTS_*`). Como ADMIN, aparece también Canales. Sin `MENU-CONVERSATIONS` (DOCTOR), el grupo no aparece. (Los 12 permisos + roles ya están en `seed.py` — ver [`../_seed-and-roles.md`](../_seed-and-roles.md), backend F0.)
 
 ### F1 — ChannelAccount (CRUD de canales)
@@ -1673,7 +1682,7 @@ Resumen del ciclo de vida de un mensaje outbound (visto desde el front):
 ### F2 — Inbox (recibir + ver, read-only) + hilo real-time Firestore
 
 - [ ] Crear `src/actions/conversation.actions.ts` (lecturas: `listConversations`/`listMyConversations`/`getConversation`/`listMessages` **fallback**; tags `conversations:list`/`conversations:thread:{id}`). (Las mutaciones de envío/handoff = F3.)
-- [ ] **(redesign)** `npm i firebase`. Crear `src/lib/firebase/client.ts` (init Firebase Web SDK con `NEXT_PUBLIC_FIREBASE_*` + `signInWithCustomToken` idempotente + `getFirestore(app, databaseId)`; **solo lectura**) + `src/actions/realtime.actions.ts` (`getRealtimeToken()` → `POST /conversations/realtime/token`).
+- [ ] **(redesign)** `npm i firebase`. Crear `src/lib/firebase/client.ts` (init Firebase Web SDK con `NEXT_PUBLIC_FIREBASE_*` + `signInWithCustomToken` idempotente + `getFirestore(app, databaseId)`; **solo lectura**) + agregar `getRealtimeToken()` a `src/actions/conversation.actions.ts` (→ `POST /conversations/realtime/token`; no hay `realtime.actions.ts` aparte).
 - [ ] Crear `src/app/(main)/conversaciones/bandeja/page.tsx` (`metadata.title = "Bandeja"`, `requirePermission("CONVERSATIONS_READ")`, prefetch lista `defaultSort = last_message_at desc` + canales activos; deep-link `?status=`/`?channel_account_id=`/`?assignee_user_id=`/`?unassigned=`/`?c=` → `FilterCondition` columnas reales + selección).
 - [ ] Crear `src/app/(main)/conversaciones/mis-conversaciones/page.tsx` (`metadata.title = "Mi bandeja"`, `requirePermission("MY_CONVERSATIONS_READ")`, `listMyConversations`, `scope="mine"`).
 - [ ] Crear `conversaciones/_components/InboxShell.tsx` (2-paneles, `scope`, URL state `?c=`+filtros con nuqs, **polling pausable SOLO de la lista**, mintea `getRealtimeToken` al montar y lo pasa al hilo) + `ConversationList.tsx` (filtros preset + canal + búsqueda client-side) + `ConversationListItemRow.tsx` (memoizada) + `ConversationThread.tsx` (carga `detail` por action; **mensajes en vivo vía `useThreadMessages`**) + `useThreadMessages.ts` (**listener Firestore `onSnapshot` READ-ONLY** + fallback `listMessages`) + `ThreadHeader.tsx` (read-only: contacto/canal/estado/AssigneeBadge) + `MessageDayGroup.tsx` (client-only) + `MessageBubble.tsx` (memoizada: in/out/system) + `MessageStatusTicks.tsx` (ticks de estado, sin reintento aún).
@@ -1686,9 +1695,9 @@ Resumen del ciclo de vida de un mensaje outbound (visto desde el front):
 
 ### F3 — Handoff + outbound (completa el human-inbox MVP, sin migración)
 
-- [ ] Crear `src/lib/schemas/message.schema.ts` (messageSend: content no-vacío + `.trim()` + content_type=text literal).
+- [ ] Crear `src/lib/schemas/conversation.schema.ts` (`sendMessageSchema`: content no-vacío + content_type=text literal; + `releaseConversationSchema` + `takeConversationSchema`).
 - [ ] Completar `src/actions/conversation.actions.ts` con las mutaciones: `sendMessage` (200 con message fallido = ok, NO throw), `takeConversation`/`releaseConversation`/`closeConversation`/`reopenConversation`/`markRead` (devuelven `ConversationDetail`; cross-tag `conversations:thread:{id}` + `conversations:list`).
-- [ ] Implementar `Composer.tsx` (textarea + `useTransition` + Enter/Shift+Enter; gated `MESSAGES_SEND` + ser assignee + open; hint "Toma para responder" si no) + `HandoffControls.tsx` (Tomar/Liberar/Cerrar/Reabrir gated por permisos finos; `setDetail(result.data)` + `router.refresh()` + `onMutated()`) + `MessageStatusTicks.tsx` con **Reintentar** (outbound fallido).
+- [ ] Implementar `MessageComposer.tsx` (textarea + `useTransition` + Enter/Shift+Enter; gated `MESSAGES_SEND` + ser assignee + open; hint "Toma para responder" si no) + `HandoffControls.tsx` (Tomar/Liberar/Cerrar/Reabrir gated por permisos finos; `setDetail(result.data)` + `router.refresh()` + `onMutated()`) + `MessageStatusTicks.tsx` con **Reintentar** (outbound fallido).
 - [ ] **Smoke test (F3)**: en una conversación open sin asignar → "Tomar" (gated `CONVERSATIONS_TAKE`) → assignee=yo + unread=0 + el header muestra "Asignado a {yo}" → escribir + Enviar → la burbuja outbound (derecha) aparece **en vivo por el listener Firestore** (status `pending` → ✓ "Enviado") → el listener actualiza a ✓✓ "Entregado"/"Leído" cuando el backend escribe el status callback de Meta al doc (en vivo, no ~10 s) → "Liberar" (devolver a sin asignar) → "Cerrar" → estado "Cerrada", composer reemplazado por "Reabrir" → "Reabrir" → vuelve a open. Verificar en crm que se emitió `CONVERSATION_TAKEN`/`CONVERSATION_RELEASED` en la timeline de la Person.
 - [ ] **Outbound fallido test (F3)**: forzar un fallo de Meta (número inválido / secreto mal) → el doc Firestore del mensaje se actualiza a ⚠ "Falló el envío" (endpoint devuelve 200; el listener lo trae en vivo) → botón "Reintentar" → re-envía (nuevo `mid`/doc); el fallido queda en el hilo (audit inmutable). `failure_reason` en tooltip.
 - [ ] **Error test (F3)**: enviar a una conversación que otro asesor tomó (no soy assignee) → `403 NOT_CONVERSATION_ASSIGNEE` en `MessageBar`; enviar a una cerrada → `400 CONVERSATION_NOT_OPEN`; reabrir cuando ya hay otra open para (person, canal) → `409 CONVERSATION_ALREADY_OPEN`. Todos en español.
@@ -1697,7 +1706,7 @@ Resumen del ciclo de vida de un mensaje outbound (visto desde el front):
 ### F4 — Adjuntos/media (DIFERIDA, fuera del MVP)
 
 - [ ] Cablear el render real de `MessageAttachment` en `MessageBubble` (imagen inline, audio player, descarga de documento, mapa de location) — hoy es un placeholder "📎 Adjunto (no disponible aún)".
-- [ ] Extender `message.schema.ts`/`Composer` para enviar adjuntos (subida + `content_type` ≠ text).
+- [ ] Extender `conversation.schema.ts` (`sendMessageSchema`)/`MessageComposer` para enviar adjuntos (subida + `content_type` ≠ text).
 - [ ] La decisión de storage (lazy proxy vs GCS) se re-confirma al llegar a F4 (spec §1.4). Fuera del MVP inicial.
 
 ## Tareas adicionales (traducción del template existente)

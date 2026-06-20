@@ -39,9 +39,9 @@ A diferencia del `Office`/`Doctor`/`Person` (que tienen varios sub-recursos dens
 
 ### Por qué el calendario es una superficie de primer nivel (decisión #2 del spec)
 
-El MVP **incluye** la grilla de calendario semanal (no solo la tabla). La tabla es la vista "operativa/lista" (filtrar, buscar, deep-link); el calendario es la vista "espacial" (ver huecos, agendar en un slot libre de un vistazo). Ambas leen las mismas citas; el calendario suma los **slots libres** (de `GET /appointments/calendar`, que combina citas + disponibilidad computada en el rango). Es el componente de frontend más pesado del módulo (como el calendario de `staff` lo fue de ese módulo) y se construye **al final** (F4), sobre una base de tabla + wizard + detalle ya usable.
+El MVP **incluye** la grilla de calendario semanal (no solo la tabla). La tabla es la vista "operativa/lista" (filtrar, buscar, deep-link); el calendario es la vista "espacial" (ver huecos, agendar en un slot libre de un vistazo). Ambas leen las mismas citas; el calendario suma los **slots libres**. Es **frontend-only**: arma la ventana combinando `POST /appointments/list` (rango por `scheduled_for`) + `POST /me/appointments/list` + `POST /availability/compute` (NO hay endpoint `/calendar` dedicado). Es el componente de frontend más pesado del módulo (como el calendario de `staff` lo fue de ese módulo) y se construye **al final** (F4), sobre una base de tabla + wizard + detalle ya usable.
 
-## Sidebar — extensión de `NAV_ITEMS` (grupo "Agenda", gated `MENU-SCHEDULING`)
+## Sidebar — extensión de `NAV_ITEMS` (grupo "Agenda", visibilidad por children)
 
 > ⚠ **Textos UI en español**. `key` e `icon` se mantienen en inglés (identificadores de código). Solo `label` va en español.
 
@@ -51,23 +51,24 @@ Agregar un parent item `scheduling` con 4 children, **después de `crm`** (es el
 {
   key: "scheduling",
   label: "Agenda",
-  icon: "CalendarLtrRegular",              // verificar en la versión de Fluent; fallback "CalendarRegular"
+  icon: "CalendarLtrRegular",              // icono del grupo (sólo label + chevron en el sidebar)
+  // El parent NO lleva `permissions`: la visibilidad del grupo cae a la de sus children.
   children: [
-    { key: "citas",       label: "Citas",         icon: "CalendarClockRegular", url: "/scheduling/citas",       permissions: ["APPOINTMENTS_READ"] },
-    { key: "calendario",  label: "Calendario",    icon: "CalendarWeekStartRegular", url: "/scheduling/calendario", permissions: ["APPOINTMENTS_READ"] },
-    { key: "mi-agenda",   label: "Mi agenda",     icon: "PersonCalendarRegular", url: "/scheduling/mi-agenda",   permissions: ["MY_APPOINTMENTS_READ"] },
-    { key: "estados",     label: "Estados de cita", icon: "TagRegular",        url: "/scheduling/estados",     permissions: ["APPOINTMENT_STATUSES_READ"] },
+    { key: "appointments",        label: "Citas",           icon: "CalendarLtrRegular", url: "/scheduling/citas",       permissions: ["APPOINTMENTS_READ"] },
+    { key: "calendar",            label: "Calendario",      icon: "CalendarLtrRegular", url: "/scheduling/calendario", permissions: ["APPOINTMENTS_READ"] },
+    { key: "my-agenda",           label: "Mi agenda",       icon: "PersonRegular",      url: "/scheduling/mi-agenda",   permissions: ["MY_APPOINTMENTS_READ"] },
+    { key: "appointment-statuses", label: "Estados de cita", icon: "TagRegular",         url: "/scheduling/estados",     permissions: ["APPOINTMENT_STATUSES_READ"] },
   ],
 },
 ```
 
-> El parent usa `MENU-SCHEDULING` como gate de visibilidad del grupo. Cada child gatea por **su** permiso de lectura:
+> El parent **no** lleva `permissions`: la visibilidad del grupo cae a la de sus children (aparece si el usuario ve al menos un hijo). `MENU-SCHEDULING` existe en el set de permisos pero no se usa para gatear el parent del nav. Cada child gatea por **su** permiso de lectura:
 > - **ASESOR** (tiene `MENU-SCHEDULING`, `APPOINTMENTS_READ/CREATE/UPDATE/TRANSITION/CANCEL/RESCHEDULE`, `APPOINTMENTS_READ`, `APPOINTMENT_STATUSES_READ`) ve Citas, Calendario y Estados (read-only en Estados, sin `_WRITE`). No tiene `MY_APPOINTMENTS_READ` → **no** ve "Mi agenda".
 > - **DOCTOR** (tiene `MENU-SCHEDULING`, `APPOINTMENTS_READ` [scoped a sí mismo vía service], `APPOINTMENTS_TRANSITION`, `MY_APPOINTMENTS_READ`, `APPOINTMENTS_READ`) ve Citas (solo las suyas, el service filtra), Calendario y **Mi agenda**. No tiene `APPOINTMENT_STATUSES_READ` → **no** ve "Estados de cita".
 > - **ADMIN** ve todo.
 > Los permisos finos (`APPOINTMENTS_CREATE`, `APPOINTMENT_STATUSES_WRITE`, `APPOINTMENTS_CANCEL_OVERRIDE`, etc.) se chequean en `page.tsx` vía `requirePermission(...)` y dentro de los componentes vía `<PermissionGuard>` / `usePermissions()`. El **detalle de la cita** no tiene entrada propia en el sidebar — se llega desde la tabla/calendario/mi-agenda.
 
-> Iconos Fluent (verificar que existan en la versión instalada; usar fallback si no): `CalendarLtrRegular`/`CalendarClockRegular`/`CalendarWeekStartRegular`/`PersonCalendarRegular`/`TagRegular`. Mismo criterio de verificación que `staff` con `DoctorRegular` y `crm` con `PeopleRegular`.
+> Iconos Fluent (los reales en `navigation.ts`): grupo Agenda, Citas y Calendario usan `CalendarLtrRegular`; Mi agenda usa `PersonRegular`; Estados de cita usa `TagRegular`. Mismo criterio de registro en el `iconMap` del `Sidebar.tsx` que `staff`/`crm`.
 
 ## Pantallas
 
@@ -405,7 +406,7 @@ Tabla estructura `OfficesClient`/`DoctorsClient`, con **cinco filtros** deep-lin
 
 ### Pantalla 3 — `/scheduling/calendario` (grilla semanal/día) — decisión #2
 
-Clon directo de la grilla bespoke del calendario de `staff` (mismo CSS grid, navegación, tokens), pero los bloques sólidos son **citas** (color = estado) y los huecos son **slots libres clickeables**. **Fluent no trae componente de calendario** y **no** se usa librería externa (igual binding que staff). Vistas: **semana** (default) y **día**. Fetch único: `GET /appointments/calendar?branch_id=&doctor_id=&from=&to=&view=` → `{ appointments: [...], free_slots: [...] }` (citas + slots libres computados en el rango).
+Clon directo de la grilla bespoke del calendario de `staff` (mismo CSS grid, navegación, tokens), pero los bloques sólidos son **citas** (color = estado) y los huecos son **slots libres clickeables**. **Fluent no trae componente de calendario** y **no** se usa librería externa (igual binding que staff). Vistas: **semana** (default) y **día**. Es **frontend-only**: **no hay endpoint `/calendar`** ni un `CalendarResponse` — la grilla arma su ventana en el cliente combinando `POST /appointments/list` (rango por `scheduled_for` vía `gte from / lt to`, filtrado opcional por `doctor_id`/`status_id`; paginado en bucle hasta cubrir `total`) para las **citas** + `POST /availability/compute` (sólo con doctor + producto) para los **slots libres** del rango.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -435,8 +436,8 @@ Clon directo de la grilla bespoke del calendario de `staff` (mismo CSS grid, nav
 **Anatomía de la grilla** (espeja staff, adaptado a citas):
 - **Columnas** = Lun…Dom de la semana visible **con fecha real** ("vie 6", "sáb 7", …); en vista **Día**, una sola columna. La columna del **día de hoy** se resalta sutilmente (`▸`/fondo tenue), cálculo **client-only** (TZ). Header con rango ("Sem. 6–12 jun 2026"). Inicio de semana = lunes (constante `DAY_LABELS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]`, reutilizada de clinic, índice = `day_of_week` Python 0=Lun).
 - **Filas** = horas, rango configurable (default **07:00–21:00**), paso = `doctor.slot_duration_min` del doctor filtrado (default 30). Las horas se muestran en el **timezone del branch** filtrado.
-- **Bloques de cita** (`▓`, color sólido = `status.color`): cada `Appointment` ocupa `[scheduled_for, scheduled_for + duration_min)` en su columna-fecha, etiquetado con hora + paciente + (producto). Click abre el **detalle** (Pantalla 4, drawer) y setea `?appointment_id=`. Las citas en estados `CANCELLED/NO_SHOW/RESCHEDULED` **no** se pintan (no ocupan; consistente con el cómputo de slots).
-- **Slots libres** (`◌`, overlay tenue clickeable): los `free_slots` del rango se pintan como celdas-overlay con borde punteado. Click abre el **wizard prefilled** (`doctor_id`, `office_id`, `branch_id`, `scheduled_for` = inicio del slot) directo en el **paso 1 (Paciente)** — el resto ya viene resuelto. Requiere `APPOINTMENTS_CREATE`; sin el permiso, los slots libres se muestran pero no son clickeables (solo lectura).
+- **Bloques de cita** (`▓`, color sólido = `status.color`): cada `Appointment` del rango (traído por `POST /appointments/list`) ocupa `[scheduled_for, scheduled_for + duration_min)` en su columna-fecha, etiquetado con hora + paciente + (producto). Click abre el **detalle** (Pantalla 4, drawer) y setea `?appointment_id=`. Las citas en estados `CANCELLED/NO_SHOW/RESCHEDULED` **no** se pintan (no ocupan; consistente con el cómputo de slots).
+- **Slots libres** (`◌`, overlay tenue clickeable): los slots del rango (los `AvailabilitySlot` que devuelve `POST /availability/compute`) se pintan como celdas-overlay con borde punteado. Click abre el **wizard prefilled** (`doctor_id`, `office_id`, `branch_id`, `scheduled_for` = inicio del slot) directo en el **paso 1 (Paciente)** — el resto ya viene resuelto. Requiere `APPOINTMENTS_CREATE`; sin el permiso, los slots libres se muestran pero no son clickeables (solo lectura).
 - **Leyenda**: una fila de swatches con `name`+`color` de los estados visibles + el marcador `◌ slot libre`. Se deriva de `GET /scheduling/appointment-statuses/active` (los colores no se hardcodean).
 
 > **Por qué hace falta un doctor (o sede) para ver slots libres**: el cómputo de disponibilidad es **por doctor + producto**. El calendario por defecto muestra **citas** de todos (o de la sede filtrada); los **slots libres** solo se pintan cuando hay un **doctor** filtrado (y, en el overlay→wizard, se elige el producto en el paso 2 — o, si el filtro de calendario incluye un producto, ya viene). Sin doctor filtrado, el calendario es solo lectura de citas (sin overlays de slot). El dropdown de doctor arriba habilita los overlays.
@@ -478,7 +479,7 @@ Clon directo de la grilla bespoke del calendario de `staff` (mismo CSS grid, nav
 
 > El calendario es el mayor riesgo de frontend del módulo (como en staff). Construirlo de una vez es la trampa. Orden:
 > 1. **Iteración A (read primero)** — grilla estática (columnas-fecha + filas-hora) que **renderiza las citas** de la semana (bloques por color de estado), navegación semana/Hoy + toggle Semana/Día, leyenda, resaltado de "hoy" (client-only), estados loading/empty/error/read-only. Con esto el calendario ya **muestra** la agenda.
-> 2. **Iteración B (slots libres + reserva)** — pintar los `◌ free_slots` como overlays clickeables → abrir el wizard prefilled. Requiere el wizard de F2 ya construido (de ahí que el calendario sea F4).
+> 2. **Iteración B (slots libres + reserva)** — pintar los `◌` slots libres (de `POST /availability/compute`) como overlays clickeables → abrir el wizard prefilled. Requiere el wizard de F2 ya construido (de ahí que el calendario sea F4).
 > 3. **Iteración C (refinamientos)** — vista Día pulida, tooltips de cita (paciente/producto/estado), drag-para-reagendar **diferido** (no MVP: reagendar se hace desde el detalle).
 
 ---
@@ -586,7 +587,7 @@ Feed cronológico read-only, **entrelaza** `AppointmentStatusHistory` (cambios d
 
 ### Pantalla 5 — `/scheduling/mi-agenda` (vista del doctor, read)
 
-Self-service del doctor logueado (molde `/me/agenda` de staff). **El mismo calendario** de la Pantalla 3 en **modo self** (read-focused): muestra **solo sus citas** (`GET /me/calendar`, gated `APPOINTMENTS_READ` + scoping del service por `current.doctor.id`) + la lista `POST /me/appointments/list` como vista alterna. El doctor **no reserva** (no tiene `APPOINTMENTS_CREATE`); puede **transicionar** sus citas (tiene `APPOINTMENTS_TRANSITION`): confirmar / registrar llegada / iniciar / atender / no-show desde el detalle.
+Self-service del doctor logueado (molde `/me/agenda` de staff). **El mismo calendario** de la Pantalla 3 en **modo self** (read-focused): muestra **solo sus citas**. Igual que el calendario admin, es **frontend-only** (no hay endpoint `/me/calendar`): la grilla arma su ventana con `POST /me/appointments/list` (gated `MY_APPOINTMENTS_READ`; el service FUERZA `doctor_id` = doctor del token → anti-IDOR), que sirve además como la vista Lista alterna. El doctor **no reserva** (no tiene `APPOINTMENTS_CREATE`), así que en modo self no se computan slots libres; puede **transicionar** sus citas (tiene `APPOINTMENTS_TRANSITION`): confirmar / registrar llegada / iniciar / atender / no-show desde el detalle.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -645,7 +646,7 @@ Los atajos de estado y el dropdown "Otro estado" se pueblan **únicamente** con 
 A diferencia de crm (donde un lead `is_final` soft-deletea su fila viva), una cita en estado final (ATTENDED/CANCELLED/NO_SHOW/RESCHEDULED) **mantiene la fila viva** (registro histórico). El soft-delete (`DELETE`) es solo "error de captura". En UI: las citas finales siguen apareciendo en la tabla/detalle (con su badge de estado), pero **no** se pintan en el calendario ni ocupan tiempo en el cómputo de slots.
 
 ### Slots on-the-fly: nunca una "tabla de slots" en UI
-La grilla de slots del wizard y los overlays del calendario se computan en cada apertura (`/availability/compute`, `/appointments/calendar`) — no hay una entidad "slot" que listar/editar. Si el cómputo devuelve `[]`, el empty del wizard/calendario guía a cambiar semana/doctor/sede (no es un error).
+La grilla de slots del wizard y los overlays del calendario se computan en cada apertura (`POST /availability/compute`) — no hay una entidad "slot" que listar/editar ni un endpoint `/calendar` que los traiga (el calendario es frontend-only). Si el cómputo devuelve `[]`, el empty del wizard/calendario guía a cambiar semana/doctor/sede (no es un error).
 
 ### Reagendar reusa el paso de slot del wizard
 El reagendamiento desde el detalle reabre el **paso 3 (Horario)** del wizard (mismo componente, prefilled con producto/doctor), no una pantalla nueva. Crea una nueva cita con `previous_appointment_id` y marca la vieja RESCHEDULED. No sujeto a `min_hours_to_cancel`.
@@ -844,10 +845,10 @@ Textos directos como strings en cada componente (misma decisión que catalog/cli
 Las pantallas de este doc se construyen en el orden de fases del módulo (ver [`README.md`](./README.md), [`backend.md`](./backend.md) y la spec §10 F0–F5). Cada checkbox es una tarea de UI.
 
 ### F0 — Prep (sin pantallas funcionales)
-- [ ] Sidebar: grupo "Agenda" en `NAV_ITEMS` con 4 children (Citas / Calendario / Mi agenda / Estados de cita), gate `MENU-SCHEDULING` + permiso por child; íconos Fluent verificados con fallback (`CalendarLtrRegular`/`CalendarClockRegular`/`CalendarWeekStartRegular`/`PersonCalendarRegular`/`TagRegular`).
-- [ ] `lib/constants/endpoints.ts`: bloque `ENDPOINTS.SCHEDULING` (appointment-statuses, transitions, availability/compute, availability/check-slot, appointments, appointments/calendar, transition + shortcuts, me/appointments, me/calendar, from-bot).
+- [ ] Sidebar: grupo "Agenda" en `NAV_ITEMS` con 4 children (Citas / Calendario / Mi agenda / Estados de cita); el parent NO lleva `permissions` (visibilidad por children) + permiso por child; íconos Fluent: `CalendarLtrRegular` (grupo, Citas, Calendario) / `PersonRegular` (Mi agenda) / `TagRegular` (Estados de cita).
+- [ ] `lib/constants/endpoints.ts`: bloque `ENDPOINTS.SCHEDULING` (appointment-statuses, transitions, availability/compute, availability/check-slot, appointments + shortcuts, me/appointments). El calendario es frontend-only (sin endpoint `/calendar`) y el bot no usa endpoints HTTP (sin `/from-bot`).
 - [ ] `types/scheduling.types.ts`: interfaces espejo de Pydantic (`AppointmentStatusItem`/`Option`, `AppointmentStatusTransition`, `AppointmentItem`/`Detail`, `AppointmentStatusHistoryItem`, `AppointmentChangeLogItem`, `AvailabilityRequest`, `AvailabilitySlot`, `AvailabilityResponse`, `MyAppointmentItem`, enum `source`).
-- [ ] `lib/schemas/scheduling.schema.ts`: Zod de appointment-status (code MAYÚSCULAS), wizard (por paso), transition, reschedule, cancel.
+- [ ] `lib/schemas/appointment-status.schema.ts` + `lib/schemas/appointment.schema.ts`: Zod de appointment-status (code MAYÚSCULAS) y de cita (`appointmentCreateSchema` plano, `appointmentUpdateSchema`, `appointmentRescheduleSchema`, `appointmentCancelSchema`). El wizard valida paso a paso en el componente; no hay schema de transición genérica.
 - [ ] Reusar `formatRelative` (client-only) de crm; reusar `DAY_LABELS` de clinic; reusar/parametrizar `StatusBadge`, `TransitionControl` y `SearchableOptionList`. (Traducción ya hecha.)
 
 ### F1 — AppointmentStatus + matriz

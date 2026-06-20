@@ -25,10 +25,10 @@ El relay de `conversations` quedó **síncrono** porque era rápido (writes Fire
 
 - El webhook de `conversations`, tras su pipe síncrono (persist_inbound + relay a Firestore), si `conv.assignee_type=='bot'`, **encola una Cloud Task** (operación rápida) con `{conversation_id, input_message_id}` en la cola `medisage-bot-turns[-qa]` → devuelve **200 a Meta** de inmediato.
 - Cloud Tasks entrega la task como un **POST HTTP fresco** a un endpoint interno `POST /api/v1/bots/engine/dispatch`. Ese request **tiene CPU asignada** (es un request real, sin throttling) → ahí corre `bots.engine.dispatch_turn` (LLM + tools + `send_bot_outbound` + traza `BotEvent`/`BotToolCall`).
-- El endpoint `/engine/dispatch` **NO usa el RBAC del template** (no hay usuario): se autentica con el **token OIDC** que Cloud Tasks firma con la SA invoker (audience = la URL del endpoint), o con un **shared-secret header** (`BOT_DISPATCH_SECRET`) como variante MVP. NO es alcanzable por el browser.
+- El endpoint `/engine/dispatch` **NO usa el RBAC del template** (no hay usuario): se autentica con un **shared-secret header** (`X-Bot-Dispatch-Secret` == `BOT_DISPATCH_SECRET`, comparado en tiempo constante con `hmac.compare_digest`, mismo primitivo que la firma del webhook de Meta). La alternativa era el **token OIDC** que Cloud Tasks firma con la SA invoker (audience = la URL del endpoint). _Implementación: el MVP shipeó el shared-secret header — el servicio es público (Meta/Vercel), así que OIDC degradaría a verificación in-app sin el rechazo de la plataforma; OIDC queda como hardening futuro si el endpoint se separa a un Cloud Run privado propio._ NO es alcanzable por el browser.
 - `app/core/cloud_tasks.py` encapsula el cliente (lazy, molde de `secrets.py`/`firestore.py`) + `enqueue_turn(...)`.
 
-Cloud Tasks aporta de fábrica: **at-least-once delivery**, **reintentos con backoff exponencial**, **max-attempts → dead-letter**, **rate/concurrency por cola** (protege los rate-limits del LLM + el pool de DB), scheduling/delay, y **dedup por task-name** (idempotencia). El endpoint de dispatch debe ser idempotente por turno (el `ConversationBotState.turn_count` + el `BotEvent` UNIQUE `(conversation_id, turn_number)` ayudan).
+Cloud Tasks aporta de fábrica: **at-least-once delivery**, **reintentos con backoff exponencial**, **max-attempts → dead-letter**, **rate/concurrency por cola** (protege los rate-limits del LLM + el pool de DB), scheduling/delay, y **dedup por task-name** (idempotencia del *enqueue*). La idempotencia del turno se asienta en `input_message_id`, en dos capas: (1) el enqueue usa un **task-name determinista** derivado de `(conversation_id, input_message_id)` → un reintento del webhook de Meta del mismo inbound reencola con el mismo nombre y Cloud Tasks lo rechaza (`AlreadyExists`); (2) como eso no cubre el at-least-once de una task ya aceptada, el **consumidor (`engine.dispatch_turn`) es idempotente por `input_message_id`** (si ya hay un turno registrado para ese inbound, no re-ejecuta). El índice `(conversation_id, turn_number)` del `BotEvent` es **NO único** a propósito (un turno genera varios eventos —`turn_started` + `turn_completed`/`turn_failed`— con el mismo `turn_number`).
 
 ## Alternatives Considered
 
@@ -57,13 +57,13 @@ Correr el LLM dentro del request del webhook.
 - Patrón reusable por cualquier trabajo lento futuro (auto-reply de otros canales, jobs de bots, etc.).
 
 ### Negativas / Trade-offs
-- **+1 pieza de infra**: una cola Cloud Tasks por entorno + un endpoint interno autenticado (OIDC/shared-secret) + IAM (`roles/cloudtasks.enqueuer` en la SA de Cloud Run; SA invoker con permiso de invocar el servicio). Los workflows `deploy-backend-{qa,prod}.yml` suman los envs `CLOUD_TASKS_*` + `SERVICE_BASE_URL` + `BOT_DISPATCH_SECRET` (lección §9: toda Setting nueva con efecto runtime va al `--set-env-vars`).
-- **At-least-once** ⇒ el dispatch debe ser **idempotente** por turno (no duplicar el outbound ni el BotEvent si Cloud Tasks reintrega). Se apoya en el UNIQUE `(conversation_id, turn_number)` de BotEvent + el chequeo de turno en curso.
+- **+1 pieza de infra**: una cola Cloud Tasks por entorno + un endpoint interno autenticado (shared-secret header; OIDC como hardening futuro) + IAM (`roles/cloudtasks.enqueuer` en la SA de Cloud Run). Los workflows `deploy-backend-{qa,prod}.yml` suman los envs `CLOUD_TASKS_*` + `SERVICE_BASE_URL` + `BOT_DISPATCH_SECRET` (lección §9: toda Setting nueva con efecto runtime va al `--set-env-vars`).
+- **At-least-once** ⇒ el dispatch debe ser **idempotente** por turno (no duplicar el outbound ni el BotEvent si Cloud Tasks reintrega). Se apoya en `input_message_id`: dedupe del enqueue por task-name determinista + un consumidor idempotente (`engine.dispatch_turn` no re-ejecuta si ya hay un turno registrado para ese inbound). El índice `(conversation_id, turn_number)` de BotEvent es **NO único** (un turno emite varios eventos con el mismo `turn_number`), así que la idempotencia NO se apoya en él.
 - El smoke local (sqlite, sin GCP) **mockea** `cloud_tasks.enqueue_turn` y llama `dispatch_turn` directo; el QA E2E ejercita la cola real (lección §9: lo que el smoke mockea, el QA E2E lo caza).
 
 ### Lo que esto obliga
 - `app/core/cloud_tasks.py` (cliente lazy + `enqueue_turn`), dep `google-cloud-tasks`.
-- Endpoint top-level `POST /api/v1/bots/engine/dispatch` con verificación OIDC/shared-secret (NO RBAC) + `POST /engine/dispatch-manual` (RBAC `BOT_ENGINE_INVOKE`, debugging).
+- Endpoint top-level `POST /api/v1/bots/engine/dispatch` con verificación por shared-secret header (NO RBAC; OIDC = hardening futuro) + `POST /engine/dispatch-manual` (RBAC `BOT_ENGINE_INVOKE`, debugging).
 - Enganche aditivo en `conversations.webhook_processor.process_inbound`: `if conv.assignee_type=='bot': cloud_tasks.enqueue_turn(...)`.
 - Provisionar la cola (`medisage-bot-turns` / `-qa`) + IAM en F3 (no en F0/F1).
 

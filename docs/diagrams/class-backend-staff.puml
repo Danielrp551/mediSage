@@ -1,6 +1,6 @@
 @startuml class-backend-staff
 ' Propósito: jerarquía OO del módulo staff (Doctor + disponibilidad por bloques concretos) — modelos, repos y services funcionales
-' Última actualización: 2026-05-29 (ADR-007: DoctorAvailability reemplaza Pattern+Override)
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/staff/ y backend/app/shared/
 
 !theme plain
@@ -99,7 +99,7 @@ package "app.modules.staff.repositories" <<Frame>> {
       +get_by_user_id(db, user_id): Doctor?
       +get_full(db, doctor_id): Doctor?  ' eager: user, branches, verticals
       +list_active(db, branch_id?, vertical_id?): list<Doctor>
-      +branch_count_map / vertical_count_map / user_map (batch, no N+1)
+      +count_branches_map / count_verticals_map (batch, no N+1)
     }
     class DoctorAvailabilityRepository {
       +ALLOWED_FIELDS: set

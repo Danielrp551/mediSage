@@ -57,6 +57,7 @@ Tipo de prestación dentro de una vertical. Es la categoría intermedia que perm
 Lo que efectivamente se vende y se agenda. Es el grano del catálogo: una cita se reserva contra un `Product`, una promoción aplica a uno o varios `Product`, un reporte de ingresos suma por `Product`.
 
 - `service_id: varchar(36)` `<<FK→service>>`.
+- `vertical_id: varchar(36)` `<<FK→vertical>>` — denormalizado: se copia de la vertical del servicio padre al crear el producto y es inmutable (tanto `service_id` como el `vertical_id` del servicio lo son). Existe para que la UI del catálogo pueda filtrar/contar productos por vertical vía `ALLOWED_FIELDS` sin un join; `vertical_name` se sigue derivando. Tiene índice `ix_product_vertical_id`.
 - `code: varchar(60)` — único por servicio (`(service_id, code)`).
 - `name: varchar(160)`.
 - `description: varchar(1000)` `<<nullable>>`.
@@ -77,19 +78,19 @@ Todos bajo `/api/v1/catalog/`. Detalle de request/response en [`backend.md`](bac
 | `POST` | `/verticals/list` | `VERTICALS_READ` |
 | `POST` | `/verticals` | `VERTICALS_CREATE` |
 | `GET` | `/verticals/{id}` | `VERTICALS_READ` |
-| `PATCH` | `/verticals/{id}` | `VERTICALS_UPDATE` |
+| `PUT` | `/verticals/{id}` | `VERTICALS_UPDATE` |
 | `DELETE` | `/verticals/{id}` | `VERTICALS_DELETE` |
 | `GET` | `/verticals/active` | `VERTICALS_READ` |
 | `POST` | `/services/list` | `SERVICES_READ` |
 | `POST` | `/services` | `SERVICES_CREATE` |
 | `GET` | `/services/{id}` | `SERVICES_READ` |
-| `PATCH` | `/services/{id}` | `SERVICES_UPDATE` |
+| `PUT` | `/services/{id}` | `SERVICES_UPDATE` |
 | `DELETE` | `/services/{id}` | `SERVICES_DELETE` |
 | `GET` | `/services/active?vertical_id=` | `SERVICES_READ` |
 | `POST` | `/products/list` | `PRODUCTS_READ` |
 | `POST` | `/products` | `PRODUCTS_CREATE` |
 | `GET` | `/products/{id}` | `PRODUCTS_READ` |
-| `PATCH` | `/products/{id}` | `PRODUCTS_UPDATE` |
+| `PUT` | `/products/{id}` | `PRODUCTS_UPDATE` |
 | `DELETE` | `/products/{id}` | `PRODUCTS_DELETE` |
 | `GET` | `/products/active?service_id=` | `PRODUCTS_READ` |
 

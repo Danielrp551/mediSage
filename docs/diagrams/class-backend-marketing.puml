@@ -1,6 +1,6 @@
 @startuml class-backend-marketing
 ' Propósito: jerarquía OO del módulo marketing — modelos, repos y services funcionales
-' Última actualización: 2026-06-08
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/marketing/
 
 !theme plain
@@ -122,13 +122,6 @@ package "app.modules.marketing.repositories" <<Frame>> {
     +get_for_update(db, promotion_id): Promotion?  ' with_for_update
     +promotion_name_map(db, ids): dict<str,str>
   }
-  class CampaignPromotionRepository {
-    +promotion_ids_for_campaign(db, campaign_id): list<str>
-    +campaign_ids_for_promotion(db, promotion_id): list<str>
-    +set_promotions(db, campaign_id, promotion_ids)  ' bulk-replace
-    +count_promotions_map(db, campaign_ids): dict<str,int>
-    +count_campaigns_map(db, promotion_ids): dict<str,int>
-  }
   class PromotionProductRepository {
     +product_ids_for_promotion(db, promotion_id): list<str>
     +set_products(db, promotion_id, product_ids)  ' bulk-replace
@@ -246,17 +239,16 @@ DiscountType   .. Promotion : "discount_type"
 ' Repos manejan modelos
 CampaignRepository         ..> Campaign
 PromotionRepository        ..> Promotion
-CampaignPromotionRepository ..> CampaignPromotionTable
 PromotionProductRepository  ..> PromotionProductTable
 PromotionProductRepository  ..> Product : "join propio (lectura)"
 PromotionUsageRepository    ..> PromotionUsage
+' M:N campaign_promotion: SIN repo — relationship directo Campaign.promotions / Promotion.campaigns
+Campaign  ..> CampaignPromotionTable : "relationship (sin repo)"
 
 ' Services usan repos del módulo
 camp_svc ..> CampaignRepository
-camp_svc ..> CampaignPromotionRepository
 camp_svc ..> PromotionRepository
 prom_svc ..> PromotionRepository
-prom_svc ..> CampaignPromotionRepository
 prom_svc ..> PromotionProductRepository
 prom_svc ..> PromotionUsageRepository
 pu_svc   ..> PromotionRepository

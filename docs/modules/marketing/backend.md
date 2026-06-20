@@ -42,7 +42,7 @@ backend/app/modules/marketing/
 │   ├── __init__.py
 │   ├── campaign.py                   # get_by_code, list_active, get_by_ids, campaign_name_map
 │   ├── promotion.py                  # get_by_code, list_active, get_by_ids, get_for_update, promotion_name_map
-│   ├── campaign_promotion.py         # M:N campaign_promotion (set/list/count)
+│   │                                 # (M:N campaign_promotion: SIN repo — relationship directo Campaign.promotions / Promotion.campaigns)
 │   ├── promotion_product.py          # M:N promotion_product (set/list/count/covers_product, join propio a Product)
 │   └── promotion_usage.py            # get_by_appointment, count_for_promotion[_person], usage_summary
 ├── services/
@@ -907,77 +907,17 @@ class PromotionRepository(BaseRepository[Promotion]):
 promotion_repository = PromotionRepository()
 ```
 
-### `repositories/campaign_promotion.py` (M:N `campaign_promotion`)
+### M:N `campaign_promotion` — SIN repositorio (relationship directo)
 
-```python
-from __future__ import annotations
+A diferencia de `promotion_product` (que sí tiene repo con join propio a `catalog.Product`), el M:N `campaign_promotion` es **same-module** (ambas entidades viven en `marketing`), así que se opera con el `relationship` ORM directo — molde `role`/`permission` del módulo `admin`. **No existe `repositories/campaign_promotion.py`.** En concreto:
 
-from sqlalchemy import delete, func, insert, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.modules.marketing.models.associations import campaign_promotion
-
-
-class CampaignPromotionRepository:
-    async def promotion_ids_for_campaign(self, db: AsyncSession, campaign_id: str) -> list[str]:
-        result = await db.execute(
-            select(campaign_promotion.c.promotion_id).where(
-                campaign_promotion.c.campaign_id == campaign_id
-            )
-        )
-        return [row[0] for row in result.all()]
-
-    async def campaign_ids_for_promotion(self, db: AsyncSession, promotion_id: str) -> list[str]:
-        result = await db.execute(
-            select(campaign_promotion.c.campaign_id).where(
-                campaign_promotion.c.promotion_id == promotion_id
-            )
-        )
-        return [row[0] for row in result.all()]
-
-    async def set_promotions(
-        self, db: AsyncSession, campaign_id: str, promotion_ids: list[str]
-    ) -> None:
-        """Bulk-replace: delete todas las del campaign + insert el nuevo set. Una tx
-        (molde bots.bot_tool / staff M:N). El caller valida que cada promo exista viva."""
-        await db.execute(
-            delete(campaign_promotion).where(campaign_promotion.c.campaign_id == campaign_id)
-        )
-        if promotion_ids:
-            await db.execute(
-                insert(campaign_promotion),
-                [{"campaign_id": campaign_id, "promotion_id": pid} for pid in promotion_ids],
-            )
-
-    async def count_promotions_map(
-        self, db: AsyncSession, campaign_ids: list[str]
-    ) -> dict[str, int]:
-        """Batch campaign_id→#promos para CampaignItem.promotions_count."""
-        if not campaign_ids:
-            return {}
-        result = await db.execute(
-            select(campaign_promotion.c.campaign_id, func.count())
-            .where(campaign_promotion.c.campaign_id.in_(campaign_ids))
-            .group_by(campaign_promotion.c.campaign_id)
-        )
-        return {row[0]: row[1] for row in result.all()}
-
-    async def count_campaigns_map(
-        self, db: AsyncSession, promotion_ids: list[str]
-    ) -> dict[str, int]:
-        """Batch promotion_id→#campañas para PromotionItem.campaigns_count."""
-        if not promotion_ids:
-            return {}
-        result = await db.execute(
-            select(campaign_promotion.c.promotion_id, func.count())
-            .where(campaign_promotion.c.promotion_id.in_(promotion_ids))
-            .group_by(campaign_promotion.c.promotion_id)
-        )
-        return {row[0]: row[1] for row in result.all()}
-
-
-campaign_promotion_repository = CampaignPromotionRepository()
-```
+- **Bulk-replace** (`campaign.set_promotions`): se asigna la lista a la colección del relationship —
+  ```python
+  campaign.promotions = promos   # SQLAlchemy emite el delete/insert del M:N
+  ```
+  El service valida antes que cada `promotion_id` exista vivo (`promotion_repository.get_by_ids` → `PROMOTION_NOT_FOUND` 404).
+- **Lectura** (`campaign.get_promotions` / `promotion` lado inverso): `selectinload(Campaign.promotions)` / `selectinload(Promotion.campaigns)`.
+- **Conteos** denormalizados en los listados: `promotions_count = len(campaign.promotions)` y `campaigns_count = len(promotion.campaigns)` — sobre la colección ya cargada con `selectinload`, **sin** un `count_*_map` de repo (eso solo aplica al M:N `promotion_product`, que sí lo tiene).
 
 ### `repositories/promotion_product.py` (M:N `promotion_product` + **join propio a `catalog.Product`**)
 
@@ -1144,7 +1084,7 @@ CAMPAIGN_TRANSITIONS: dict[CampaignStatus, set[CampaignStatus]] = {
 
 | Función | Firma | Invariantes / error codes |
 |---|---|---|
-| `list_paginated` | `(db, query) -> PaginatedResponse[CampaignItem]` | `get_paginated` + batch (`target_vertical_name` vía `vertical_repository.get_by_ids`, `promotions_count` vía `count_promotions_map` [0 en F1], audit). |
+| `list_paginated` | `(db, query) -> PaginatedResponse[CampaignItem]` | `get_paginated` con `selectinload(Campaign.promotions)` + batch (`target_vertical_name` vía `vertical_repository.get_by_ids`, `promotions_count = len(c.promotions)` [0 en F1], audit). |
 | `get_by_id` | `(db, id) -> SingleResponse[CampaignDetail]` | NotFound `CAMPAIGN_NOT_FOUND` (404). |
 | `create` | `(db, payload, *, actor_id) -> SingleResponse[CampaignDetail]` | `code` único → `AlreadyExists CAMPAIGN_CODE_TAKEN` (409); `end_date >= start_date` (si end) → else `BadRequest CAMPAIGN_INVALID_DATES` (400); `target_vertical_id` (si provisto) existe vivo → else `BadRequest TARGET_VERTICAL_NOT_FOUND` (400). `status='draft'`. |
 | `update` | `(db, id, payload, *, actor_id) -> SingleResponse[CampaignDetail]` | Mismas validaciones de fecha/vertical sobre el merge. NO cambia `code`/`status`. |
@@ -1191,7 +1131,7 @@ def _validate_discount(discount_type: DiscountType, discount_value: Decimal) -> 
 
 | Función | Firma | Invariantes / error codes |
 |---|---|---|
-| `list_paginated` | `(db, query) -> PaginatedResponse[PromotionItem]` | batch `products_count`/`campaigns_count` + audit. |
+| `list_paginated` | `(db, query) -> PaginatedResponse[PromotionItem]` | `get_paginated` con `selectinload(Promotion.campaigns)`; `products_count` vía `count_products_map` (batch), `campaigns_count = len(p.campaigns)` + audit. |
 | `get_by_id` | `(db, id) -> SingleResponse[PromotionDetail]` | NotFound `PROMOTION_NOT_FOUND` (404). |
 | `create` | `(db, payload, *, actor_id) -> SingleResponse[PromotionDetail]` | `_validate_discount(payload.discount_type, payload.discount_value)` → `PROMOTION_INVALID_DISCOUNT` (400); `code` único → `PROMOTION_CODE_TAKEN` (409); fechas → `PROMOTION_INVALID_DATES` (400). |
 | `update` | `(db, id, payload, *, actor_id) -> SingleResponse[PromotionDetail]` | `_validate_discount(existing.discount_type, payload.discount_value or existing.discount_value)`; fechas sobre el merge. NO cambia `code`/`discount_type`. |
@@ -1798,9 +1738,11 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import DomainException
+from app.core.exceptions import BadRequestException, ConflictException, NotFoundException
 from app.modules.bots.services.engine.tools import BotInvocationContext, register_tool
 from app.modules.marketing.services import promotion_usage as mkt_usage
+
+DomainException = (BadRequestException, ConflictException, NotFoundException)  # tupla local (igual que crm/scheduling)
 
 
 @register_tool("list_eligible_promotions")
@@ -1820,18 +1762,27 @@ async def list_eligible_promotions(args: dict[str, Any], ctx: BotInvocationConte
 # bots/services/engine/tools/scheduling.py — book_appointment: leer apply_promotion_id
 @register_tool("book_appointment")
 async def book_appointment(args, ctx, db):
+    if ctx.person_id is None:
+        return {"ok": False, "error": "no_person"}
+    payload = AppointmentCreate(
+        person_id=ctx.person_id,  # anti-suplantación: el sujeto es el contacto del hilo, NO el LLM
+        doctor_id=str(args["doctor_id"]), office_id=str(args["office_id"]),
+        product_id=str(args["product_id"]),
+        scheduled_for=datetime.fromisoformat(str(args["scheduled_for"])),
+        source=AppointmentSource.bot, notes=args.get("notes"),
+        apply_promotion_id=args.get("apply_promotion_id"))  # NUEVO (F4)
     try:
-        result = await sched_bot.book_from_bot(
-            db, ctx, doctor_id=args["doctor_id"], office_id=args["office_id"],
-            product_id=args["product_id"], scheduled_for=datetime.fromisoformat(args["scheduled_for"]),
-            person_id=args.get("person_id"),
-            apply_promotion_id=args.get("apply_promotion_id"))  # NUEVO (F4)
+        # F4: savepoint PROPIO → atomicidad en el path del bot. Como el tool CAPTURA la
+        # excepción de dominio y retorna normal, sin este begin_nested el savepoint que el
+        # engine abre por tool se RELEASEaría y commitearía una cita huérfana SIN promo.
+        async with db.begin_nested():
+            result = await appointment_service.create_appointment(db, payload, actor_id=SYSTEM_USER_ID)
         return {"ok": True, "appointment_id": result.data.id}
     except DomainException as exc:  # captura TAMBIÉN las excepciones de dominio de marketing
         return {"ok": False, "error": getattr(exc, "code", None) or str(exc)[:255]}
 ```
 
-> `book_from_bot` gana el kwarg `apply_promotion_id: str | None = None` y lo pasa al `AppointmentCreate`. `import app.modules.bots.services.engine.tools.marketing` al final de `tools/__init__.py` (o se registra el `@register_tool`). **seed**: 4ª tupla en `BOT_TOOL_SEED` (`"list_eligible_promotions"`, `requires_confirmation=False`, `target_service="marketing.promotion_usage.eligible_for"`) + extender el `parameters_schema` de `book_appointment` con `apply_promotion_id` opcional.
+> El tool `book_appointment` construye el `AppointmentCreate` directo (NO hay ningún `book_from_bot`) pasándole `apply_promotion_id=args.get("apply_promotion_id")`, y llama `appointment_service.create_appointment(db, payload, actor_id=SYSTEM_USER_ID)` dentro de `async with db.begin_nested()` para que el book sea ATÓMICO en el path del bot: si `create_appointment` aplica la promo y marketing la rechaza tras flushear la cita, el savepoint propio la revierte antes de que el `except` devuelva el code. `import app.modules.bots.services.engine.tools.marketing` al final de `tools/__init__.py` (o se registra el `@register_tool`). **seed**: 4ª tupla en `BOT_TOOL_SEED` (`"list_eligible_promotions"`, `requires_confirmation=False`, `target_service="marketing.promotion_usage.eligible_for"`) + extender el `parameters_schema` de `book_appointment` con `apply_promotion_id` opcional.
 
 > **Pre-requisito (§13)**: la firma de `marketing.promotion_usage.apply`/`eligible_for` DEBE existir y estar estable ANTES de tocar bots (el import de tools al boot dispara `@register_tool`; un `ImportError` tumba el arranque). → **F4 va DESPUÉS de F3** (marketing services ya escritos).
 
@@ -1873,7 +1824,7 @@ PROMOTION_VALIDATE, PROMOTION_APPLY, PROMOTION_USAGES_READ
 - [ ] `models/promotion.py` + **agregar `promotions` relationship a `Campaign`** + `models/__init__.py` (importa `Promotion`).
 - [ ] Migración `0023_marketing_promotion` (`create_table('promotion')` + `campaign_promotion` + `promotion_product`).
 - [ ] `schemas/promotion.py` (`PromotionOption`/`Item`/`Detail`/`Create`/`Update`/`ProductsReplace`).
-- [ ] `repositories/promotion.py` (`get_by_code`/`list_active`/`get_by_ids`/`get_for_update`/`promotion_name_map`) + `campaign_promotion.py` + `promotion_product.py` (join propio).
+- [ ] `repositories/promotion.py` (`get_by_code`/`list_active`/`get_by_ids`/`get_for_update`/`promotion_name_map`) + `promotion_product.py` (join propio). El M:N `campaign_promotion` NO lleva repo — se opera con el `relationship` directo `Campaign.promotions` / `Promotion.campaigns`.
 - [ ] `services/promotion.py` (CRUD + `_validate_discount` + `set_products`/`get_products` + `usage_summary` [0 hasta F3]) + activar `campaign.set_promotions`/`get_promotions` + `promotions_count`.
 - [ ] `routers/promotion.py` (CRUD + `/active` + `/{id}/products` + `/{id}/usage-summary`).
 - [ ] (Frontend F2) `/marketing/promociones` (drawer form discriminado por `discount_type`; M:N productos/campañas) — ver [`ui.md`](ui.md).
@@ -1890,8 +1841,8 @@ PROMOTION_VALIDATE, PROMOTION_APPLY, PROMOTION_USAGES_READ
 - [ ] Test: cada code de `apply` (paso 1-8); `_compute_discount` (percentage cap a base_price, fixed `min(value, base_price)`, ROUND_HALF_UP); no-stacking (`PROMOTION_ALREADY_APPLIED` 409 + UNIQUE parcial backstop con 2 applies a la misma cita); `eligible_for`/`validate`/`compute_price` (dry-run, `reason` = code); `usage_summary` (sums).
 
 ### F4 — Integración (sin migración)
-- [ ] `scheduling`: `AppointmentCreate += apply_promotion_id` + llamada atómica a `marketing.promotion_usage.apply` en `create_appointment` (db.flush, sin commit). `book_from_bot += apply_promotion_id`.
-- [ ] `bots`: `tools/marketing.py` (`@register_tool("list_eligible_promotions")`, read-only, anti-IDOR `ctx.person_id`) + import en `tools/__init__.py` + `book_appointment` lee `apply_promotion_id` + seed `BotTool` (4ª tupla + `parameters_schema` extendido).
+- [ ] `scheduling`: `AppointmentCreate += apply_promotion_id` + llamada atómica a `marketing.promotion_usage.apply` en `create_appointment` (db.flush, sin commit).
+- [ ] `bots`: `tools/marketing.py` (`@register_tool("list_eligible_promotions")`, read-only, anti-IDOR `ctx.person_id`) + import en `tools/__init__.py` + `book_appointment` arma el `AppointmentCreate(..., apply_promotion_id=...)` y llama `create_appointment` dentro de `async with db.begin_nested()` (savepoint propio = atomicidad del path del bot) + seed `BotTool` (4ª tupla + `parameters_schema` extendido).
 - [ ] Test: book con `apply_promotion_id` válido → cita + usage (mismo tx); book con promo inválida → rollback (NI cita NI usage); `list_eligible_promotions` con `ctx.person_id=None` → `no_person`; la tool pasa de `is_registered=false` a operativa.
 
 Cada fase: backend e2e + smoke (sqlite, RESULT=PASS+conteo a stdout) → frontend e2e (tsc+build+prettier) → **review adversaria Workflow 4 dims + verificación por hallazgo (chequear `raw==confirmed+refuted+null`)** → commit limpio sin Co-Authored-By → ff develop→qa → **gate AskUserQuestion (separado del merge)** → prod → QA E2E real + PROD RO → actualizar memoria.

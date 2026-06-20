@@ -287,12 +287,10 @@ El drawer tiene un `<TabList>` arriba con 3 tabs. En **create** solo el tab **Da
                   │  Herramientas que este bot puede usar                  │
                   │  ┌───────────────────────────────────────────────────┐│
                   │  │ 🔍 Buscar herramientas…                           ││
-                  │  │ ☑ list_verticals          Listar verticales       ││
-                  │  │ ☑ list_services_by_vert.  Listar servicios        ││
-                  │  │ ☑ register_lead_note      Registrar nota de lead  ││
-                  │  │ ☑ set_lead_status     ⚠   Cambiar estado de lead  ││
-                  │  │ ☑ resolve_or_create_co.   Resolver/crear contacto ││
-                  │  │ ☐ list_products_by_vert.  Listar productos        ││
+                  │  │ ☑ check_availability      Consultar disponib.     ││
+                  │  │ ☑ book_appointment    ⚠   Reservar cita           ││
+                  │  │ ☑ list_eligible_promos    Listar promociones      ││
+                  │  │ ☐ cancel_appointment  ⚠   Cancelar cita           ││
                   │  └───────────────────────────────────────────────────┘│
                   │  El bot solo podrá invocar las herramientas marcadas.  │
                   │  ⚠ = requiere confirmación.                           │
@@ -369,10 +367,10 @@ Lista (DataTable, molde `VerticalsClient`) del catálogo de herramientas + drawe
 │   ╭─ DataTable ──────────────────────────────────────────────────────────────────╮│
 │   │ ⋯ │ Código                │ Nombre              │ Servicio destino       │Conf.│Est.│
 │   ├───┼───────────────────────┼─────────────────────┼────────────────────────┼─────┼───┤│
-│   │ ⋯ │ list_verticals        │ Listar verticales   │ catalog.vertical.list… │  —  │Act││
-│   │ ⋯ │ set_lead_status       │ Cambiar estado lead │ crm.person_lead_statu… │ ⚠ Sí│Act││
-│   │ ⋯ │ resolve_or_create_co. │ Resolver/crear cont.│ crm.person.find_by_id… │  —  │Act││
-│   │ ⋯ │ book_appointment      │ Agendar cita        │ scheduling.appointment…│ ⚠ Sí│Inac││ ← diseñada, no registrada
+│   │ ⋯ │ book_appointment      │ Reservar cita       │ scheduling.appointment…│ ⚠ Sí│Act││
+│   │ ⋯ │ check_availability    │ Consultar disponib. │ scheduling.availabili… │  —  │Act││
+│   │ ⋯ │ list_eligible_promos  │ Listar promociones  │ marketing.promotion_u… │  —  │Act││
+│   │ ⋯ │ send_email            │ Enviar correo       │ notifications.email.se…│  —  │Inac││ ← creada a mano, no registrada
 │   ╰──────────────────────────────────────────────────────────────────────────────╯│
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -388,9 +386,9 @@ Lista (DataTable, molde `VerticalsClient`) del catálogo de herramientas + drawe
 | `requires_confirmation` | Confirmación | badge | ❌ | "⚠ Sí" (warning) / "—" (neutral) |
 | `active` | Estado | badge | ❌ | "Activo"/"Inactivo" (reuse `StatusBadge`) |
 
-> `ALLOWED_FIELDS` del repo: `code`, `name`, `target_service`, `active`, `created_on`. `requires_confirmation` es booleano → puede filtrarse como flag (opcional), pero no se sortea por texto. **`defaultSort = code asc`** (o `created_on desc`). Una herramienta cuyo `target_service` no está en el `TOOL_REGISTRY` (ej. las diferidas `book_appointment` → `scheduling.*`) **se puede listar igual** — el `TOOL_NOT_REGISTERED` (404) solo ocurre **en runtime** cuando el motor intenta invocarla, no en el catálogo (spec §2). La UI puede mostrar un sutil indicador "no registrada" si el backend expone `is_registered` en el item (opcional — ver más abajo).
+> `ALLOWED_FIELDS` del repo: `code`, `name`, `target_service`, `active`, `created_on`. `requires_confirmation` es booleano → puede filtrarse como flag (opcional), pero no se sortea por texto. **`defaultSort = code asc`** (o `created_on desc`). Una herramienta creada a mano cuyo `target_service` NO está en el `TOOL_REGISTRY` (ej. un `notifications.email.send` que aún no existe) **se puede listar igual** — el `TOOL_NOT_REGISTERED` (404) solo ocurre **en runtime** cuando el motor intenta invocarla, no en el catálogo (spec §2). La UI puede mostrar un sutil indicador "no registrada" si el backend expone `is_registered` en el item (opcional — ver más abajo).
 
-> **Indicador "no registrada" (opcional, recomendado)**: el `BotToolItem` puede incluir un flag derivado `is_registered` (`target_service in TOOL_REGISTRY`, calculado server-side). Si `false`, la fila muestra un `<Badge color="warning">` "No registrada" con tooltip "El servicio destino no está disponible en este entorno; invocarla dará error." Esto hace visible el caso de las tools **diseñadas pero no seedeadas** (`book_appointment`/`check_availability` → `scheduling.*` inexistente; spec §0.4) sin romper el catálogo.
+> **Indicador "no registrada" (opcional, recomendado)**: el `BotToolItem` puede incluir un flag derivado `is_registered` (`code ∈ TOOL_REGISTRY`, calculado server-side). Si `false`, la fila muestra un `<Badge color="warning">` "No registrada" con tooltip "El servicio destino no está disponible en este entorno; invocarla dará error." Esto hace visible el caso de las tools **creadas a mano cuyo `code` no tiene `@register_tool`** (p.ej. un `notifications.email.send` futuro) sin romper el catálogo. (Las tools de catalog/crm/scheduling/marketing/clock SÍ están registradas; las 4 de scheduling+marketing además están seedeadas — spec §0.4.)
 
 **RowActions** (gated `usePermissions()`, todas requieren `BOT_TOOLS_WRITE` salvo Ver):
 - 👁 **Ver** — `BOT_TOOLS_READ`. Drawer en modo read.
@@ -446,7 +444,7 @@ Lista (DataTable, molde `VerticalsClient`) del catálogo de herramientas + drawe
 
 **Modo del drawer**: `create` / `edit` / `read`. Títulos: "Nueva herramienta" / "Editar herramienta" / "Herramienta" (read). Footer: `[ Cancelar ] [ Crear / Guardar ]`; en `read` solo `[ Cerrar ]`.
 
-> **HONESTIDAD (binding spec §0.4)**: este catálogo permite crear herramientas cuyo `target_service` apunta a un módulo aún inexistente (ej. `scheduling.*`). Eso es **deliberado** — deja el roadmap visible — pero esas tools darán `TOOL_NOT_REGISTERED` (404 runtime) si un bot las invoca. El MVP **seedéa** solo las 5 tools de crm/catalog (`list_verticals`, `list_services_by_vertical`, `list_products_by_vertical`, `register_lead_note`, `set_lead_status`, `resolve_or_create_contact`); las de scheduling (`book_appointment`/`check_availability`) NO se seedean (se cablean cuando #7 ship). La UI no debe sugerir que una tool no registrada "funciona".
+> **HONESTIDAD (binding spec §0.4)**: este catálogo permite crear herramientas cuyo `target_service` apunta a una función que NO está registrada en el entorno (`code` sin `@register_tool`). Eso es **deliberado** — deja el roadmap visible — pero esas tools darán `TOOL_NOT_REGISTERED` (404 runtime) si un bot las invoca. El seed (`BOT_TOOL_SEED`) inserta como filas del catálogo `bot_tool` **solo las 4 tools de scheduling + marketing** (`check_availability`, `book_appointment`, `cancel_appointment`, `list_eligible_promotions`) — cierran el loop lead→bot→cita→cliente. Las de **catalog/crm/clock** están **registradas** en el `TOOL_REGISTRY` (`is_registered=true`) pero NO se seedean como filas — un admin puede crearlas a mano para asignarlas a un bot. La UI no debe sugerir que una tool no registrada "funciona".
 
 #### Estados (Pantalla 2)
 
@@ -460,7 +458,7 @@ Lista (DataTable, molde `VerticalsClient`) del catálogo de herramientas + drawe
 │                    [ + Nueva herramienta ]                          │
 └────────────────────────────────────────────────────────────────────┘
 ```
-> (Improbable en prod: el seed de F2 carga las 5–6 tools de crm/catalog.)
+> (Improbable en prod: el seed carga las 4 tools de scheduling + marketing —`check_availability`/`book_appointment`/`cancel_appointment`/`list_eligible_promotions`.)
 - **Loading (primera carga)**: DataTable con 5 skeleton rows.
 - **No-results (filtro sin matches)**: "No hay herramientas con los filtros actuales."
 - **Refetching (background)**: tabla `opacity: 0.55` + spinner top-right.
@@ -547,7 +545,7 @@ Tarjeta read-only que mapea `GET /conversations/{cid}/state` → `ConversationBo
   - **"Reiniciar estado"** (`<Button appearance="subtle">`, gated `BOT_STATE_WRITE`) → `POST /conversations/{cid}/state/reset`. `<ConfirmDialog>`: "¿Reiniciar el estado del bot para esta conversación? Se borrarán la intención, los datos capturados y el contador de turnos. La traza de eventos se conserva." (no destruye `BotEvent`/`BotToolCall` — solo el `ConversationBotState`). Tras reiniciar: refetch del panel.
   - **"Disparar turno (debug)"** (`<Button appearance="subtle">`, gated `BOT_ENGINE_INVOKE`) → `POST /engine/dispatch-manual { conversation_id, input_message_id? }`. `<ConfirmDialog>`: "¿Disparar un turno del bot manualmente? El bot procesará el último mensaje del hilo y podría responder al contacto." (⚠ puede enviar un mensaje real al contacto — copy honesto). Tras disparar: indicador "Procesando turno…" (el dispatch es async vía Cloud Tasks; el resultado aparece en el timeline cuando el motor termina — refetch/poll suave del timeline por unos segundos, o un toast "Turno encolado; refresca para ver el resultado"). Pensado para QA/debug, no operación normal.
 
-> **HONESTIDAD (binding spec §0.1)**: el turno corre **async** (Cloud Tasks → `/engine/dispatch` OIDC; ADR-012), **no** síncrono en la request del browser. "Disparar turno (debug)" **encola** (o dispara) el turno; el panel NO bloquea esperando el LLM. El resultado se ve en el timeline tras la conclusión (refetch suave). No prometer respuesta inmediata.
+> **HONESTIDAD (binding spec §0.1)**: el turno corre **async** (Cloud Tasks → `/engine/dispatch` con shared-secret en el header `X-Bot-Dispatch-Secret`; ADR-012), **no** síncrono en la request del browser. "Disparar turno (debug)" **encola** (o dispara) el turno; el panel NO bloquea esperando el LLM. El resultado se ve en el timeline tras la conclusión (refetch suave). No prometer respuesta inmediata.
 
 #### Panel derecho — Timeline de turnos (`BotEvent`) + llamadas a herramienta (`BotToolCall`)
 
@@ -564,7 +562,7 @@ Feed cronológico **descendente** (lo más nuevo arriba — molde Timeline de cr
 - **Encabezado**: ícono 🔧 + `bot_tool` (code/name) + badge de **status** (Pendiente/Éxito/Error/Tiempo agotado, color por estado) + latencia (`latency_ms`).
 - **Argumentos** (`arguments`, JSON): preview de 1 línea (truncado) + "▸ ver" → `<Accordion>` con el JSON completo.
 - **Resultado** (`result`, JSON, nullable): "▸ ver" → `<Accordion>` con el JSON; o un resumen ("[3 servicios]") si el front lo deriva.
-- **Error** (`error_message`, si `status in {error,timeout}`): `<MessageBar intent="error">` con el mensaje. El caso `TOOL_NOT_REGISTERED` (tool diseñada pero no seedeada) se ve aquí como un tool call en error con "El servicio destino no está registrado."
+- **Error** (`error_message`, si `status in {error,timeout}`): `<MessageBar intent="error">` con el mensaje. El caso `TOOL_NOT_REGISTERED` (tool cuyo `code` no tiene `@register_tool` en el entorno) se ve aquí como un tool call en error con "El servicio destino no está registrado."
 - `tool_use_id` (mono, en tooltip) para matching multi-tool — útil al depurar turnos con varias herramientas.
 
 **Estados de `BotToolCall`** — badge + glifo + color (token):
@@ -650,8 +648,8 @@ Las API keys (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`) son **globales por entorno**
 ### Provider/model como datos, no como secreto; default OpenAI `gpt-4.1-mini` (binding spec §0.2)
 El dropdown de proveedor habilita **OpenAI (default) y Claude** en el MVP; el resto (`vertex_ai`/`azure_openai`/`external_webhook`) se listan **deshabilitados** con "(próximamente)" para dejar el roadmap visible (un provider sin adaptador da `PROVIDER_NOT_SUPPORTED` 400 en runtime). El `model_name` es texto libre con default sugerido por provider. Mismo patrón que conversations con los `ChannelType` no-WhatsApp deshabilitados.
 
-### Las tools diseñadas-pero-no-registradas se listan, no se ocultan (binding spec §0.4)
-El catálogo de Tools permite `target_service` apuntando a módulos inexistentes (ej. `scheduling.*`) — deliberado, deja el roadmap visible — pero esas tools dan `TOOL_NOT_REGISTERED` (404 runtime) si un bot las invoca. La UI lo hace honesto con un badge "No registrada" (si el item trae `is_registered`) y un copy claro; **no** sugiere que "funcionan". El MVP seedéa solo las de crm/catalog.
+### Las tools no-registradas se listan, no se ocultan (binding spec §0.4)
+El catálogo de Tools permite crear filas cuyo `code`/`target_service` NO está en el `TOOL_REGISTRY` del entorno (ej. un `notifications.email.send` que aún no existe) — deliberado, deja el roadmap visible — pero esas tools dan `TOOL_NOT_REGISTERED` (404 runtime) si un bot las invoca. La UI lo hace honesto con un badge "No registrada" (si el item trae `is_registered`) y un copy claro; **no** sugiere que "funcionan". El seed (`BOT_TOOL_SEED`) inserta solo las 4 de scheduling + marketing; las de catalog/crm/clock están registradas pero no seedeadas.
 
 ### `router.refresh()` + refetch en toda mutación de denormalizados (lección crm F3)
 Activar una versión cambia "Versión vigente" en la fila de la lista **y** en el tab Datos del drawer; editar el M:N de tools no afecta la lista pero sí el tab; reiniciar estado / disparar turno afectan el panel de Depuración. Tras cada mutación: refetch del recurso afectado + `router.refresh()` cuando toca datos que otra superficie muestra (la columna "Versión vigente" de la lista) — sin esto el badge queda **stale** (bug MAJOR cazado en crm F3).
@@ -852,7 +850,7 @@ Las pantallas de este doc se construyen en el orden de fases del módulo (ver [`
 
 ### F0 — Prep (sin pantallas funcionales)
 - [ ] Sidebar: grupo "Bots" en `NAV_ITEMS` con 3 children (Configuraciones / Herramientas / Depuración), gate `MENU-BOTS` + permiso por child (`BOT_CONFIGURATIONS_READ` / `BOT_TOOLS_READ` / `BOT_EVENTS_READ`); íconos Fluent verificados con fallback (`BotRegular`/`WrenchRegular`/`BugRegular`).
-- [ ] `lib/constants/endpoints.ts`: bloque `ENDPOINTS.BOTS` (configurations, configurations/list, configurations/active, configurations/{id}, configurations/{id}/versions, configurations/{id}/versions/{vid}, configurations/{id}/activate-version/{vid}, configurations/{id}/tools, tools, tools/list, tools/{id}, conversations/{cid}/state, conversations/{cid}/state/reset, conversations/{cid}/events, conversations/{cid}/tool-calls, engine/dispatch-manual). El `engine/dispatch` (OIDC, Cloud Tasks) **NO va en el front** — lo invoca Cloud Tasks.
+- [ ] `lib/constants/endpoints.ts`: bloque `ENDPOINTS.BOTS` (configurations, configurations/list, configurations/active, configurations/{id}, configurations/{id}/versions, configurations/{id}/versions/{vid}, configurations/{id}/activate-version/{vid}, configurations/{id}/tools, tools, tools/list, tools/{id}, conversations/{cid}/state, conversations/{cid}/state/reset, conversations/{cid}/events, conversations/{cid}/tool-calls, engine/dispatch-manual). El `engine/dispatch` (shared-secret, Cloud Tasks) **NO va en el front** — lo invoca Cloud Tasks.
 - [ ] `types/bots.types.ts`: todas las interfaces espejo de Pydantic (`BotConfigurationItem`/`Detail`/`Option`/`Create`/`Update`, `BotConfigurationVersionItem`/`Detail`/`Create`, `BotToolItem`/`Detail`/`Create`/`Update`, `ConversationBotStateDetail`, `BotEventItem`, `BotToolCallItem`, `ConfigurationToolsUpdateRequest {tool_ids}`, `DispatchManualRequest`; enums `BotType`/`BotProvider`/`ToolCallStatus`/`BotEventType`).
 - [ ] `lib/schemas/bot.schema.ts`: Zod de `botConfigurationSchema` + `botVersionSchema` (incl. validación JSON de `parameters`) + `botToolSchema` (incl. validación JSON Schema de `parameters_schema`).
 - [ ] Confirmar **reuse** (no duplicar) de `StatusBadge`, `ChannelIcon` (de crm/conversations), `SearchableOptionList` (de admin/crm), `formatRelative` y `DayGroup` (si extraído). Crear `BotProviderBadge` (nuevo, pequeño).

@@ -1,6 +1,6 @@
 @startuml er-admin
-' Propósito: modelo relacional del módulo admin (User/Role/Permission + asociaciones)
-' Última actualización: 2026-05-26
+' Propósito: modelo relacional del módulo admin (User/Role/Permission + asociaciones + token_family)
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/admin/models/
 
 !theme plain
@@ -102,6 +102,21 @@ entity "user_permission" as t_up <<join>> {
 }
 
 ' ─────────────────────────────────────────────────────────────
+' Sesiones de refresh-token (rotación + revocación por familia)
+' ─────────────────────────────────────────────────────────────
+entity "token_family" as t_tf {
+  * id : varchar(36) <<PK>>
+  --
+  * family_id : varchar(36) <<unique, indexed>>
+  * user_id : varchar(36) <<FK→user, indexed>>
+  * current_jti : varchar(36)
+  --
+  * created_at : timestamptz
+  revoked_at : timestamptz <<nullable>>
+  reason : varchar(120) <<nullable>>
+}
+
+' ─────────────────────────────────────────────────────────────
 ' Relaciones (crow's foot)
 '   ||   = exactly one
 '   }o   = zero or many
@@ -119,6 +134,9 @@ t_rp }o--|| t_perm
 ' Usuario ↔ Permiso DIRECTA (vía user_permission)
 t_user ||--o{ t_up
 t_up }o--|| t_perm
+
+' Usuario → familias de refresh-token (una por sesión de login)
+t_user ||--o{ t_tf
 
 ' ─────────────────────────────────────────────────────────────
 ' Notas
@@ -143,6 +161,16 @@ note top of t_user
   ""deleted_at IS NULL"" = vivo.
   ""BaseRepository"" filtra automáticamente
   estos registros en todos los reads.
+end note
+
+note bottom of t_tf
+  **Familia de refresh-token = una sesión de login**
+  Se crea en el login y se actualiza en cada refresh
+  rotando ""current_jti"". Logout o detección de reuso
+  setea ""revoked_at"" + ""reason"" → el siguiente refresh
+  sobre la familia devuelve 401.
+  No usa los mixins ""Active/SoftDelete/Timestamp""
+  (solo ""PrimaryKeyMixin"" + columnas propias).
 end note
 
 @enduml

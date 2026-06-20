@@ -140,6 +140,7 @@ export type ActivityType =
   | "CONVERSATION_RELEASED"
   | "APPOINTMENT_BOOKED"
   | "APPOINTMENT_CANCELLED"
+  | "APPOINTMENT_ATTENDED"
   | "REASSIGNED"
   | "CAMPAIGN_ATTRIBUTION";
 
@@ -1202,7 +1203,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 ```
 
-> **Gating del grupo vs items**: el **grupo** "CRM" se muestra si el usuario tiene **alguno** de los permisos de sus hijos (el Sidebar colapsa grupos sin hijos visibles). La spec pide el grupo **gated `MENU-CRM`** — para honrarlo, agregar `MENU-CRM` como permiso del grupo padre **o** verificarlo en el RSC de cada page. Decisión: **cada item lleva su permiso fino** (`PERSONS_READ`, `MY_LEADS_READ`, `LEAD_STATUSES_READ`, `CUSTOMER_STATUSES_READ`) y el page RSC valida con `requirePermission(...)`. `MENU-CRM` es el permiso "de entrada" del módulo: el role `ASESOR` lo tiene (ver [`../_seed-and-roles.md`](../_seed-and-roles.md)); se usa como gate del grupo en el Sidebar si se prefiere un único toggle. **No** redefinir los permisos aquí — los 16 ya son canónicos en `_seed-and-roles.md`.
+> **Gating del grupo vs items**: el **grupo** "CRM" se muestra si el usuario tiene **alguno** de los permisos de sus hijos (el Sidebar colapsa grupos sin hijos visibles). La spec pide el grupo **gated `MENU-CRM`** — para honrarlo, agregar `MENU-CRM` como permiso del grupo padre **o** verificarlo en el RSC de cada page. Decisión: **cada item lleva su permiso fino** (`PERSONS_READ`, `MY_LEADS_READ`, `LEAD_STATUSES_READ`, `CUSTOMER_STATUSES_READ`) y el page RSC valida con `requirePermission(...)`. `MENU-CRM` es el permiso "de entrada" del módulo: el role `ASESOR` lo tiene (ver [`../_seed-and-roles.md`](../_seed-and-roles.md)); se usa como gate del grupo en el Sidebar si se prefiere un único toggle. **No** redefinir los permisos aquí — los 15 ya son canónicos en `_seed-and-roles.md`.
 
 > **Íconos** (verificar que existan en `@fluentui/react-icons` v9; fallback si no): grupo CRM `PeopleRegular`, Contactos `ContactCardRegular`, Mis leads `PersonRegular`, Estados de lead `TagRegular`, Estados de cliente `TagMultipleRegular`. Registrarlos en el `iconMap` del `Sidebar.tsx` (mismo paso que catalog/clinic/staff). Alternativas: `ContactCardRegular` → `PersonRegular`; `TagMultipleRegular` → `TagRegular`.
 
@@ -2309,7 +2310,7 @@ Editor de las aristas de salida de un estado. Recibe `statusId`, `allStatuses: L
 - [ ] Registrar íconos `PeopleRegular`/`ContactCardRegular`/`PersonRegular`/`TagRegular`/`TagMultipleRegular` en el `iconMap` del `Sidebar.tsx` (con fallbacks verificados).
 - [ ] Crear `src/types/crm.types.ts` (TODAS las interfaces + enums `ChannelType`/`ActivityType`/`ActivityOutcome`; reusa `UserAuditInfo`).
 - [ ] Crear `src/lib/constants/crm.ts` (`CHANNEL_TYPE_META`, `ACTIVITY_TYPE_META`, `ACTIVITY_OUTCOME_LABELS`, `ACTIVITY_FILTER_GROUPS`).
-- [ ] **Permisos test (F0)**: como user con `MENU-CRM` (rol ASESOR), el grupo "CRM" aparece con sus items según permisos finos. Sin ninguno de los permisos hijos, el grupo no aparece. (Los 16 permisos CRM + roles ya están en `seed.py` — ver [`../_seed-and-roles.md`](../_seed-and-roles.md). El SYSTEM user + role los introduce backend F0.)
+- [ ] **Permisos test (F0)**: como user con `MENU-CRM` (rol ASESOR), el grupo "CRM" aparece con sus items según permisos finos. Sin ninguno de los permisos hijos, el grupo no aparece. (Los 15 permisos CRM + roles ya están en `seed.py` — ver [`../_seed-and-roles.md`](../_seed-and-roles.md). El SYSTEM user + role los introduce backend F0.)
 
 ### F1 — Person + Identifiers
 

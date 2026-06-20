@@ -546,21 +546,21 @@ En F3 el doctor logueado gestiona **lo suyo** sin pasar por el admin. Dos pantal
 #### `/me/perfil` — "Mi perfil"
 
 Reusa el **form de la tab Perfil** (Pantalla 3) en **modo self**, con diferencias por el contrato `/me`:
-- Editable por el doctor: **solo** `bio`, `photo_url`, `signature_url`, `slot_duration_min` (lo que permite `PUT /me/doctor` con `MY_DOCTOR_PROFILE_WRITE`).
-- **NO editable** por el doctor: `branch_ids` / `vertical_ids` (eso es admin — la spec lo dice explícito). Se muestran como **solo-lectura** ("Tus sedes y verticales las administra la clínica.").
+- Editable por el doctor: **solo** `cmp_code`, `bio`, `photo_url`, `signature_url`, `slot_duration_min` (lo que permite `PUT /me/doctor` con `MY_DOCTOR_PROFILE_WRITE`).
+- **NO editable** por el doctor: `branch_ids` / `vertical_ids` ni `active` (eso es admin — la spec lo dice explícito). Se muestran como **solo-lectura** ("Tus sedes y verticales las administra la clínica.").
 - Datos del User (correo, nombre): solo-lectura, igual que en el admin.
 - Carga con `GET /me/doctor`. Guardar con `PUT /me/doctor`.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ Mi perfil                                                                     │
-│ Actualiza tu biografía, foto, firma y duración de slot.                       │
+│ Actualiza tu colegiatura, biografía, foto, firma y duración de slot.          │
 │                                                                              │
 │ Correo (solo lectura)            Nombre (solo lectura)                        │
 │ [ ana@medisage.pe        (—) ]   [ Ana Pérez Gómez       (—) ]               │
 │                                                                              │
-│ CMP (solo lectura)               Duración de slot                            │
-│ [ 54321                  (—) ]   [ 30 min               ▾ ]                  │
+│ CMP                              Duración de slot                            │
+│ [ 54321         editable ]       [ 30 min               ▾ ]                  │
 │                                                                              │
 │ Biografía            [ … editable … ]                                        │
 │ Foto (URL)  [ editable ]   Firma (URL) [ editable ]                          │

@@ -1,7 +1,7 @@
 @startuml class-backend-crm
 ' Propósito: jerarquía OO del módulo crm (modelo FINAL, 12 entidades) — Person + estados lead/customer separados,
 '            matriz de transiciones configurable (ADR-008), identifiers multicanal, assignment round-robin y activity polimórfica.
-' Última actualización: 2026-05-31
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/crm/ y backend/app/shared/
 
 !theme plain
@@ -79,6 +79,7 @@ package "app.modules.crm.enums" <<Frame>> {
     CONVERSATION_RELEASED
     APPOINTMENT_BOOKED
     APPOINTMENT_CANCELLED
+    APPOINTMENT_ATTENDED
   }
 
   enum ActivityOutcome <<enum>> {
@@ -108,9 +109,8 @@ package "app.modules.crm.models" <<Frame>> {
     +notes: str?
     --
     +identifiers: list<PersonContactIdentifier> <<lazy=raise>>
-    +lead_status: PersonLeadStatus? <<1:0..1>>
-    +customer_status: PersonCustomerStatus? <<1:0..1>>
-    +assignment: LeadAssignment? <<1:0..1>>
+    ' lead_status/customer_status/assignment: NO son relationship() ORM
+    ' — se resuelven por person_id + batch maps en el service (sin N+1).
   }
 
   class PersonContactIdentifier <<entity>> {
@@ -167,7 +167,7 @@ package "app.modules.crm.models" <<Frame>> {
     +entered_status_at: datetime
     +last_activity_at: datetime?  ' denormalizado
     --
-    +person: Person <<lazy=raise>>
+    ' SIN relationship a Person — se consulta por person_id + batch maps
     ' UNIQUE person_id WHERE deleted_at IS NULL (≤1 lead vivo)
   }
 
@@ -177,7 +177,7 @@ package "app.modules.crm.models" <<Frame>> {
     +became_customer_at: datetime
     +entered_status_at: datetime
     --
-    +person: Person <<lazy=raise>>
+    ' SIN relationship a Person — se consulta por person_id + batch maps
     ' UNIQUE person_id WHERE deleted_at IS NULL. Sin source_campaign_id
   }
 
@@ -211,7 +211,7 @@ package "app.modules.crm.models" <<Frame>> {
     +assigned_by: str?  ' FK lógica → user (NULL = round-robin auto)
     +reason: str?
     --
-    +person: Person <<lazy=raise>>
+    ' SIN relationship a Person — se consulta por person_id + batch maps
     ' UNIQUE person_id WHERE deleted_at IS NULL (≤1 owner vivo)
   }
 
@@ -247,7 +247,7 @@ package "app.modules.crm.repositories" <<Frame>> {
     +ALLOWED_FIELDS: set  ' solo columnas reales de person
     --
     +get_by_identifier(db, channel_type, identifier): Person?
-    +get_full(db, person_id): Person?  ' eager: identifiers+lead+customer+assignment
+    +get_full(db, person_id): Person?  ' eager: solo identifiers (lead/customer/assignment via batch maps)
     +search(db, q?, channel_type?, identifier?, limit): list<Person>
     +list_active(db): list<Person>
   }
@@ -324,7 +324,7 @@ package "app.modules.crm.services" <<Frame>> {
     +remove(db, person_id, ident_id, actor_id)
   }
   class "lead_status.py" as ls_svc <<module>> {
-    +list_options(db) / list_paginated(db, query)
+    +list_active(db) / list_paginated(db, query)
     +create/update/soft_delete(...)  ' 1 is_initial, is_won⟹is_final, guard *_IN_USE
     +get_transitions(db, status_id) / set_transitions(db, status_id, to_ids, actor_id)
   }
@@ -413,15 +413,17 @@ BaseRepository <|-- LeadAssignmentRepository               : "<LeadAssignment>"
 BaseRepository <|-- LeadActivityRepository                 : "<LeadActivity>"
 
 ' ─────────────────────────────────────────────────────────────
-' Relaciones de dominio (FK + relationship reales)
+' Relaciones de dominio (cardinalidades por FK; el único relationship()
+' ORM real desde Person es "identifiers" — el resto se resuelve por
+' person_id + batch maps en el service, sin N+1)
 ' ─────────────────────────────────────────────────────────────
-Person "1" -- "0..*" PersonContactIdentifier   : "identifiers"
-Person "1" -- "0..1" PersonLeadStatus          : "lead actual\n(UNIQUE)"
-Person "1" -- "0..1" PersonCustomerStatus      : "cliente actual\n(UNIQUE)"
-Person "1" -- "0..*" LeadStatusHistory         : "historial"
-Person "1" -- "0..*" CustomerStatusHistory     : "historial"
-Person "1" -- "0..1" LeadAssignment            : "owner\n(UNIQUE)"
-Person "1" -- "0..*" LeadActivity              : "timeline"
+"Person" "1" -- "0..*" PersonContactIdentifier   : "identifiers"
+"Person" "1" -- "0..1" PersonLeadStatus          : "lead actual\n(UNIQUE)"
+"Person" "1" -- "0..1" PersonCustomerStatus      : "cliente actual\n(UNIQUE)"
+"Person" "1" -- "0..*" LeadStatusHistory         : "historial"
+"Person" "1" -- "0..*" CustomerStatusHistory     : "historial"
+"Person" "1" -- "0..1" LeadAssignment            : "owner\n(UNIQUE)"
+"Person" "1" -- "0..*" LeadActivity              : "timeline"
 
 LeadStatus     "1" -- "0..*" PersonLeadStatus
 LeadStatus     "1" -- "0..*" LeadStatusHistory

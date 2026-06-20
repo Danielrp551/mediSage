@@ -27,7 +27,7 @@ disponibilidad = ─┤  office_vertical            (clinic, filtra office apto)
                  list[AvailabilitySlot]  ←  NO se persiste — solo se devuelve
 ```
 
-El módulo cierra el **flujo de negocio end-to-end**: el `crm` capta un `Person` (lead), `conversations`/`bots` lo cultivan, `scheduling` le agenda una **cita** y, cuando la cita se **atiende**, dispara `crm.promote_to_customer` (cierra el lead como ganado + crea el cliente). El **bot** consume el módulo vía una facade (`/appointments/from-bot`, `/appointments/{id}/cancel-from-bot`) y tres tools registradas en `TOOL_REGISTRY` (`check_availability`, `book_appointment`, `cancel_appointment`).
+El módulo cierra el **flujo de negocio end-to-end**: el `crm` capta un `Person` (lead), `conversations`/`bots` lo cultivan, `scheduling` le agenda una **cita** y, cuando la cita se **atiende**, dispara `crm.promote_to_customer` (cierra el lead como ganado + crea el cliente). El **bot** consume el módulo vía tres tools registradas en `TOOL_REGISTRY` (`check_availability`, `book_appointment`, `cancel_appointment`) que llaman a los services de scheduling **directo** (no hay facade ni endpoints HTTP dedicados al bot).
 
 Depende de módulos **ya en producción**: `crm` (`Person`, `promote_to_customer`, `LeadActivity`), `staff` (`Doctor`, `DoctorAvailability`, `slot_duration_min`), `clinic` (`Office`/`OfficeOperatingHours`/`OfficeClosure`/`Branch.timezone`/`office_vertical`), `catalog` (`Product.duration_min`, `Product.min_hours_to_cancel`, `Service→vertical`).
 
@@ -193,22 +193,21 @@ Todos bajo `/api/v1/scheduling/`. Listado paginado con `POST /<recurso>/list` + 
 | `POST` | `/appointments` | `APPOINTMENTS_CREATE` (create/book) |
 | `GET` | `/appointments/{id}` | `APPOINTMENTS_READ` (detalle + `status_history` + `change_log`) |
 | `PUT` | `/appointments/{id}` | `APPOINTMENTS_UPDATE` (edita columnas no-estado → changelog) |
-| `GET` | `/appointments/calendar` | `APPOINTMENTS_READ` (citas; los slots libres requieren además `AVAILABILITY_READ`) |
+| `DELETE` | `/appointments/{id}` | `APPOINTMENTS_DELETE` (soft-delete "error de captura") |
 | `POST` | `/appointments/{id}/transition` | `APPOINTMENTS_TRANSITION` (genérico, valida matriz) |
 | `POST` | `/appointments/{id}/{confirm\|check-in\|start\|attend\|no-show}` | `APPOINTMENTS_TRANSITION` (shortcuts) |
 | `POST` | `/appointments/{id}/cancel` | `APPOINTMENTS_CANCEL` (+`APPOINTMENTS_CANCEL_OVERRIDE` salta `min_hours`) |
 | `POST` | `/appointments/{id}/reschedule` | `APPOINTMENTS_RESCHEDULE` |
 
-### Self-service del doctor + bot facade
+### Self-service del doctor
 
 | Método | Ruta | Permiso |
 |---|---|---|
 | `POST` | `/me/appointments/list` | `MY_APPOINTMENTS_READ` |
-| `GET` | `/me/calendar` | `MY_APPOINTMENTS_READ` |
-| `POST` | `/appointments/from-bot` | — (sin RBAC, SYSTEM; `BotInvocationContext`) |
-| `POST` | `/appointments/{id}/cancel-from-bot` | — (sin RBAC, SYSTEM; `BotInvocationContext`) |
 
-> **Scoping anti-IDOR**: el `DOCTOR` sin `APPOINTMENTS_READ` global ve **solo sus citas** — el service filtra `doctor_id == current.doctor.id` cuando el actor tiene únicamente `MY_*` (espeja `_assert_can_access` de `conversations`).
+> **Scoping anti-IDOR**: el `DOCTOR` sin `APPOINTMENTS_READ` global ve **solo sus citas** — el service fuerza `doctor_id` = doctor del token en `/me/appointments/list` (anti-IDOR).
+
+> **El bot NO usa endpoints HTTP**: no existe una facade ni rutas `/from-bot`/`/cancel-from-bot`. El bot consume el módulo vía tres tools in-process (`check_availability`/`book_appointment`/`cancel_appointment`, ver [Bot integration](#integración-del-bot-decisión-4)) que llaman a los services de scheduling directo, corriendo como `SYSTEM`.
 
 ## Permisos seed
 
@@ -222,7 +221,7 @@ AVAILABILITY_READ ·
 MY_APPOINTMENTS_READ
 ```
 
-(Set canónico ya seedeado en [`_seed-and-roles.md`](../_seed-and-roles.md). `APPOINTMENTS_DELETE` = soft-delete "error de captura" [solo admin]; `AVAILABILITY_READ` gatea `/availability/*` + los slots libres de la grilla. NO existe `APPOINTMENT_CALENDAR_READ` ni `MY_APPOINTMENTS_WRITE`.)
+(Set canónico ya seedeado en [`_seed-and-roles.md`](../_seed-and-roles.md). `APPOINTMENTS_DELETE` = soft-delete "error de captura" [solo admin]; `AVAILABILITY_READ` gatea `/availability/*` (y, por extensión, los slots libres que la grilla calcula con `/availability/compute`). NO existe `APPOINTMENT_CALENDAR_READ` ni `MY_APPOINTMENTS_WRITE`.)
 
 **Roles seed**:
 
@@ -252,9 +251,9 @@ En crm, alcanzar un estado `is_final` soft-deletea la fila viva (`PersonLeadStat
 
 Confirmado por usuario (decisión #3). En `staff`, `active` **no** es gate para que el doctor auto-gestione su agenda. En `scheduling`, `active=false` **sí** bloquea agendar contra ese doctor (`DOCTOR_INACTIVE`; `compute_available_slots` devuelve `[]`). Las citas existentes quedan intactas. Es una divergencia intencional entre módulos.
 
-### Bot facade como fase final (decisión #4)
+### Integración del bot (decisión #4)
 
-`scheduling` expone una facade SYSTEM para el bot: `/appointments/from-bot` + `/appointments/{id}/cancel-from-bot` (corren como `SYSTEM`, `source='bot'`, respetan **todos** los invariantes — incl. `min_hours_to_cancel`: el bot **no** hace override). Reschedule por bot = cancel + book (sin 4ta tool en el MVP). Se registran 3 tools en `bots/services/engine/tools/scheduling.py` (`check_availability`, `book_appointment`, `cancel_appointment`), indexadas por `code` en `TOOL_REGISTRY`, sin migración.
+`scheduling` **no** expone una facade ni endpoints HTTP para el bot. La integración vive del lado de `bots`: `bots/services/engine/tools/scheduling.py` registra 3 tools in-process (`check_availability`, `book_appointment`, `cancel_appointment`), indexadas por `code` en `TOOL_REGISTRY`, que llaman a los services de scheduling **directo** (`availability.compute_available_slots`, `appointment.create_appointment`, `transition.cancel`). Corren como `SYSTEM` (`actor_id=SYSTEM_USER_ID`, `source='bot'`) y respetan **todos** los invariantes — incl. `min_hours_to_cancel`: el bot **no** hace override. `book_appointment` envuelve `create_appointment` en su propio `begin_nested` para que el book sea atómico en el path del bot. Reschedule por bot = cancel + book (sin 4ta tool en el MVP). Sin migración.
 
 ### Duración de la cita sale de `Product`, no de `Service`
 
@@ -268,30 +267,30 @@ Además de la tabla + wizard de reserva + Mi agenda del doctor, el MVP incluye u
 
 | Módulo | Cambio | Naturaleza |
 |---|---|---|
-| `crm` | FK aditiva `lead_activity.related_appointment_id → appointment` (la columna ya existe sin FK, ADR-009). `appointment.person_id → person` (FK directa). | migración de scheduling agrega los constraints |
+| `crm` | `appointment.person_id → person` se declara como FK real en la tabla `appointment` (la tabla `person` ya existe en prod). | FK directa en la migración de scheduling (`0021`) |
 | `crm` | `enums.ActivityType += APPOINTMENT_ATTENDED` (ya hay `APPOINTMENT_BOOKED`/`APPOINTMENT_CANCELLED`). | aditivo en crm |
 | `crm` | `attend` (→`ATTENDED`): si el Person no tiene `PersonCustomerStatus` activo → `crm.promote_to_customer` (cierra lead `is_won` + crea cliente `is_initial`); si ya es cliente → no-op CRM + `LeadActivity(APPOINTMENT_ATTENDED)`. Misma transacción. | orquestación en scheduling |
 | `bots` | `services/engine/tools/scheduling.py` nuevo: registra las 3 tools en `TOOL_REGISTRY`. Pasan de `TOOL_NOT_REGISTERED` a operativas. | aditivo en bots (fase final) |
 
-`scheduling` se construye **después** que `crm`/`staff`/`clinic`/`catalog` (en prod) y **antes/junto** que el enganche de `bots`. Las FKs forward que crm dejó como `varchar(36)` sin constraint las cierra esta migración de forma aditiva ([ADR-009](../../decisions/ADR-009-forward-fk-deferred-cross-module.md)).
+`scheduling` se construye **después** que `crm`/`staff`/`clinic`/`catalog` (en prod) y **antes/junto** que el enganche de `bots`. `appointment` declara FKs reales hacia `person`/`doctor`/`office`/`branch`/`product`/`user` (todas las tablas destino ya existen). En cambio, la columna forward que crm dejó como `varchar(36)` sin constraint — `lead_activity.related_appointment_id` — **NO se cierra**: las migraciones de scheduling (`0020`/`0021`) no la tocan y crm sigue referenciando la cita sólo por id ([ADR-009](../../decisions/ADR-009-forward-fk-deferred-cross-module.md)).
 
 ## Dependencias entre módulos
 
 | Módulo | Relación |
 |---|---|
-| `crm` | `appointment.person_id → person` (FK). Emite `LeadActivity(APPOINTMENT_BOOKED/CANCELLED/ATTENDED)` y dispara `promote_to_customer` al atender. Agrega FK a `lead_activity.related_appointment_id`. |
+| `crm` | `appointment.person_id → person` (FK). Emite `LeadActivity(APPOINTMENT_BOOKED/CANCELLED/ATTENDED)` y dispara `promote_to_customer` al atender. `lead_activity.related_appointment_id` queda como columna sin FK (referencia por id, ADR-009). |
 | `staff` | Lee `Doctor` (`get_full`: branches/verticals), `slot_duration_min` y `DoctorAvailability` (bloques) para `compute_available_slots`. `appointment.doctor_id → doctor` (FK). |
 | `clinic` | Lee `OfficeOperatingHours`, `OfficeClosure`, `office_vertical`, `Branch.timezone`. `appointment.office_id → office`, `appointment.branch_id → branch` (FKs). |
 | `catalog` | Lee `Product.duration_min` y `Product.min_hours_to_cancel`; deriva `vertical_id` vía `product.service.vertical_id`. `appointment.product_id → product` (FK). |
-| `admin` | Audit users (`created_by`/`updated_by`/`cancelled_by`/`changed_by` → `user.id`); user/role `SYSTEM` (introducido por crm) como actor de la bot facade. |
-| `bots` | Consume la facade SYSTEM + 3 tools (`check_availability`/`book_appointment`/`cancel_appointment`). NO escribe directo; pasa por la facade. |
+| `admin` | Audit users (`created_by`/`updated_by`/`cancelled_by`/`changed_by` → `user.id`); user `SYSTEM` (introducido por crm) como actor de las tools del bot. |
+| `bots` | Registra 3 tools (`check_availability`/`book_appointment`/`cancel_appointment`) que llaman a los services de scheduling **directo** (in-process, como `SYSTEM`). No hay facade ni endpoints HTTP de por medio. |
 
 ## Diagramas
 
 - ER: [`docs/diagrams/er-scheduling.puml`](../../diagrams/er-scheduling.puml)
 - Class diagram (modelos + repos + services): [`docs/diagrams/class-backend-scheduling.puml`](../../diagrams/class-backend-scheduling.puml)
 
-> Ambos reflejan el **modelo viejo** (4 entidades, sin matriz, patrón+overrides de disponibilidad). Se **regeneran al modelo de esta spec** en la consolidación post-fichas: agregar `AppointmentStatusTransition`, marcar `appointment.person_id`/FKs forward, reflejar bloques concretos (ADR-007) y `PUT`/`/active`.
+> Ambos reflejan el **modelo final** (5 entidades con `AppointmentStatusTransition`, FKs reales de `appointment`, disponibilidad on-the-fly por bloques concretos ADR-007) y el código real en prod (sin facade del bot; el calendario es frontend-only).
 
 ## Implementación por fases
 
@@ -303,26 +302,26 @@ Además de la tabla + wizard de reserva + Mi agenda del doctor, el MVP incluye u
 | **F1 — AppointmentStatus + matriz** | Catálogo CRUD + matriz (GET/PUT) + seed 8 estados + matriz base; UI `/scheduling/estados` con editor de transiciones; registrar módulo. (Molde = crm F2.) | `0020_scheduling_status` |
 | **F2 — Appointment + availability + booking** | `Appointment` + `AppointmentStatusHistory` + `AppointmentChangeLog` (FKs forward + self-FK); 9 invariantes + `compute_available_slots` + `check-slot` + create/get/list + `SLOT_TAKEN` (FOR UPDATE); UI tabla + wizard de reserva. (La fase más pesada.) | `0021_scheduling_appointment` |
 | **F3 — Lifecycle + audit** | transitions (matriz) + shortcuts (`confirm`/`check-in`/`start`/`attend`/`no-show`/`cancel`/`reschedule`) + history/changelog + `attend→promote` + `APPOINTMENT_ATTENDED`; UI detalle + timeline + status control. | ninguna |
-| **F4 — Calendar grid** | `/appointments/calendar` + grilla semanal UI + Mi agenda del doctor. [decisión #2] | ninguna |
-| **F5 — Bot facade + tools** | `/appointments/from-bot` + `/appointments/{id}/cancel-from-bot` + registrar 3 tools en `TOOL_REGISTRY`. Cierra el loop. [decisión #4] | ninguna |
+| **F4 — Calendar grid** | grilla semanal UI + Mi agenda del doctor, **frontend-only** (combina `/appointments/list` + `/me/appointments/list` + `/availability/compute`; sin endpoint `/calendar`). [decisión #2] | ninguna |
+| **F5 — Bot tools** | registrar 3 tools (`check_availability`/`book_appointment`/`cancel_appointment`) en `TOOL_REGISTRY` que llaman a los services de scheduling directo (sin facade ni rutas `/from-bot`). Cierra el loop. [decisión #4] | ninguna |
 
-> **Migraciones**: revid ≤ 32 chars (`alembic_version varchar(32)`). Sugeridas y verificadas: `0020_scheduling_status` (22) · `0021_scheduling_appointment` (27). Las FKs forward (`person`/`appointment_status`/self-FK) y las aditivas a crm (`lead_activity.related_appointment_id`) se crean con `create_foreign_key` (el smoke sqlite no las ejercita; las valida el QA E2E en Postgres).
+> **Migraciones**: revid ≤ 32 chars (`alembic_version varchar(32)`). Sugeridas y verificadas: `0020_scheduling_status` (22) · `0021_scheduling_appointment` (27). Las FKs de `appointment` (`person`/`doctor`/`office`/`branch`/`product`/`user`/`appointment_status` + self-FK) se declaran a nivel de columna en la creación de la tabla. `lead_activity.related_appointment_id` (crm) NO recibe FK aquí — queda como columna sin constraint (ADR-009).
 
 ## Reconciliaciones resueltas (post-generación, 2026-06-06)
 
 Decisiones que cierran las inconsistencias cross-ficha detectadas al generar las 4 fichas (este README es autoritativo):
 - **`code` de AppointmentStatus = MAYÚSCULAS sin pattern slug** (`SCHEDULED`/`CONFIRMED`/…), espejando `crm.LeadStatus`. (Algunas líneas de `backend.md`/`frontend.md` aún muestran el code en minúsculas en prosa ilustrativa; prevalece el casing de esta nota + el seed table.)
 - **`down_revision` de `0020_scheduling_status` = `0019_bots_engine_state`** (última migración aplicada; verificado en `alembic/versions/`).
-- **Permisos = el set canónico de [`_seed-and-roles.md`](../_seed-and-roles.md)** (13): incluye `APPOINTMENTS_DELETE` (soft-delete "error de captura", admin) y `AVAILABILITY_READ`; **no** `APPOINTMENT_CALENDAR_READ` ni `MY_APPOINTMENTS_WRITE` (los inventó el borrador; quedan descartados). `/availability/compute` + `/availability/check-slot` → `AVAILABILITY_READ` (lo tienen ASESOR y DOCTOR). `/appointments/calendar` → `APPOINTMENTS_READ` (las citas) + `AVAILABILITY_READ` (los slots libres). `/me/calendar` → `MY_APPOINTMENTS_READ`.
+- **Permisos = el set canónico de [`_seed-and-roles.md`](../_seed-and-roles.md)** (13): incluye `APPOINTMENTS_DELETE` (soft-delete "error de captura", admin) y `AVAILABILITY_READ`; **no** `APPOINTMENT_CALENDAR_READ` ni `MY_APPOINTMENTS_WRITE` (los inventó el borrador; quedan descartados). `/availability/compute` + `/availability/check-slot` → `AVAILABILITY_READ` (lo tienen ASESOR y DOCTOR).
 - **`attend → promote_to_customer` es atómico**: corre en la misma transacción; si el promote falla por `NO_INITIAL_CUSTOMER_STATUS` (clínica sin estado-cliente inicial configurado) la atención **revierte** y surface el error (la mala config se corrige). El `attend` no es best-effort.
-- **`/appointments/calendar` (+ `/me/calendar`)** devuelve `CalendarResponse {appointments, free_slots, from_date, to_date}`; `free_slots` solo se pobla cuando hay `doctor_id` filtrado (el cómputo es por doctor+producto). El schema **NO** lleva `timezone`: la grilla resuelve la TZ del branch **client-side** por `branch_id` (correcto para multi-sede).
+- **El calendario es FRONTEND-ONLY**: NO hay endpoint `/appointments/calendar` ni `/me/calendar` (la idea original de un `CalendarResponse` dedicado se descartó). La grilla arma su ventana en el cliente combinando `POST /appointments/list` (rango por `scheduled_for`) + `POST /me/appointments/list` + `POST /availability/compute` (slots libres, sólo cuando hay doctor+producto). La grilla resuelve la TZ del branch **client-side** por `branch_id` (correcto para multi-sede).
 - **`NO_AVAILABILITY_BLOCK`** cubre tanto "no hay bloque de disponibilidad" como "el bloque no tiene N slots contiguos para `product.duration_min`" (no hay un code separado tipo `NO_CONTIGUOUS_SLOTS`).
 - **`source` enum** = `bot|advisor|admin|import|api` (en Python `AppointmentSource(StrEnum)` con miembro `IMPORT="import"`; en TS literal union).
 - **Detalle de cita = drawer** (no página con tabs): coherente entre `ui.md` y `frontend.md`.
 
 ## Próximos pasos / TODOs deliberados
 
-- [ ] **Consolidación post-fichas**: regenerar `er-scheduling.puml` + `class-backend-scheduling.puml` al modelo final (5 entidades, matriz, bloques concretos); borrar el overview plano viejo `docs/modules/scheduling.md` y repuntar sus links a este README; actualizar `docs/decisions/README.md` si hace falta.
+- [x] **Consolidación post-fichas**: `er-scheduling.puml` + `class-backend-scheduling.puml` ya reflejan el modelo final (5 entidades, matriz, bloques concretos) y el código en prod. Pendiente: borrar el overview plano viejo `docs/modules/scheduling.md` y repuntar sus links a este README; actualizar `docs/decisions/README.md` si hace falta.
 - [ ] **Cache de disponibilidad** (Redis TTL 30–60 s por `(doctor, from, to)`) cuando la carga del cómputo on-the-fly lo justifique. Diferido del MVP.
 - [ ] **Exclusion-constraint GIST/`tsrange`** sobre `(doctor_id, tsrange(scheduled_for, scheduled_for+duration_min))` como backstop de BD al `SLOT_TAKEN` aplicado por `SELECT FOR UPDATE`. Diferido.
 - [ ] **4ta tool de reschedule** para el bot (hoy reschedule por bot = cancel + book). Postergado al MVP del bot.

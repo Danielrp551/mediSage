@@ -64,7 +64,7 @@ Identidad + contacto. **Sin `phone`/`email` como columna** — viven en `PersonC
 - `first_name: varchar(80)` NOT NULL · `last_name: varchar(80)` NOT NULL · `second_last_name: varchar(80)` nullable.
 - `document_type: varchar(20)` nullable (DNI/RUC/CE) · `document_number: varchar(40)` nullable, **indexado**.
 - `birth_date: date` nullable · `gender: varchar(20)` nullable (texto libre, **sin enum**) · `address: varchar(255)` nullable · `notes: text` nullable.
-- Relaciones (`lazy="raise"`, se cargan vía `get_full`): `identifiers` 1:N, `lead_status` 1:0..1, `customer_status` 1:0..1, `assignment` 1:0..1.
+- Única relación ORM (`lazy="raise"`, se carga vía `get_full`): `identifiers` 1:N. El lead actual, el cliente actual y el owner viven en tablas hijas con `UNIQUE person_id` (relaciones 1:0..1 a nivel de FK), pero **NO** se declaran como `relationship()` en `Person` ni en las hijas: se resuelven por `person_id` + **batch maps** en el service (sin N+1), no por carga ORM.
 
 ### `PersonContactIdentifier`
 
@@ -156,6 +156,7 @@ Timeline unificado de cualquier evento sobre el lead. Polimórfico vía `activit
 | `CONVERSATION_RELEASED` | conversations | ⏳ |
 | `APPOINTMENT_BOOKED` | scheduling | ⏳ |
 | `APPOINTMENT_CANCELLED` | scheduling | ⏳ |
+| `APPOINTMENT_ATTENDED` | scheduling | ⏳ |
 
 ## Endpoints (resumen)
 
@@ -335,7 +336,7 @@ Recorrido de un lead desde un mensaje entrante hasta su conversión. Las partes 
 - ER: [`docs/diagrams/er-crm.puml`](../../diagrams/er-crm.puml)
 - Class diagram (modelos + repos + services): [`docs/diagrams/class-backend-crm.puml`](../../diagrams/class-backend-crm.puml)
 
-> Ambos diagramas reflejan el **modelo viejo** (10 entidades, FKs directas a `campaign`/`appointment`/`conversation`, `PATCH`/`/options`). Se **regeneran al modelo de esta spec** en la consolidación post-fichas (lo hace el implementador): agregar `LeadStatusTransition`/`CustomerStatusTransition`, marcar las tres columnas forward como "sin FK aún", reflejar `PUT`/`/active`.
+> Ambos diagramas ya reflejan el **modelo final** (12 entidades): incluyen `LeadStatusTransition`/`CustomerStatusTransition`, marcan las tres columnas forward como "sin FK aún" (`source_campaign_id`, `related_appointment_id`, `related_conversation_id`) y usan los verbos/rutas vigentes (`PUT`/`/active`). Regenerados en la consolidación post-fichas (ver [Próximos pasos](#próximos-pasos--todos-deliberados)).
 
 ## Implementación por fases
 
@@ -343,7 +344,7 @@ Recorrido de un lead desde un mensaje entrante hasta su conversión. Las partes 
 
 | Fase | Alcance | Migración (revid ≤32) |
 |---|---|---|
-| **F0 — Prep** | 16 permisos CRM → `SEED_PERMISSIONS` (ya canónicos en [`_seed-and-roles.md`](../_seed-and-roles.md)); **introducir user `SYSTEM` (`active=false`) + role `SYSTEM` (perms vacíos)** (diferido desde staff); nav grupo CRM + iconos; `endpoints.ts`; `types/crm.types.ts`; skeleton del paquete backend `crm`. | ninguna (solo seed) |
+| **F0 — Prep** | 15 permisos CRM → `SEED_PERMISSIONS` (ya canónicos en [`_seed-and-roles.md`](../_seed-and-roles.md)); **introducir user `SYSTEM` (`active=false`) + role `SYSTEM` (perms vacíos)** (diferido desde staff); nav grupo CRM + iconos; `endpoints.ts`; `types/crm.types.ts`; skeleton del paquete backend `crm`. | ninguna (solo seed) |
 | **F1 — Person + Identifiers** | `Person` CRUD + `PersonContactIdentifier` (dedup UNIQUE parcial, `is_primary`, `verified`) + `/persons/search` + `/active`; lista `/crm/personas` + drawer + detalle (tabs Datos/Identificadores/Auditoría; Lead/Cliente/Actividad placeholders). | `0011_crm_person` |
 | **F2 — Catálogos + matriz** | `LeadStatus`/`CustomerStatus` CRUD + seed (7+5) + `LeadStatusTransition`/`CustomerStatusTransition` + seed matriz base + UI `/crm/estados-lead`/`/crm/estados-cliente` con editor de transiciones. | `0012_crm_status_catalogs` |
 | **F3 — Lead lifecycle** | `PersonLeadStatus` + `LeadStatusHistory` + transition (valida matriz) + `LeadAssignment` (manual + round-robin auto) + `MY_LEADS` + `LeadActivity` (tabla + `STATUS_CHANGE`/`REASSIGNED`) + tab Lead + `AssignmentControl` + `/crm/mis-leads`. | `0013_crm_lead_lifecycle` |

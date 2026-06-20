@@ -5,7 +5,7 @@
 '            Postgres SE ELIMINAN: el mensaje pasa a ser doc Firestore. +app/core/firestore.py (Admin SDK),
 '            +MessageOutbox model+repo, +relay del outbox, +router realtime (POST /realtime/token).
 '            secret_resolver en app.core, webhook processors por canal y enganche aditivo con crm.
-' Última actualización: 2026-06-03 (REDISEÑO CQRS — brief conversations_firestore_redesign.md §4/§10. ADR-011.)
+' Última actualización: 2026-06-20 (REDISEÑO CQRS — brief conversations_firestore_redesign.md §4/§10. ADR-011. MessageOutbox NO hereda PrimaryKeyMixin (id=mid varchar(255) provisto por el caller). El relay corre SÍNCRONO en el request (BackgroundTasks DESCARTADO). El inbound de whatsapp encola turnos de bot vía Cloud Tasks (ADR-012); telegram aún NO existe en disco. get_credentials vacío → CHANNEL_CREDENTIALS_MISSING 400 (BadRequestException).)
 ' Código de referencia: backend/app/modules/conversations/, backend/app/core/firestore.py, backend/app/core/secrets.py, app/routers/webhooks.py
 
 !theme plain
@@ -156,7 +156,7 @@ package "app.modules.conversations.models" <<Frame>> {
   }
 
   class MessageOutbox <<entity>> {
-    +id: str  ' = mid del mensaje (wamid inbound / uuid outbound) <<unique>>
+    +id: str  ' = mid (wamid inbound / uuid outbound), varchar(255), provisto por el caller <<PK, unique>>
     +conversation_id: str <<FK>>
     +op: str  ' OutboxOp: message_create / message_status / conversation_upsert
     +payload: JSONB  ' el doc a escribir en Firestore (shape contrato API, snake_case)
@@ -167,7 +167,8 @@ package "app.modules.conversations.models" <<Frame>> {
     --
     ' INDEX (status, created_on) → el relay barre los pending.
     ' INSERT ... ON CONFLICT (id) DO NOTHING → dedup real (idempotencia).
-    ' PK·A·T — SIN SoftDeleteMixin (cola operativa, no audit de negocio).
+    ' A·T — SIN PrimaryKeyMixin (id = mid provisto, varchar(255)) ni SoftDeleteMixin
+    '   (cola operativa, no audit de negocio).
   }
 
   class ConversationAssignmentLog <<entity, immutable>> {
@@ -306,7 +307,7 @@ package "app.modules.conversations.services" <<Frame>> {
     +get_by_id / list_paginated / list_active
     +create / update / soft_delete(...)  ' dedup CHANNEL_ACCOUNT_EXTERNAL_TAKEN
     +get_credentials(channel_account): dict  ' secret_name → core.secrets.resolve
-    '   o fallback env (Settings); vacío → CHANNEL_CREDENTIALS_MISSING (500)
+    '   o fallback env (Settings); vacío → CHANNEL_CREDENTIALS_MISSING (400, BadRequestException)
   }
   class "conversation.py" as conv_svc <<module>> {
     +find_or_create_open(db, person_id, channel_account)  ' AUTO-ASIGNA
@@ -340,11 +341,14 @@ package "app.modules.conversations.services" <<Frame>> {
 package "app.modules.conversations.services.webhook_processor" <<Frame>> {
   class "whatsapp.py" as wpw <<module>> {
     +verify_signature(headers, raw_body, app_secret): bool  ' HMAC SHA256
-    +process_inbound(payload, channel_account, db): None  ' síncrono (TX + outbox)
+    +process_inbound(payload, channel_account, db): dict  ' síncrono (TX + outbox);
+    '   devuelve bot_dispatches {conv_id: mid} de las conversaciones assignee=bot → el
+    '   router las encola con cloud_tasks.enqueue_turn (auto-path del bot, ADR-012)
     +process_status(payload, channel_account, db): None  ' apply_status (Firestore directo)
   }
   class "telegram.py" as wpt <<module, future>> {
-    ' DIFERIDO — modelo/enum ya lo soportan, falta el processor
+    ' DIFERIDO — NO existe en disco aún (solo whatsapp.py shipped). El modelo/enum
+    '   ya lo soportan; agregar el canal = este processor nuevo + su URL de webhook.
     +verify_secret_token(headers, expected_token): bool
     +process_inbound(payload, channel_account, db): None
   }
@@ -367,11 +371,12 @@ package "app.modules.conversations.routers" <<Frame>> {
 package "app.routers" <<Frame, External>> #lightyellow {
   class "webhooks.py" as wh_router <<module>> {
     +GET  /api/v1/webhooks/whatsapp/{channel_account_id}  ' verify challenge
-    +POST /api/v1/webhooks/whatsapp/{channel_account_id}  ' inbound + status
-    +POST /api/v1/webhooks/telegram/{channel_account_id}  ' DIFERIDO
+    +POST /api/v1/webhooks/whatsapp/{channel_account_id}  ' inbound + status + dispatch bot
     --
     ' Sin JWT. Carga ChannelAccount → get_credentials → valida firma
-    ' (mismatch → 403 WEBHOOK_SIGNATURE_INVALID) → delega al processor.
+    ' (mismatch → 403 WEBHOOK_SIGNATURE_INVALID) → delega al processor (solo whatsapp).
+    ' Tras el relay síncrono, encola UN turno por conversación assignee=bot (Cloud Tasks).
+    ' NB: la ruta /webhooks/telegram aún NO existe (telegram diferido; no hay processor).
   }
 }
 
@@ -424,7 +429,9 @@ ActiveMixin     <|-- Conversation
 SoftDeleteMixin <|-- Conversation
 TimestampMixin  <|-- Conversation
 
-PrimaryKeyMixin <|-- MessageOutbox
+' MessageOutbox NO hereda PrimaryKeyMixin: su id es el mid (varchar(255)) provisto por el caller.
+ActiveMixin     <|-- MessageOutbox
+TimestampMixin  <|-- MessageOutbox
 PrimaryKeyMixin <|-- ConversationAssignmentLog
 
 note bottom of TimestampMixin
@@ -433,12 +440,12 @@ note bottom of TimestampMixin
     ""ChannelAccount"", ""Conversation""
     (datos de negocio vivos).
   • PK·A·T (SIN ""SoftDeleteMixin""):
-    ""MessageOutbox"" (cola operativa) y
     ""ConversationAssignmentLog"" (audit handoff).
+  • A·T (SIN ""PrimaryKeyMixin"" ni ""SoftDeleteMixin""):
+    ""MessageOutbox"" (cola operativa; su ""id"" es el
+    ""mid"" provisto por el caller, varchar(255)).
   • ""Message"" / ""MessageAttachment"" YA NO son
     modelos Postgres → docs Firestore (sin mixins).
-  (Sólo se dibujan las herencias completas;
-  el outbox/log muestran solo ""PrimaryKeyMixin"".)
 end note
 
 ' ─────────────────────────────────────────────────────────────
@@ -552,10 +559,12 @@ note bottom of MessageOutbox
   pérdida (vive en el outbox tras el COMMIT). ""id = mid""
   UNIQUE → ""ON CONFLICT (id) DO NOTHING"" deduplica; el
   ""unread_count++"" solo corre si el INSERT fue nuevo.
-  El relay (""msg_svc.relay_outbox"": BackgroundTasks MVP /
-  Cloud Tasks prod) materializa cada op como doc Firestore
-  (""set(doc_id=mid)"", create-if-absent). Reemplaza el
-  UNIQUE parcial de la vieja tabla ""message"". ADR-011.
+  El relay (""msg_svc.relay_outbox(db)"", SÍNCRONO en el
+  request / misma sesión / antes del 200) materializa cada
+  op como doc Firestore (""set(doc_id=mid)"", create-if-absent).
+  ""BackgroundTasks"" DESCARTADO (no proyectaba en Cloud Run);
+  sweep/Cloud Task de filas ""failed"" = ""relay_outbox_in_new_session"".
+  Reemplaza el UNIQUE parcial de la vieja tabla ""message"". ADR-011.
 end note
 
 note bottom of fs_mod
@@ -611,8 +620,11 @@ note bottom of wh_router
   **Sin JWT — validación por firma del provider**
   WhatsApp: HMAC SHA256 del body RAW con ""app_secret""
   resuelto de Secret Manager (mismatch → 403).
-  Procesamiento **síncrono** antes del 200 (MVP sin bot);
-  el relay del outbox corre aparte (BackgroundTasks).
+  Procesamiento (TX) **y relay del outbox** AMBOS
+  SÍNCRONOS en el request, misma sesión, antes del 200
+  (""BackgroundTasks"" DESCARTADO — no proyectaba en Cloud
+  Run). Tras el relay, las conversaciones assignee=bot se
+  encolan vía Cloud Tasks (auto-path del bot, ADR-012).
   Vive top-level (""app/routers/""), no en ""modules/"".
 end note
 

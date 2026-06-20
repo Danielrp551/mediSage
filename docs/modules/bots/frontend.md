@@ -7,13 +7,13 @@
 
 > **Pre-requisito**: leer [`README.md`](./README.md), [`backend.md`](./backend.md), [`ui.md`](./ui.md), [`../../../frontend/CLAUDE.md`](../../../frontend/CLAUDE.md), y como **molde directo** el frontend de [`../conversations/frontend.md`](../conversations/frontend.md) (módulo #5 completo en prod, del que `bots` copia patrones — el **panel de depuración** de bots es análogo al **hilo/timeline** de conversations + crm; el **editor M:N de tools** copia el `StatusMatrixEditor`/`SearchableOptionList` de [`../crm/frontend.md`](../crm/frontend.md)). [`../staff/frontend.md`](../staff/frontend.md) es el molde de CRUD/detalle con sub-recursos (la lección `cd10c78`).
 
-> **Posición del módulo** (spec §1): `bots` es el **#6** (catalog→clinic→staff→crm **COMPLETOS en prod**; conversations #5 **human-inbox MVP completo**; sigue bots #6; luego scheduling #7, marketing #8). Es **el cerebro** que atiende automáticamente las conversaciones cuando `Conversation.assignee_type='bot'`. Depende de `conversations` (pipe + Firestore + outbound), `crm` (resolver/transicionar lead, notas), `catalog` (productos), `admin` (audit+RBAC). El frontend de `bots` **NO toca el turno del bot** (eso corre server-side, disparado por Cloud Tasks → `POST /engine/dispatch` con OIDC, sin RBAC) — consume los **endpoints autenticados** `/api/v1/bots/*` para **configurar** bots/tools y **depurar** (read-only) el estado/eventos/tool-calls por conversación.
+> **Posición del módulo** (spec §1): `bots` es el **#6** (catalog→clinic→staff→crm **COMPLETOS en prod**; conversations #5 **human-inbox MVP completo**; sigue bots #6; luego scheduling #7, marketing #8). Es **el cerebro** que atiende automáticamente las conversaciones cuando `Conversation.assignee_type='bot'`. Depende de `conversations` (pipe + Firestore + outbound), `crm` (resolver/transicionar lead, notas), `catalog` (productos), `admin` (audit+RBAC). El frontend de `bots` **NO toca el turno del bot** (eso corre server-side, disparado por Cloud Tasks → `POST /engine/dispatch` con shared-secret `X-Bot-Dispatch-Secret`, sin RBAC) — consume los **endpoints autenticados** `/api/v1/bots/*` para **configurar** bots/tools y **depurar** (read-only) el estado/eventos/tool-calls por conversación.
 
 > **Decisiones de diseño confirmadas** (spec §0, NO re-litigar — distinguen el diseño viejo 2026-05-28 de la realidad actual):
-> 1. **Async del turno = Cloud Tasks** (NO BackgroundTasks, NO síncrono): el webhook de conversations encola una Cloud Task; un endpoint interno `POST /api/v1/bots/engine/dispatch` (OIDC, sin RBAC) corre el turno. **El frontend NO ve este flujo** — solo el `POST /engine/dispatch-manual` (gated `BOT_ENGINE_INVOKE`, para debugging del admin).
+> 1. **Async del turno = Cloud Tasks** (NO BackgroundTasks, NO síncrono): el webhook de conversations encola una Cloud Task; un endpoint interno `POST /api/v1/bots/engine/dispatch` (shared-secret `X-Bot-Dispatch-Secret`, sin RBAC) corre el turno. **El frontend NO ve este flujo** — solo el `POST /engine/dispatch-manual` (gated `BOT_ENGINE_INVOKE`, para debugging del admin).
 > 2. **Motor = Embedded multi-proveedor** (OpenAI default `gpt-4.1-mini` + Claude + extensible; adaptadores por provider). **`ExternalBotEngine` DISEÑADO pero DIFERIDO**: las entidades llevan `provider/external_webhook_url/external_webhook_secret_name` (tipos TS presentes), pero el código del engine externo y los endpoints `/engine/external/*` **NO** existen en el MVP. El front muestra `external_webhook` en el select de provider pero lo marca "(no disponible aún)" y deja los campos webhook visibles solo si se elige ese provider.
 > 3. **Mensajes en Firestore (CQRS, ADR-011), NO Postgres**: NO hay tabla `message`. `BotEvent.input_message_id`/`output_message_id` son **`string | null` (el `mid` = doc-id Firestore)**, NO FK→message. El front los muestra como referencias opacas (el mensaje vive en el hilo de conversations, no en bots).
-> 4. **Tools MVP = crm + catalog SOLO** (scheduling #7 no existe). `book_appointment`/`check_availability` están DISEÑADAS en la doc pero **NO se seedean** — el front NO asume que existen en el catálogo de tools.
+> 4. **Tools = catalog + crm + scheduling + marketing + clock** (el `TOOL_REGISTRY` se puebla de 5 módulos al boot). **`BOT_TOOL_SEED` seedea solo las 4 de scheduling+marketing** (`check_availability`/`book_appointment`/`cancel_appointment`/`list_eligible_promotions` — cierran el loop lead→bot→cita→cliente); las de catalog/crm/clock quedan registradas (`is_registered=true`) pero no como filas del catálogo `bot_tool`. El front NO asume un catálogo fijo — lista lo que devuelve `/tools/list`.
 > 5. **Credenciales de proveedor globales por entorno** (`Settings.OPENAI_API_KEY`/`ANTHROPIC_API_KEY`): **NO** hay campo de API key en ningún form del front (a diferencia del `secret_name` per-canal de conversations — acá la credencial es global, vía `--set-secrets` de Cloud Run, fuera de la UI).
 > 6. **Guards de costo/seguridad**: `MAX_TOOL_ITERATIONS_PER_TURN` (default 5, env del backend — NO en la UI); `BotConfiguration.max_turns_per_conversation` (nullable, **SÍ** editable en el drawer = guard opcional por bot).
 
@@ -79,7 +79,7 @@ frontend/src/
     │       └── BotToolDrawer.tsx           ← create/edit (code/name/description/target_service/
     │                                          parameters_schema [JSON editor]/requires_confirmation)
     └── depuracion/                          ← panel read-only de depuración por conversación
-        ├── page.tsx                        ← RSC: selector/deep-link ?c=<conversationId>
+        ├── page.tsx                        ← RSC: selector/deep-link ?conv=<conversationId>
         └── _components/
             ├── BotDebugShell.tsx           ← orquesta state + events + tool-calls de una conversación
             ├── BotStateCard.tsx            ← ConversationBotState (intent/slots/turn_count/versión)
@@ -90,11 +90,11 @@ frontend/src/
 
 > **Componente JSON editor reusable** (`parameters_schema` del tool, `parameters` de la versión): un textarea controlado con parse/validate en cliente (ver [Editor de JSON](#editor-de-json-parameters_schema--parameters)). NO se introduce una librería de editor de código (Monaco/CodeMirror) en el MVP — un `<textarea>` Fluent monoespaciado + validación `JSON.parse` alcanza (anotado como mejora futura). Vive como helper local (`_components/JsonField.tsx`) o se inlinea en cada drawer/editor; documentar dónde si se promueve a `components/ui/`.
 
-> **Por qué `depuracion` ES una ruta propia** (a diferencia del hilo de conversations, que vive en `?c=` dentro del inbox): el panel de depuración del bot es una **vista de soporte/diagnóstico** independiente, no parte de un inbox 2-paneles. Toma la conversación por **deep-link `?c=<conversationId>`** (se entra desde el inbox de conversations vía un link "Ver actividad del bot", o desde la config del bot). Es read-only (no muta nada salvo `reset state`, gated `BOT_STATE_WRITE`). La conversación seleccionada vive en el URL state (`?c=`), igual que el `?tab=` del detalle de Person en crm — pero la **ruta** `bots/depuracion` sí existe en `NAV_ITEMS` (gated `MENU-BOTS` + `BOT_STATE_READ`).
+> **Por qué `depuracion` ES una ruta propia** (a diferencia del hilo de conversations, que vive en `?conv=` dentro del inbox): el panel de depuración del bot es una **vista de soporte/diagnóstico** independiente, no parte de un inbox 2-paneles. Toma la conversación por **deep-link `?conv=<conversationId>`** (se entra desde el inbox de conversations vía un link "Ver actividad del bot", o desde la config del bot). Es read-only (no muta nada salvo `reset state`, gated `BOT_STATE_WRITE`). La conversación seleccionada vive en el URL state (`?conv=`), igual que el `?tab=` del detalle de Person en crm — pero la **ruta** `bots/depuracion` sí existe en `NAV_ITEMS` (gated `MENU-BOTS` + `BOT_STATE_READ`).
 
 > **Por qué NO hay `bots/layout.tsx`**: igual que catalog/clinic/staff/crm/conversations — `configuraciones`, `tools`, `depuracion` son hermanas sin header compartido. El `(main)/layout.tsx` del template ya envuelve con `MainShell` (Sidebar + TopBar). El detalle de una configuración (versiones + tools) NO es una sub-ruta — vive en el **drawer/tabs** de la configuración seleccionada (mismo criterio que Office/Doctor con sub-recursos en staff).
 
-> **Sobre `loading.tsx`**: catalog/clinic/staff/crm/conversations shipped **no** incluyeron `loading.tsx` (el `DataTable` ya renderiza su skeleton vía `isLoading`). `bots` sigue ese criterio en `configuraciones` y `tools`. Para `depuracion`, el primer paint viene del prefetch RSC (state + events de la conversación deep-linkeada, si hay `?c=`) o de un estado vacío "Selecciona una conversación para depurar". No se crean `loading.tsx`.
+> **Sobre `loading.tsx`**: catalog/clinic/staff/crm/conversations shipped **no** incluyeron `loading.tsx` (el `DataTable` ya renderiza su skeleton vía `isLoading`). `bots` sigue ese criterio en `configuraciones` y `tools`. Para `depuracion`, el primer paint viene del prefetch RSC (state + events de la conversación deep-linkeada, si hay `?conv=`) o de un estado vacío "Selecciona una conversación para depurar". No se crean `loading.tsx`.
 
 ## Tipos TS — `types/bots.types.ts`
 
@@ -378,7 +378,7 @@ export interface DispatchManualRequest {
 
 > **`cost_estimated_usd` es `string`, no `number`** (espeja `numeric(10,6)` del backend): para no perder precisión decimal en la serialización JSON. El front lo parsea con `Number(...)` solo para formatear (ej. `$0.000142`), nunca para acumular sumas client-side sin cuidado. Mismo criterio que cualquier `numeric` de Postgres (mantener como string en el contrato).
 
-> **`input_message_id`/`output_message_id` = `string | null` opacos** (spec §0.3): son el `mid` (doc-id Firestore) del inbound/outbound del turno, **NO** FK a una tabla `message` (no existe — los mensajes viven en Firestore, ADR-011). El front NO los resuelve a un mensaje (no hay endpoint en bots para eso); los muestra como referencia ("Mensaje de entrada: `wamid.HBg…`") con un link opcional al hilo de conversations (`/conversaciones/bandeja?c=<conversation_id>`) si el usuario tiene `CONVERSATIONS_READ`. Anotar en deviations si el link cruzado se difiere.
+> **`input_message_id`/`output_message_id` = `string | null` opacos** (spec §0.3): son el `mid` (doc-id Firestore) del inbound/outbound del turno, **NO** FK a una tabla `message` (no existe — los mensajes viven en Firestore, ADR-011). El front NO los resuelve a un mensaje (no hay endpoint en bots para eso); los muestra como referencia ("Mensaje de entrada: `wamid.HBg…`") con un link opcional al hilo de conversations (`/conversaciones/bandeja?conv=<conversation_id>`) si el usuario tiene `CONVERSATIONS_READ`. Anotar en deviations si el link cruzado se difiere.
 
 ## Zod schemas
 
@@ -645,7 +645,7 @@ export const TOOL_CALL_STATUS_META: Record<
 
 ## Endpoints constants — extender `lib/constants/endpoints.ts`
 
-Bloque `BOTS` completo (todas las URLs autenticadas de la spec §6). El `POST /engine/dispatch` (top-level interno, OIDC, **sin RBAC** — target de Cloud Tasks) **NO va acá**: lo invoca Cloud Tasks server-to-server, el frontend nunca lo llama (N/A front). El front SÍ tiene `dispatch-manual` (RBAC `BOT_ENGINE_INVOKE`, debugging del admin). Convención: `POST /<recurso>/list`; `PUT` para updates completos; `/active` lista cruda; acciones `POST`.
+Bloque `BOTS` completo (todas las URLs autenticadas de la spec §6). El `POST /engine/dispatch` (top-level interno, shared-secret, **sin RBAC** — target de Cloud Tasks) **NO va acá**: lo invoca Cloud Tasks server-to-server, el frontend nunca lo llama (N/A front). El front SÍ tiene `dispatch-manual` (RBAC `BOT_ENGINE_INVOKE`, debugging del admin). Convención: `POST /<recurso>/list`; `PUT` para updates completos; `/active` lista cruda; acciones `POST`.
 
 ```ts
 const BOTS = "/api/v1/bots"; // ← NEW
@@ -685,13 +685,13 @@ export const ENDPOINTS = {
     TOOL_CALLS: (cid: string) => `${BOTS}/conversations/${cid}/tool-calls`, // GET → tool-calls del hilo
   },
   BOT_ENGINE: {
-    // /engine/dispatch (OIDC, sin RBAC, target de Cloud Tasks) NO está acá — el front no lo llama.
+    // /engine/dispatch (shared-secret, sin RBAC, target de Cloud Tasks) NO está acá — el front no lo llama.
     DISPATCH_MANUAL: `${BOTS}/engine/dispatch-manual`, // POST (BOT_ENGINE_INVOKE) — debugging admin
   },
 } as const;
 ```
 
-> **`/engine/dispatch` (OIDC) NO se expone al front**: lo invoca Cloud Tasks server-to-server con un token OIDC (sin RBAC — spec §6). El frontend nunca lo llama (igual que los webhooks de conversations son top-level sin JWT y no están en `endpoints.ts`). El único path del engine que el front usa es `dispatch-manual` (gated `BOT_ENGINE_INVOKE`), para que un admin dispare/re-dispare un turno manualmente al depurar. `/engine/external/*` está **DIFERIDO** (spec §0.2) — no se declara.
+> **`/engine/dispatch` (shared-secret) NO se expone al front**: lo invoca Cloud Tasks server-to-server con el header `X-Bot-Dispatch-Secret` (sin RBAC — spec §6). El frontend nunca lo llama (igual que los webhooks de conversations son top-level sin JWT y no están en `endpoints.ts`). El único path del engine que el front usa es `dispatch-manual` (gated `BOT_ENGINE_INVOKE`), para que un admin dispare/re-dispare un turno manualmente al depurar. `/engine/external/*` está **DIFERIDO** (spec §0.2) — no se declara.
 
 > **`/active` devuelve lista CRUDA** (`response_model=list[...]`, sin envelope) — no se lee `.data`. El resto (`/list`, `GET /{id}`, `POST`, `PUT`, acciones) usa los envelopes del template (`PaginatedResponse` / `SingleResponse`) y se lee con `.data`. El `GET /state` puede devolver `SingleResponse[null]` (la conversación existe pero el bot nunca corrió un turno → sin estado) — el front muestra el estado vacío, no error (mismo criterio que `getLeadStatus` → `T | null` en crm). Confirmar el shape exacto con [`backend.md`](./backend.md#endpoints).
 
@@ -750,7 +750,7 @@ export const NAV_ITEMS: NavItem[] = [
 
 > **Íconos** (verificar que existan en `@fluentui/react-icons` v9; fallback si no): grupo Bots `BotRegular`, Configuraciones `BotRegular`, Herramientas `WrenchRegular`, Depuración `BugRegular`. Registrarlos en el `iconMap` del `Sidebar.tsx` (mismo paso que catalog/clinic/staff/crm/conversations). Alternativas verificadas: `BotRegular` → `ChatRegular` (ya usado en conversations); `WrenchRegular` → `SettingsRegular`/`ToolboxRegular`; `BugRegular` → `BeakerRegular`/`WrenchScrewdriverRegular`. **Verificar `BotRegular`** (mencionado en spec §9 como candidato) — conversations ya lo registró para el `ASSIGNEE_TYPE_META.bot`, así que probablemente ya está en el `iconMap`.
 
-> El sidebar (`components/layout/Sidebar/Sidebar.tsx`) ya filtra items por `permissions` vs `useAuth().permissions`. El detalle de una configuración (versiones/tools) NO está en `NAV_ITEMS` (vive en el drawer/tabs de la config seleccionada); la depuración de una conversación vive en `?c=` dentro de `bots/depuracion` — su gating es el del page contenedor.
+> El sidebar (`components/layout/Sidebar/Sidebar.tsx`) ya filtra items por `permissions` vs `useAuth().permissions`. El detalle de una configuración (versiones/tools) NO está en `NAV_ITEMS` (vive en el drawer/tabs de la config seleccionada); la depuración de una conversación vive en `?conv=` dentro de `bots/depuracion` — su gating es el del page contenedor.
 
 ## Server Actions
 
@@ -1128,7 +1128,7 @@ export async function dispatchBotTurnManual(
 }
 ```
 
-> **`dispatchBotTurnManual` es debugging del admin, NO el flujo normal** (spec §6): el turno productivo lo dispara Cloud Tasks → `POST /engine/dispatch` (OIDC, sin RBAC, server-to-server). El front solo expone `dispatch-manual` (gated `BOT_ENGINE_INVOKE`) para re-correr un turno al diagnosticar. El backend puede encolarlo o correrlo síncrono — el front no asume nada del timing; tras el retorno, recarga el estado/eventos del panel de depuración (el resultado puede tardar si es asíncrono → mostrar un hint "El turno puede tardar unos segundos; usa Actualizar para ver el resultado").
+> **`dispatchBotTurnManual` es debugging del admin, NO el flujo normal** (spec §6): el turno productivo lo dispara Cloud Tasks → `POST /engine/dispatch` (shared-secret, sin RBAC, server-to-server). El front solo expone `dispatch-manual` (gated `BOT_ENGINE_INVOKE`) para re-correr un turno al diagnosticar. El backend puede encolarlo o correrlo síncrono — el front no asume nada del timing; tras el retorno, recarga el estado/eventos del panel de depuración (el resultado puede tardar si es asíncrono → mostrar un hint "El turno puede tardar unos segundos; usa Actualizar para ver el resultado").
 
 ## Pages (RSC)
 
@@ -1182,7 +1182,7 @@ export default async function BotToolsPage() {
 
 ### `app/(main)/bots/depuracion/page.tsx`
 
-Panel de depuración por conversación. Toma la conversación por **deep-link `?c=<conversationId>`** (se entra desde el inbox de conversations o la config del bot). Si hay `?c=`, prefetcha state + events + tool-calls; si no, muestra un estado vacío "Selecciona una conversación para depurar" + un campo para pegar/buscar un `conversation_id`.
+Panel de depuración por conversación. Toma la conversación por **deep-link `?conv=<conversationId>`** (se entra desde el inbox de conversations o la config del bot). Si hay `?conv=`, prefetcha state + events + tool-calls; si no, muestra un estado vacío "Selecciona una conversación para depurar" + un campo para pegar/buscar un `conversation_id`.
 
 ```tsx
 import { getBotState, listBotEvents, listBotToolCalls } from "@/actions/bot-debug.actions";
@@ -1193,28 +1193,28 @@ import { BotDebugShell } from "./_components/BotDebugShell";
 export const metadata = { title: "Depuración de bots" };
 
 interface PageProps {
-  searchParams: Promise<{ c?: string }>; // conversación a depurar (deep-link)
+  searchParams: Promise<{ conv?: string }>; // conversación a depurar (deep-link)
 }
 
 export default async function BotDebugPage({ searchParams }: PageProps) {
   await requirePermission("BOT_STATE_READ");
-  const { c } = await searchParams;
+  const { conv } = await searchParams;
 
-  if (!c) {
+  if (!conv) {
     // Sin conversación seleccionada: el shell muestra el estado vacío + input de conversation_id.
     return <BotDebugShell initialConversationId={null} initialState={null} initialEvents={[]} initialToolCalls={[]} />;
   }
 
   // Prefetch en paralelo (sin waterfall). state puede venir null (bot nunca corrió un turno).
   const [stateRes, eventsRes, toolCallsRes] = await Promise.all([
-    getBotState(c),
-    listBotEvents(c),
-    listBotToolCalls(c),
+    getBotState(conv),
+    listBotEvents(conv),
+    listBotToolCalls(conv),
   ]);
 
   return (
     <BotDebugShell
-      initialConversationId={c}
+      initialConversationId={conv}
       initialState={stateRes.data}
       initialEvents={eventsRes.data}
       initialToolCalls={toolCallsRes.data}
@@ -1223,7 +1223,7 @@ export default async function BotDebugPage({ searchParams }: PageProps) {
 }
 ```
 
-> **`?c=` hace al panel deep-linkable**: abrir `/bots/depuracion?c=abc123` carga el estado/eventos/tool-calls de esa conversación. El `BotDebugShell` lo sincroniza con `nuqs` (`useQueryState("c")`) — cambiar de conversación (o pegar otro id) actualiza la URL sin recargar, y la URL sobrevive refresh/compartir. El link "Ver actividad del bot" del hilo de conversations apunta a `/bots/depuracion?c=<conversation_id>`.
+> **`?conv=` hace al panel deep-linkable**: abrir `/bots/depuracion?conv=abc123` carga el estado/eventos/tool-calls de esa conversación. El `BotDebugShell` lo sincroniza con `nuqs` (`useQueryState("conv")`) — cambiar de conversación (o pegar otro id) actualiza la URL sin recargar, y la URL sobrevive refresh/compartir. El link "Ver actividad del bot" del hilo de conversations apunta a `/bots/depuracion?conv=<conversation_id>`.
 
 ## Client components — esqueletos
 
@@ -1289,7 +1289,7 @@ Editor de las tools que un bot puede usar (M:N `bot_configuration_tool`). **Mold
 - Renderiza un **multiselect** (`SearchableOptionList`) con todas las tools activas; cada opción muestra `name` + `code` (monoespaciado) + un badge si `requires_confirmation`. Al guardar → `setBotConfigurationTools(configurationId, { tool_ids })` (reemplaza el set completo). Gated `BOT_CONFIGURATIONS_UPDATE` (o el permiso que el backend exija para el M:N — confirmar).
 - Estado vacío del catálogo: "No hay herramientas en el catálogo. Crea herramientas en la sección Herramientas." (link a `/bots/tools`).
 
-> **El M:N reemplaza el set completo** (bulk PUT `{tool_ids:[]}`, spec §6): igual que la matriz de transiciones de crm — no es add/remove incremental, es "estas son las tools del bot ahora". El front manda el array completo de `tool_id` seleccionados. Las tools `DIFERIDAS` (`book_appointment`/`check_availability`/`cancel_appointment` → scheduling) **NO** aparecen en el catálogo (no se seedean — spec §0.4), así que no son seleccionables hasta que scheduling #7 las registre.
+> **El M:N reemplaza el set completo** (bulk PUT `{tool_ids:[]}`, spec §6): igual que la matriz de transiciones de crm — no es add/remove incremental, es "estas son las tools del bot ahora". El front manda el array completo de `tool_id` seleccionados. El catálogo seedeado trae las 4 tools de scheduling + marketing (`check_availability`/`book_appointment`/`cancel_appointment`/`list_eligible_promotions`); las de catalog/crm/clock están registradas pero no seedeadas (un admin puede crearlas a mano para que aparezcan en el multiselect).
 
 ### `BotToolsClient.tsx`
 
@@ -1323,13 +1323,13 @@ Drawer create/edit del tool. `useForm` con `botToolCreateSchema`/`botToolUpdateS
 
 Props: `{ initialConversationId: string | null; initialState: ConversationBotStateItem | null; initialEvents: BotEventItem[]; initialToolCalls: BotToolCallItem[] }`.
 
-**Layout**: una columna (o 2 columnas en desktop ancho): arriba `BotStateCard` (resumen del estado actual del bot en la conversación), debajo el `BotEventTimeline` (turnos) intercalado con `BotToolCallList` (las tool-calls de cada turno, o una sección aparte). Header con el `conversation_id` (monoespaciado, con botón "Copiar") + un link "Ver conversación" → `/conversaciones/bandeja?c=<cid>` (gated `CONVERSATIONS_READ`) + botón "Actualizar" (refetch) + (si `BOT_ENGINE_INVOKE`) botón "Disparar turno" (`dispatch-manual`).
+**Layout**: una columna (o 2 columnas en desktop ancho): arriba `BotStateCard` (resumen del estado actual del bot en la conversación), debajo el `BotEventTimeline` (turnos) intercalado con `BotToolCallList` (las tool-calls de cada turno, o una sección aparte). Header con el `conversation_id` (monoespaciado, con botón "Copiar") + un link "Ver conversación" → `/conversaciones/bandeja?conv=<cid>` (gated `CONVERSATIONS_READ`) + botón "Actualizar" (refetch) + (si `BOT_ENGINE_INVOKE`) botón "Disparar turno" (`dispatch-manual`).
 
 **Estado central** (molde del `ActivityTimeline` de crm, pero a demanda — sin polling):
 
 ```ts
-// Conversación a depurar, sincronizada con la URL (?c=) vía nuqs. Deep-linkable.
-const [conversationId, setConversationId] = useQueryState("c", {
+// Conversación a depurar, sincronizada con la URL (?conv=) vía nuqs. Deep-linkable.
+const [conversationId, setConversationId] = useQueryState("conv", {
   defaultValue: initialConversationId ?? "",
 });
 const [state, setState] = useState<ConversationBotStateItem | null>(initialState);
@@ -1368,7 +1368,7 @@ useEffect(() => {
 }, [conversationId, initialConversationId, loadDebug]);
 ```
 
-- **Estado vacío** (sin `?c=`): "Selecciona una conversación para depurar" + un `Input` para pegar/buscar un `conversation_id` (o un link "Entra desde el inbox de conversaciones").
+- **Estado vacío** (sin `?conv=`): "Selecciona una conversación para depurar" + un `Input` para pegar/buscar un `conversation_id` (o un link "Entra desde el inbox de conversaciones").
 - **Estado del bot null** (la conversación existe pero el bot nunca corrió un turno): `BotStateCard` muestra "El bot aún no ha actuado en esta conversación." (no error — `getBotState` devuelve `null`, patrón crm `getLeadStatus`).
 - **"Reiniciar estado"** (gated `BOT_STATE_WRITE`; visible si `state != null`): `ConfirmDialog` ("¿Reiniciar el estado del bot? Se borrarán los slots e intención acumulados; el bot empezará de cero en el próximo turno.") → `resetBotState(cid)` → `setState(result.data)` + recargar. Errores `BOT_STATE_NOT_FOUND`/`CONVERSATION_NOT_BOT` en `MessageBar`.
 - **"Disparar turno"** (gated `BOT_ENGINE_INVOKE`): `dispatchBotTurnManual({ conversation_id: cid })` → hint "El turno puede tardar; usa Actualizar para ver el resultado." → tras unos segundos, "Actualizar" recarga el timeline con el nuevo turno. Errores `CONVERSATION_NOT_BOT`/`NO_CURRENT_VERSION` en `MessageBar`.
@@ -1401,7 +1401,7 @@ const dayGroups = useMemo(() => {
 
 > **`BotEventRow` memoizada + agrupación client-only** (regla vercel-react + lección TZ): el timeline puede tener decenas de turnos; `React.memo` evita re-render de los que no cambiaron. La agrupación "Hoy"/"Ayer"/fecha usa `new Date()` (hoy del navegador) → **client-only**, NUNCA en SSR (SSR en UTC desfasa el día en TZ negativas como Lima `-05:00`). La hora de cada turno se formatea en **local** con `lib/utils/date.ts`, nunca `toISOString()`.
 
-> **`input_message_id`/`output_message_id` en la fila** (spec §0.3): son el `mid` (doc-id Firestore), NO un mensaje resoluble en bots. La fila los muestra como referencia truncada ("Entrada: `wamid.HBg…`", "Salida: `8f2a…`") con un tooltip del id completo. Un link al hilo de conversations (`/conversaciones/bandeja?c=<conversation_id>`) lleva al mensaje en su contexto (gated `CONVERSATIONS_READ`) — el bot no embebe el contenido del mensaje (vive en Firestore, dominio de conversations).
+> **`input_message_id`/`output_message_id` en la fila** (spec §0.3): son el `mid` (doc-id Firestore), NO un mensaje resoluble en bots. La fila los muestra como referencia truncada ("Entrada: `wamid.HBg…`", "Salida: `8f2a…`") con un tooltip del id completo. Un link al hilo de conversations (`/conversaciones/bandeja?conv=<conversation_id>`) lleva al mensaje en su contexto (gated `CONVERSATIONS_READ`) — el bot no embebe el contenido del mensaje (vive en Firestore, dominio de conversations).
 
 ### `BotToolCallList.tsx` (tool-calls — read-only, JSON viewer)
 
@@ -1431,7 +1431,7 @@ Lista de las `BotToolCall` de la conversación (o de un turno). Read-only. Cada 
 |---|---|
 | **Evitar waterfalls de datos** | El RSC de `depuracion` hace `Promise.all([getBotState, listBotEvents, listBotToolCalls])` (paralelo). El `BotVersionsPanel`/`BotToolsAssignment` cargan su sub-recurso al abrirse (no se prefetchan todos en la tabla). |
 | **Memoizar lo que se re-renderiza** | `BotEventRow` (timeline) y las filas de tool-calls son `React.memo`. El estado indexado/ordenado conserva referencias → solo lo que cambió se re-renderiza. `onSelect`/callbacks son `useCallback` estables. |
-| **Defer reads (cargar a demanda)** | El panel de depuración NO se prefetcha para todas las conversaciones — solo la deep-linkeada (`?c=`). Las versiones/tools de un bot se cargan al abrir su panel, no en la tabla. |
+| **Defer reads (cargar a demanda)** | El panel de depuración NO se prefetcha para todas las conversaciones — solo la deep-linkeada (`?conv=`). Las versiones/tools de un bot se cargan al abrir su panel, no en la tabla. |
 | **Sin polling ni tiempo real** | bots NO pollea ni abre listeners (a diferencia de conversations). La depuración carga a demanda + "Actualizar" manual. Esto ahorra requests y complejidad — el turno corre server-side por Cloud Tasks; el admin recarga para ver el resultado. |
 | **`useTableQuery` con `defaultPageSize` = `limit` del prefetch** | El RSC prefetcha `limit: 50` (configuraciones/tools) → el `useTableQuery` usa `defaultPageSize: 50` (lección desync footer de crm: si difieren, el footer desincroniza + flash). |
 | **No definir componentes inline** | `BotEventRow`/`BotToolCallList`/etc. se definen a nivel de módulo (no dentro del render del padre) — sino se re-crean en cada render y rompen la memoización. |
@@ -1450,8 +1450,8 @@ Lista de las `BotToolCall` de la conversación (o de un turno). Read-only. Cada 
 
 | Decisión | Por qué |
 |---|---|
-| 3 rutas hermanas (`configuraciones`/`tools`/`depuracion`), sin `layout.tsx` | Mismo criterio que catalog/clinic/staff/crm/conversations; el `(main)/layout.tsx` ya envuelve con `MainShell`. Versiones/tools viven en el drawer/tabs de la config; la depuración en `?c=`. |
-| Conversación a depurar en `?c=` (URL state, nuqs) — NO sub-ruta | Deep-linkable (`/bots/depuracion?c=abc`); el link "Ver actividad del bot" del hilo de conversations apunta acá; sobrevive refresh. Mismo criterio que `?tab=`/`?c=` de crm/conversations. |
+| 3 rutas hermanas (`configuraciones`/`tools`/`depuracion`), sin `layout.tsx` | Mismo criterio que catalog/clinic/staff/crm/conversations; el `(main)/layout.tsx` ya envuelve con `MainShell`. Versiones/tools viven en el drawer/tabs de la config; la depuración en `?conv=`. |
+| Conversación a depurar en `?conv=` (URL state, nuqs) — NO sub-ruta | Deep-linkable (`/bots/depuracion?conv=abc`); el link "Ver actividad del bot" del hilo de conversations apunta acá; sobrevive refresh. Mismo criterio que `?tab=` de crm / `?conv=` de conversations. |
 | **Sin tiempo real ni polling en bots** | A diferencia de conversations (Firestore listener + polling de la lista), bots es CRUD de config + lectura de depuración a demanda. El turno corre server-side (Cloud Tasks); el admin recarga ("Actualizar") para ver el resultado. El stream del hilo (burbujas del bot) vive en conversations (Firestore), no en bots. |
 | Versiones inmutables: "editar prompt" = nueva versión + activar | Spec §2: el system_prompt/params no se editan in-place. Da un historial/changelog (cada versión = snapshot con `notes`). El panel tiene "Nueva versión" (puede partir de una existente) + "Activar", NO "Editar versión". |
 | `current_version_id == null` → bot NO usable (badge ámbar) | Spec §7 (`NO_CURRENT_VERSION` 400 en dispatch/activate). La tabla marca "Sin versión vigente"; el flujo guía a crear config → versión → activar. |
@@ -1461,14 +1461,14 @@ Lista de las `BotToolCall` de la conversación (o de un turno). Read-only. Cada 
 | `parameters`/`parameters_schema` = textarea JSON + parse/validate, no editor de código | Un `<textarea>` monoespaciado + `JSON.parse` (Zod `jsonObjectString` `transform`a a objeto) alcanza para el MVP. Monaco/CodeMirror = mejora futura (peso de bundle). |
 | El front NO valida que `parameters_schema` sea JSON Schema válido | Solo JSON parseable a objeto; el dialecto JSON Schema (ajv) es mejora futura. El adapter/LLM rechaza un schema malformado en runtime. |
 | `target_service` NO se valida contra el registry en el front | El front valida el formato `modulo.servicio.funcion`; la existencia en `TOOL_REGISTRY` es runtime (`TOOL_NOT_REGISTERED` 404). |
-| M:N de tools = bulk PUT que reemplaza el set | Molde `StatusMatrixEditor` de crm; no add/remove incremental. Las tools DIFERIDAS (scheduling) no aparecen en el catálogo hasta #7. |
+| M:N de tools = bulk PUT que reemplaza el set | Molde `StatusMatrixEditor` de crm; no add/remove incremental. El catálogo seedeado trae las 4 tools de scheduling + marketing; las de catalog/crm/clock se crean a mano si se quieren asignar. |
 | `input_message_id`/`output_message_id` = `string \| null` opacos | Spec §0.3: el `mid` (doc-id Firestore), NO FK→message (no existe). Referencia al hilo de conversations; link cruzado opcional. |
 | `cost_estimated_usd` = `string` (numeric) | `numeric(10,6)` → string para no perder precisión; el front lo formatea con `Number()` solo para mostrar. |
 | `getBotState` → `T \| null` (estado vacío, no error) | El backend responde `SingleResponse[null]` cuando la conversación existe pero el bot nunca corrió un turno — `BotStateCard` muestra "El bot aún no ha actuado". Patrón `getLeadStatus` de crm. |
 | **`defaultSort`/`isSortable`/`searchFields` SOLO columnas reales de `ALLOWED_FIELDS`** | **Lección hotfix `cd10c78` de staff**: ordenar/filtrar server-side por un derivado (`current_version_number`, `bot_type` label) no whitelistado devuelve 400. `defaultSort` configuraciones/tools = `created_on desc` (columna real); el `defaultSort` del client DEBE coincidir con el prefetch RSC. Búsqueda por name/code = client-side. |
 | Permisos `_{READ,WRITE}` (no 4 CRUD) salvo configuraciones | Spec §5: tools/versions/state usan `_{READ,WRITE}`; solo `BOT_CONFIGURATIONS_*` tiene los 4 (`_CREATE/_UPDATE/_DELETE`). El front gatea acorde. |
 | ASESOR = read-only (config + depuración; sin tools) | Spec §5: ADMIN todo; ASESOR `BOT_CONFIGURATIONS_READ` + `BOT_STATE_READ` + `BOT_EVENTS_READ` + `BOT_TOOL_CALLS_READ` (ve Configuraciones + Depuración, NO Herramientas); DOCTOR ninguno. |
-| `/engine/dispatch` (OIDC) NO en el front; solo `dispatch-manual` | Spec §6: el dispatch productivo lo invoca Cloud Tasks server-to-server (sin RBAC). El front solo expone `dispatch-manual` (gated `BOT_ENGINE_INVOKE`) para debugging del admin. |
+| `/engine/dispatch` (shared-secret) NO en el front; solo `dispatch-manual` | Spec §6: el dispatch productivo lo invoca Cloud Tasks server-to-server (sin RBAC, header `X-Bot-Dispatch-Secret`). El front solo expone `dispatch-manual` (gated `BOT_ENGINE_INVOKE`) para debugging del admin. |
 | `revalidateTag(TAG, "max")` (2º arg) | Next 16 exige el 2º argumento; omitirlo es error (lección del template). Todos los actions lo pasan. |
 | Tags por-recurso anidado + cross-tag | `bots:versions:{id}`/`bots:config-tools:{id}`/`bots:debug:{cid}` evitan invalidar todos al mutar uno; crear/activar versión cruza con `bots:configurations` (el `current_version_*` denormalizado). |
 | `brandPalette` sin `accent`; tokens semánticos | Lección transversal: colores de estado (error rojo/éxito verde) = tokens Fluent semánticos, no `brandPalette.accent` (no existe). |
@@ -1480,7 +1480,7 @@ Lista de las `BotToolCall` de la conversación (o de un turno). Read-only. Cada 
 
 ### F0 — Prep (andamiaje compartido, sin migración)
 
-- [ ] Extender `src/lib/constants/endpoints.ts` con el bloque `BOTS` (`BOT_CONFIGURATIONS` con list/create/get/update/delete/active + versions/version_get/activate_version + tools M:N; `BOT_TOOLS` con list/create/update/delete/active; `BOT_DEBUG` con state/state_reset/events/tool_calls; `BOT_ENGINE` con dispatch_manual). Verbos: `PUT` para config/tool update + tools M:N bulk; acciones `POST`; `/active` cruda. (`/engine/dispatch` OIDC y `/engine/external/*` NO van al front.)
+- [ ] Extender `src/lib/constants/endpoints.ts` con el bloque `BOTS` (`BOT_CONFIGURATIONS` con list/create/get/update/delete/active + versions/version_get/activate_version + tools M:N; `BOT_TOOLS` con list/create/update/delete/active; `BOT_DEBUG` con state/state_reset/events/tool_calls; `BOT_ENGINE` con dispatch_manual). Verbos: `PUT` para config/tool update + tools M:N bulk; acciones `POST`; `/active` cruda. (`/engine/dispatch` shared-secret y `/engine/external/*` NO van al front.)
 - [ ] Extender `src/lib/constants/navigation.ts` con el grupo `bots` ("Bots" → Configuraciones `BOT_CONFIGURATIONS_READ`, Herramientas `BOT_TOOLS_READ`, Depuración `BOT_STATE_READ`; grupo gated `MENU-BOTS`).
 - [ ] Registrar íconos `BotRegular`/`WrenchRegular`/`BugRegular` en el `iconMap` del `Sidebar.tsx` (con fallbacks verificados; `BotRegular` quizá ya está por conversations).
 - [ ] Crear `src/types/bots.types.ts` (TODAS las interfaces + enums bots-owned; **reusa** `UserAuditInfo` de audit.types; `input_message_id`/`output_message_id` = `string | null`; `cost_estimated_usd` = `string`).
@@ -1510,18 +1510,18 @@ Lista de las `BotToolCall` de la conversación (o de un turno). Read-only. Cada 
 ### F3 — Engine + State + Events + ToolCalls + depuración (completa el bot MVP)
 
 - [ ] Crear `src/actions/bot-debug.actions.ts` (getState `T|null`/listEvents/listToolCalls/resetState/dispatchManual; tag `bots:debug:{conversationId}`).
-- [ ] Crear `src/app/(main)/bots/depuracion/page.tsx` (`metadata.title = "Depuración de bots"`, `requirePermission("BOT_STATE_READ")`, deep-link `?c=` → `Promise.all([getBotState, listBotEvents, listBotToolCalls])`; estado vacío sin `?c=`) + `_components/BotDebugShell.tsx` (orquesta state/events/tool-calls a demanda + "Actualizar" + "Reiniciar estado" [BOT_STATE_WRITE] + "Disparar turno" [BOT_ENGINE_INVOKE]) + `BotStateCard.tsx` (intent/slots/turn_count/versión; JSON viewer de slots) + `BotEventTimeline.tsx` (turnos agrupados por día client-only, memoizado; tokens/latencia/costo/error) + `BotEventRow.tsx` (memoizada) + `BotToolCallList.tsx` (args/result/status, JSON viewers read-only).
-- [ ] **Smoke test (F3)**: con un bot configurado + activado en un canal (enganche conversations: `channel_account.bot_configuration_id` set → la conversación nueva arranca `assignee_type='bot'`), enviar un WhatsApp real al número → el webhook encola la Cloud Task → el bot responde (outbound real vía `send_bot_outbound`) → en `/conversaciones/bandeja?c=<cid>` la burbuja del bot aparece (en vivo por Firestore, dominio de conversations) → en `/bots/depuracion?c=<cid>` el `BotStateCard` muestra turn_count≥1 + intent/slots → el `BotEventTimeline` muestra `turn_started`/`turn_completed` con tokens/latencia/costo → si el turno usó tools, `BotToolCallList` muestra los args/result/status.
+- [ ] Crear `src/app/(main)/bots/depuracion/page.tsx` (`metadata.title = "Depuración de bots"`, `requirePermission("BOT_STATE_READ")`, deep-link `?conv=` → `Promise.all([getBotState, listBotEvents, listBotToolCalls])`; estado vacío sin `?conv=`) + `_components/BotDebugShell.tsx` (orquesta state/events/tool-calls a demanda + "Actualizar" + "Reiniciar estado" [BOT_STATE_WRITE] + "Disparar turno" [BOT_ENGINE_INVOKE]) + `BotStateCard.tsx` (intent/slots/turn_count/versión; JSON viewer de slots) + `BotEventTimeline.tsx` (turnos agrupados por día client-only, memoizado; tokens/latencia/costo/error) + `BotEventRow.tsx` (memoizada) + `BotToolCallList.tsx` (args/result/status, JSON viewers read-only).
+- [ ] **Smoke test (F3)**: con un bot configurado + activado en un canal (enganche conversations: `channel_account.bot_configuration_id` set → la conversación nueva arranca `assignee_type='bot'`), enviar un WhatsApp real al número → el webhook encola la Cloud Task → el bot responde (outbound real vía `send_bot_outbound`) → en `/conversaciones/bandeja?conv=<cid>` la burbuja del bot aparece (en vivo por Firestore, dominio de conversations) → en `/bots/depuracion?conv=<cid>` el `BotStateCard` muestra turn_count≥1 + intent/slots → el `BotEventTimeline` muestra `turn_started`/`turn_completed` con tokens/latencia/costo → si el turno usó tools, `BotToolCallList` muestra los args/result/status.
 - [ ] **Dispatch manual test (F3)**: como ADMIN con `BOT_ENGINE_INVOKE`, "Disparar turno" en una conversación bot → el backend encola/dispara → "Actualizar" tras unos segundos muestra el nuevo turno en el timeline. Sin `BOT_ENGINE_INVOKE` el botón no aparece.
 - [ ] **Reset state test (F3)**: "Reiniciar estado" (gated `BOT_STATE_WRITE`) con confirm → slots/intent/turn_count se borran → `BotStateCard` muestra "Sin datos recolectados". Sobre una conversación no-bot → `400 CONVERSATION_NOT_BOT` en `MessageBar`.
 - [ ] **Estado null test (F3)**: depurar una conversación cuyo bot nunca corrió un turno → `getBotState` devuelve null → "El bot aún no ha actuado en esta conversación." (no error).
 - [ ] **TZ test (F3)**: con el reloj cerca de medianoche en TZ Lima (`-05:00`), un turno de "hoy" aparece bajo "Hoy" (no "Ayer") en el timeline — confirma agrupación client-only.
 - [ ] **Permisos test (F3)**: sin `BOT_STATE_READ` la Depuración redirige; sin `BOT_STATE_WRITE` no aparece "Reiniciar estado"; sin `BOT_ENGINE_INVOKE` no aparece "Disparar turno"; `BOT_EVENTS_READ`/`BOT_TOOL_CALLS_READ` gatean el timeline/tool-calls (el ASESOR los tiene → ve la depuración read-only). El link "Ver conversación" solo si `CONVERSATIONS_READ`.
 
-### F4 — ExternalBotEngine + tools scheduling + handoff automático + streaming (DIFERIDA, fuera del MVP)
+### F4 — ExternalBotEngine + handoff automático + streaming (DIFERIDA, fuera del MVP)
 
 - [ ] Habilitar `provider=external_webhook` en el select del `BotVersionEditor` (mostrar los campos `external_webhook_url/secret_name`) cuando el `ExternalBotEngine` + `/engine/external/*` existan (spec §0.2). Hoy deshabilitado "(no disponible aún)".
-- [ ] Agregar las tools de scheduling (`book_appointment`/`check_availability`/`cancel_appointment`) al catálogo cuando scheduling #7 las registre en el `TOOL_REGISTRY` (hoy NO seedeadas → no aparecen — spec §0.4).
+- [x] Tools de scheduling + marketing (`check_availability`/`book_appointment`/`cancel_appointment`/`list_eligible_promotions`) ya registradas en el `TOOL_REGISTRY` y seedeadas en el catálogo — aparecen en el multiselect del bot (no esperaban a F4).
 - [ ] UI de handoff automático (el bot escala a humano cuando lo decide), streaming de la respuesta del bot, cost cap duro, eval framework — fuera del MVP inicial (spec §8 F4).
 
 ## Tareas adicionales (traducción del template existente)
@@ -1537,7 +1537,7 @@ La traducción del template (`navigation.ts`, `DataTable`, `ConfirmDialog`, logi
 ## TODOs deliberados (postergados al MVP+1)
 
 - [ ] **F4 — ExternalBotEngine** (provider external_webhook + `/engine/external/*`) — diseñado en el contrato (campos en las entidades/tipos), engine y endpoints diferidos (spec §0.2 / §8).
-- [ ] **Tools de scheduling** (`book_appointment`/`check_availability`/`cancel_appointment`) — diseñadas pero NO seedeadas hasta que scheduling #7 las registre (spec §0.4).
+- [x] **Tools de scheduling + marketing** (`check_availability`/`book_appointment`/`cancel_appointment`/`list_eligible_promotions`) — ya registradas en el `TOOL_REGISTRY` y seedeadas en el catálogo (spec §0.4).
 - [ ] **Editor de código real para JSON** (Monaco/CodeMirror con syntax highlight + autocompletado) en `parameters`/`parameters_schema` — el MVP usa textarea + `JSON.parse`. Agrega peso de bundle.
 - [ ] **Validar `parameters_schema` como JSON Schema válido** (ajv meta-schema) en el editor — el MVP solo valida JSON parseable a objeto.
 - [ ] **JSON tree-viewer** (colapsable/expandible) para `collected_slots`/`arguments`/`result`/`metadata` — el MVP usa `<pre>` + `JSON.stringify`.

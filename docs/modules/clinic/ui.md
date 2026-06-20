@@ -48,7 +48,7 @@ Agregar un parent item `clinic` con 2 children, entre `catalog` y `admin`:
   icon: "BuildingMultipleRegular",
   children: [
     { key: "branches", label: "Sedes",        icon: "BuildingRegular",     url: "/clinic/branches", permissions: ["MENU-CLINIC"] },
-    { key: "offices",  label: "Consultorios", icon: "DoorRegular",         url: "/clinic/offices",  permissions: ["MENU-CLINIC"] },
+    { key: "offices",  label: "Consultorios", icon: "ConferenceRoomRegular", url: "/clinic/offices",  permissions: ["MENU-CLINIC"] },
   ],
 }
 ```
@@ -779,7 +779,7 @@ El template trae `admin/users`, `admin/roles`, `admin/permissions` con textos en
 
 Las pantallas de este doc se construyen en el orden de fases del módulo (ver [`README.md`](README.md#fases-de-implementación) y [`backend.md`](backend.md#checklist-de-implementación)):
 
-- **F0 Prep** — sidebar `Clínica → Sedes, Consultorios` (`NAV_ITEMS`), íconos (`BuildingMultipleRegular`, `BuildingRegular`, `DoorRegular`), `DAY_LABELS` constant, lista IANA de timezones. Sin pantallas funcionales aún.
+- **F0 Prep** — sidebar `Clínica → Sedes, Consultorios` (`NAV_ITEMS`), íconos (`BuildingMultipleRegular`, `BuildingRegular`, `ConferenceRoomRegular`), `DAY_LABELS` constant, lista IANA de timezones. Sin pantallas funcionales aún.
 - **F1 Branch** — Pantalla 1 (`/clinic/branches` lista) + Pantalla 2 (BranchDrawer con tabs Datos/Ubicación/Contacto/Auditoría, timezone dropdown, lat/lng).
 - **F2 Office + M:N** — Pantalla 3 (`/clinic/offices` lista con filtro sede + chip + deep-link) + OfficeCreateDrawer (verticales vía `SearchableOptionList`) + **shell de la página de detalle** `/clinic/offices/{id}` con las 4 tabs (Detalles funcional + Horarios/Excepciones placeholder) + columna `offices_count` activada en branches + confirm 409 `BRANCH_HAS_ACTIVE_CHILDREN`.
 - **F3 OfficeOperatingHours** — Tab `Horarios` funcional (grilla semanal, add/remove bloque, bulk `PUT`).

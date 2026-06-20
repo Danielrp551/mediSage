@@ -60,11 +60,11 @@
 
 ## Decisión de arquitectura: 1 bandeja global + 1 mi-bandeja (mismo shell de 2 paneles) + 1 CRUD de canales
 
-`clinic` estableció la regla, reafirmada por `staff` y `crm`: **si una entidad tiene sub-recursos con interacción propia (timelines, grids editables, máquinas de estado), su superficie es una página dedicada bespoke; si solo tiene metadata, va a drawer.** La `Conversation` cae claramente en el primer caso — tiene un **hilo de mensajes** (sub-recurso pesado, en vivo, con composer y estados de entrega), una **máquina de handoff** (tomar/liberar/cerrar/reabrir con su historial `ConversationAssignmentLog`) y un **contador de no leídos**. Por eso la bandeja NO es una DataTable de filas que abren un detalle aparte, sino un **layout de 2 paneles** (lista + hilo) tipo cliente de mensajería, donde seleccionar una conversación carga su hilo en el panel derecho **sin navegar** (URL state `?conv=<id>`). El `ChannelAccount`, en cambio, es **metadata de configuración** (admin) → CRUD con DataTable + drawer.
+`clinic` estableció la regla, reafirmada por `staff` y `crm`: **si una entidad tiene sub-recursos con interacción propia (timelines, grids editables, máquinas de estado), su superficie es una página dedicada bespoke; si solo tiene metadata, va a drawer.** La `Conversation` cae claramente en el primer caso — tiene un **hilo de mensajes** (sub-recurso pesado, en vivo, con composer y estados de entrega), una **máquina de handoff** (tomar/liberar/cerrar/reabrir con su historial `ConversationAssignmentLog`) y un **contador de no leídos**. Por eso la bandeja NO es una DataTable de filas que abren un detalle aparte, sino un **layout de 2 paneles** (lista + hilo) tipo cliente de mensajería, donde seleccionar una conversación carga su hilo en el panel derecho **sin navegar** (URL state `?c=<id>`). El `ChannelAccount`, en cambio, es **metadata de configuración** (admin) → CRUD con DataTable + drawer.
 
 | Recurso | Superficie | Crear | Ver / Editar | Patrón |
 |---|---|---|---|---|
-| **Conversation (Bandeja global)** | `/conversaciones/bandeja` — **2 paneles** (lista izq filtrable + hilo der), gated `CONVERSATIONS_READ` | — (las crea el webhook inbound) | panel derecho (hilo + composer + handoff); selección vía `?conv=<id>` | **bespoke: inbox 2-paneles** (la pieza central) |
+| **Conversation (Bandeja global)** | `/conversaciones/bandeja` — **2 paneles** (lista izq filtrable + hilo der), gated `CONVERSATIONS_READ` | — (las crea el webhook inbound) | panel derecho (hilo + composer + handoff); selección vía `?c=<id>` | **bespoke: inbox 2-paneles** (la pieza central) |
 | **Conversation (Mi bandeja)** | `/conversaciones/mis-conversaciones` — **mismo shell de 2 paneles**, pre-acotado a `assignee_user_id = yo` (`/me/conversations/list`), gated `MY_CONVERSATIONS_READ` | — | igual al global | reusa el shell del inbox con un fetcher distinto |
 | **Message** | — (no tiene superficie propia) | dentro del **composer** del hilo | inmutable (audit; sin editar/eliminar) | burbujas en el hilo |
 | **ChannelAccount (Canales)** | `/conversaciones/canales` — DataTable, gated `CHANNEL_ACCOUNTS_READ` (admin) | **drawer** | **drawer** (el secreto NO se muestra en claro) | molde `VerticalsClient`/`LeadStatusDrawer` |
@@ -75,7 +75,7 @@
 
 | Opción | Veredicto |
 |---|---|
-| **A. Layout de 2 paneles** (lista izquierda + hilo derecha; selección por `?conv=`) — patrón universal de bandejas (Intercom/Front/Gmail/WhatsApp Web). El asesor barre la lista, abre un hilo, responde y vuelve sin perder el contexto de la lista; el polling refresca ambos paneles in-situ; los no-leídos se ven de un vistazo. | **Elegida** |
+| **A. Layout de 2 paneles** (lista izquierda + hilo derecha; selección por `?c=`) — patrón universal de bandejas (Intercom/Front/Gmail/WhatsApp Web). El asesor barre la lista, abre un hilo, responde y vuelve sin perder el contexto de la lista; el polling refresca ambos paneles in-situ; los no-leídos se ven de un vistazo. | **Elegida** |
 | B. DataTable de conversaciones → click navega a `/conversaciones/{id}` (página de detalle, molde `PersonDetailShell`) | Rechazada — obliga a ida-y-vuelta por cada hilo (rompe el ritmo del asesor que atiende N chats), pierde el contexto de la lista al abrir uno, y el polling de "la lista" y "el hilo" en páginas separadas duplica el estado. La bandeja es un workspace, no un listado-detalle. |
 | C. Drawer `size=large` con el hilo sobre la lista | Rechazada — el hilo (feed largo + composer + handoff) no cabe cómodo en ~640 px; el overlay tapa la lista que el asesor necesita ver; z-index frágil con popovers de handoff. Mismo veredicto que el calendario de staff y el timeline de crm. |
 | D. Acordeón inline (expandir el hilo dentro de la fila) | Rechazada — no escala a un hilo largo + composer; rompe la densidad de la lista. |
@@ -100,14 +100,14 @@ Agregar un parent item `conversations` con 3 children, entre `crm` y `admin`:
   children: [
     { key: "bandeja",            label: "Bandeja",     icon: "MailInboxRegular",   url: "/conversaciones/bandeja",            permissions: ["CONVERSATIONS_READ"] },
     { key: "mis-conversaciones", label: "Mi bandeja",  icon: "PersonMailRegular",  url: "/conversaciones/mis-conversaciones", permissions: ["MY_CONVERSATIONS_READ"] },
-    { key: "canales",            label: "Canales",     icon: "ChannelRegular",     url: "/conversaciones/canales",            permissions: ["CHANNEL_ACCOUNTS_READ"] },
+    { key: "canales",            label: "Canales",     icon: "PlugConnectedRegular", url: "/conversaciones/canales",            permissions: ["CHANNEL_ACCOUNTS_READ"] },
   ],
 },
 ```
 
 > El parent usa `MENU-CONVERSATIONS` como gate de visibilidad del grupo. Cada child gatea por **su** permiso de lectura para que un **ASESOR** (que tiene `MENU-CONVERSATIONS`, `CONVERSATIONS_{READ,TAKE,RELEASE,CLOSE}`, `MESSAGES_{READ,SEND}`, `MY_CONVERSATIONS_READ` — ver [`_seed-and-roles.md`](../_seed-and-roles.md) y la spec §10) vea **Bandeja** y **Mi bandeja**, pero **NO Canales** (no tiene `CHANNEL_ACCOUNTS_READ` — solo el ADMIN configura canales). El **DOCTOR** no tiene ningún permiso de conversations → no ve el grupo. Los permisos finos (`MESSAGES_SEND`, `CONVERSATIONS_TAKE`…) se chequean en `page.tsx` vía `requirePermission(...)` y dentro de los componentes vía `<PermissionGuard>` / `usePermissions()`.
 
-> Iconos Fluent (verificar que existan en la versión instalada; usar fallback si no): `ChatRegular`/`CommentRegular` (grupo), `MailInboxRegular`/`InboxRegular` (Bandeja), `PersonMailRegular`/`MailRegular` (Mi bandeja), `ChannelRegular`/`PhoneRegular` (Canales). Mismo criterio de verificación que `crm` con `PeopleRegular` y `staff` con `DoctorRegular`.
+> Iconos Fluent (verificar que existan en la versión instalada; usar fallback si no): `ChatRegular`/`CommentRegular` (grupo), `MailInboxRegular`/`InboxRegular` (Bandeja), `PersonMailRegular`/`MailRegular` (Mi bandeja), `PlugConnectedRegular`/`PlugRegular` (Canales — el shipped es `PlugConnectedRegular`). Mismo criterio de verificación que `crm` con `PeopleRegular` y `staff` con `DoctorRegular`.
 
 ## Pantallas
 
@@ -181,7 +181,7 @@ Lista vertical scrolleable (NO una `DataTable` — son "tarjetas-fila" densas ti
 > **Denormalización sin N+1 / ALLOWED_FIELDS** (spec §7): `person` (full_name), `channel_account` (name), `assignee_user` (full_name), `last_message_preview` se hidratan por **batch map** en el service. Estas columnas **NO** son server-sortable/filterable por su texto. Solo son `ALLOWED_FIELDS`: `status`, `assignee_type`, `assignee_user_id`, `channel_account_id`, `last_message_at`, `unread_count`, `created_on`. **`defaultSort = last_message_at desc`** (columna real; el prefetch del RSC y el `defaultSort` de la lista DEBEN coincidir — lección desync footer). El badge de no-leídos puede mostrarse arriba (sort secundario opcional client-side: no-leídas primero), pero el sort server-side base es `last_message_at desc`.
 
 **Cada ítem de la lista** (componente `ConversationListItem`, memoizado):
-- Barra lateral `▎` (color `tokens.colorBrandStroke1`) si es la conversación seleccionada (`?conv=<id>`).
+- Barra lateral `▎` (color `tokens.colorBrandStroke1`) si es la conversación seleccionada (`?c=<id>`).
 - `ChannelIcon` (reuse de crm) + **nombre del contacto** (`person.full_name`; "Contacto (WhatsApp)" si la Person nació del webhook sin pushname — el placeholder de la spec §1).
 - **Preview** = `last_message_preview` (1 línea, truncado con `…`); si la última actividad fue de sistema, prefijo `⚙` ("⚙ Conversación cerrada").
 - **Timestamp** = `formatRelative(last_message_at)` (**client-only**): "ahora", "hace 2 min", "hace 1 h", "ayer", "12 may".
@@ -191,7 +191,7 @@ Lista vertical scrolleable (NO una `DataTable` — son "tarjetas-fila" densas ti
 
 #### Panel derecho — el hilo de la conversación seleccionada
 
-Cuando hay `?conv=<id>`, se monta el hilo: header de conversación + feed de burbujas + composer + controles de handoff. El hilo es **real-time** (rediseño CQRS, ADR-011): se abre un listener `onSnapshot(collection(db, 'conversations', cid, 'messages'), orderBy('created_at'))` contra Firestore (read-only), de modo que los mensajes nuevos y sus cambios de estado aparecen **al instante**, sin polling del hilo. El token Firebase se obtiene server-side (`getRealtimeToken()` → `POST /conversaciones/realtime/token`, gated `CONVERSATIONS_READ`/`MY_CONVERSATIONS_READ`) y se usa con `signInWithCustomToken`; las Security Rules espejan el RBAC. **Las mutaciones (enviar/tomar/liberar/cerrar/reabrir/marcar-leída) NO tocan Firestore desde el browser** — van por el backend (Next server → FastAPI → Meta + Firestore vía Admin SDK).
+Cuando hay `?c=<id>`, se monta el hilo: header de conversación + feed de burbujas + composer + controles de handoff. El hilo es **real-time** (rediseño CQRS, ADR-011): se abre un listener `onSnapshot(collection(db, 'conversations', cid, 'messages'), orderBy('created_at'))` contra Firestore (read-only), de modo que los mensajes nuevos y sus cambios de estado aparecen **al instante**, sin polling del hilo. El token Firebase se obtiene server-side (`getRealtimeToken()` → `POST /conversaciones/realtime/token`, gated `CONVERSATIONS_READ`/`MY_CONVERSATIONS_READ`) y se usa con `signInWithCustomToken`; las Security Rules espejan el RBAC. **Las mutaciones (enviar/tomar/liberar/cerrar/reabrir/marcar-leída) NO tocan Firestore desde el browser** — van por el backend (Next server → FastAPI → Meta + Firestore vía Admin SDK).
 
 **Header del hilo** (sticky arriba):
 - **Nombre del contacto** (`person.full_name`) + click → (futuro) navega a `/crm/personas/{person_id}` (link al contacto en crm; MVP: link plano si hay `PERSONS_READ`, sino texto plano).
@@ -262,7 +262,7 @@ Cuando hay `?conv=<id>`, se monta el hilo: header de conversación + feed de bur
 | **Liberar** | `CONVERSATIONS_RELEASE` | conversación `open` y asignada (idealmente a mí) | `POST /conversaciones/{id}/release` con `{to_assignee_type, to_bot_configuration_id?, reason?}` | cambia el assignee (a `unassigned` por default en MVP — no hay bot), emite `CONVERSATION_RELEASED` |
 | **Cerrar** | `CONVERSATIONS_CLOSE` | conversación `open` | `POST /conversaciones/{id}/close` | `status=closed`, `closed_at=now`, cierra el log de asignación vigente; oculta el composer |
 | **Reabrir** | `CONVERSATIONS_TAKE` | conversación `closed` | `POST /conversaciones/{id}/reopen` | `status=open` (valida que no haya otra abierta para la misma Person+canal → `CONVERSATION_ALREADY_OPEN` 409) |
-| **Marcar como leída** | `CONVERSATIONS_READ` | `unread_count > 0` | `POST /conversaciones/{id}/mark-read` | `unread_count=0` (se dispara también al abrir el hilo, opcional) |
+| **Marcar como leída** | `CONVERSATIONS_READ` **o** `MY_CONVERSATIONS_READ` | `unread_count > 0` | `POST /conversaciones/{id}/mark-read` | `unread_count=0` (se dispara también al abrir el hilo, opcional) |
 
 > **Mutaciones de handoff hacen refetch de la lista Y `router.refresh()`** (lección crm F3): la conversación pinta datos **denormalizados** (badge "Asignado a X", estado, no-leídos) que el RSC y la lista del otro panel también muestran. Sin `router.refresh()`, el badge del header de la lista / del item queda **stale** (bug MAJOR cazado en crm F3). Tras cada take/release/close/reopen: re-fetch de la lista + `router.refresh()`. (El **hilo** no necesita refetch: el backend escribe la nota de sistema y el `conversation_upsert` a Firestore vía Admin SDK, y el listener del hilo + el badge del header de la conversación se actualizan **en vivo**.)
 
@@ -275,7 +275,7 @@ Cuando hay `?conv=<id>`, se monta el hilo: header de conversación + feed de bur
 - **Refresco silencioso** (no flash): el refetch NO muestra spinner de carga completo (eso es solo el primer load); en su lugar, un indicador sutil "⟳ hace Ns" y, si la data cambió, se reconcilia in-place. (Lección crm F5: refetch silencioso sin flash — no remontar la lista entera, reconciliar por id.) El hilo se reconcilia análogamente por `id` desde el snapshot (no remonta).
 - **Pausable**: botón `⏸/▶` en el header pausa/reanuda el **polling del listado** para que el asesor que está leyendo no sufra reordenamientos. El polling del listado se **pausa automáticamente** mientras el composer tiene foco/texto sin enviar. (El listener del hilo es live y barato; no se "pausa" — Firestore solo empuja deltas.)
 - **Pausa en pestaña oculta**: si `document.visibilityState === "hidden"`, pausar el polling del listado (no golpear el backend con la pestaña en background); reanudar al volver al foco. (Lección crm F5 diferida: "reloj/label de tab ocioso" — aquí se aplica.) El listener Firestore puede detacharse en `hidden` y re-suscribirse al volver para ahorrar reads.
-- **Sin polling concurrente**: si una request de polling del listado sigue en vuelo cuando toca la siguiente, se omite (no encolar). Al cambiar de conversación (`?conv=`), **detach del listener anterior** (`unsubscribe()`) antes de suscribir el nuevo; el `AbortController` cancela cualquier fetch fallback del hilo obsoleto.
+- **Sin polling concurrente**: si una request de polling del listado sigue en vuelo cuando toca la siguiente, se omite (no encolar). Al cambiar de conversación (`?c=`), **detach del listener anterior** (`unsubscribe()`) antes de suscribir el nuevo; el `AbortController` cancela cualquier fetch fallback del hilo obsoleto.
 
 #### Estados
 
@@ -296,7 +296,7 @@ Cuando hay `?conv=<id>`, se monta el hilo: header de conversación + feed de bur
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-**Empty — sin selección (hay lista, no hay `?conv=`)**: el panel derecho muestra:
+**Empty — sin selección (hay lista, no hay `?c=`)**: el panel derecho muestra:
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                       💬  (ChatRegular)                              │
@@ -333,7 +333,7 @@ Cuando hay `?conv=<id>`, se monta el hilo: header de conversación + feed de bur
 - **Listas largas con `content-visibility: auto`** + `contain-intrinsic-size` en cada item/burbuja (CSS via `makeStyles`) → el navegador no paga layout/paint de lo que está fuera del viewport. Approach barato (sin virtualización) suficiente para el volumen esperado; si explota, evaluar virtualización después.
 - **Paginación / historial del hilo**: el listener Firestore se abre acotado a los mensajes recientes (ej. `limit(50)` + `orderBy('created_at')`); al hacer scroll hacia arriba se trae el lote anterior (segunda query Firestore o el fallback `POST /conversaciones/{id}/messages/list` server-side) y se **prepend**ea (preservar la posición de scroll). Los mensajes **nuevos** llegan por el listener, no por re-fetch del hilo.
 - **`useMemo` para la agrupación por día** (no recomputar grupos en cada delta del listener; solo cuando cambia la lista de mensajes).
-- **Listener con reconciliación, no remontaje**: el `onSnapshot` aplica solo los `docChanges()` (added/modified/removed) por `id` + `external_status`, evitando flash y re-layout completo. Al cambiar `?conv=`, `unsubscribe()` del listener anterior antes de suscribir el nuevo (y `AbortController` para cualquier fetch fallback obsoleto).
+- **Listener con reconciliación, no remontaje**: el `onSnapshot` aplica solo los `docChanges()` (added/modified/removed) por `id` + `external_status`, evitando flash y re-layout completo. Al cambiar `?c=`, `unsubscribe()` del listener anterior antes de suscribir el nuevo (y `AbortController` para cualquier fetch fallback obsoleto).
 - **Sin waterfalls**: el `page.tsx` (RSC) prefetcha la primera página de la lista + las opciones de canal + el token realtime (vía `getRealtimeToken()` server-side); el listener del hilo se abre al seleccionar (no en el primer render). El composer no dispara re-fetch del hilo en cada tecla.
 
 #### Componentes Fluent UI / del template (Inbox)
@@ -538,7 +538,7 @@ Lista (DataTable, molde `VerticalsClient` de catalog) de las cuentas de canal de
 ## Decisiones de UI (cierres)
 
 ### La bandeja es un workspace de 2 paneles, no un listado-detalle
-Misma regla-precedente de clinic/staff/crm: entidad con sub-recurso de interacción propia (hilo de mensajes en vivo + máquina de handoff + no-leídos) → superficie bespoke. Aquí el bespoke es un **inbox de 2 paneles** (lista + hilo), no una página con tabs (el contenido es un solo hilo lineal, no múltiples superficies densas). Seleccionar una conversación es URL state (`?conv=<id>`), no navegación — el asesor no pierde el contexto de la lista. **Mi bandeja reusa el mismo shell** con otro fetcher (un componente, dos usos — patrón crm).
+Misma regla-precedente de clinic/staff/crm: entidad con sub-recurso de interacción propia (hilo de mensajes en vivo + máquina de handoff + no-leídos) → superficie bespoke. Aquí el bespoke es un **inbox de 2 paneles** (lista + hilo), no una página con tabs (el contenido es un solo hilo lineal, no múltiples superficies densas). Seleccionar una conversación es URL state (`?c=<id>`), no navegación — el asesor no pierde el contexto de la lista. **Mi bandeja reusa el mismo shell** con otro fetcher (un componente, dos usos — patrón crm).
 
 ### Hilo real-time (Firestore), listado por polling (binding spec §1 + rediseño CQRS ADR-011)
 El **hilo** (panel derecho) es **real-time vía listeners de Firestore** (`onSnapshot`, read-only): mensajes y estados (✓/✓✓/leído/⚠) aparecen al instante, sin polling del hilo y sin SSE/WebSocket del backend. El browser solo **LEE** el stream que está autorizado a ver (`signInWithCustomToken` con un token minteado server-side + Security Rules que espejan el RBAC); **todas las escrituras (enviar/tomar/liberar/cerrar) siguen 100 % por el backend** (Next server → FastAPI → Meta + Firestore vía Admin SDK) — se preserva "el browser no muta el backend / JWT server-side / RBAC". El **listado** (panel izquierdo) sigue por **polling** (~10 s, pausable, pausa en pestaña oculta, reconciliación in-place sin flash) — Cloud Run con `min-instances 0` + cpu-throttling no favorece conexiones persistentes para las queries SQL del inbox; podría migrar a live (misma collection Firestore) más adelante. El polling del listado se **pausa** mientras el composer tiene foco/texto y en pestaña oculta (no golpear el backend ocioso).
@@ -556,7 +556,7 @@ Cada take/release/close/reopen/send toca datos **denormalizados** que la lista d
 `person.full_name` y `last_message_preview` son denormalizados; no están en `ALLOWED_FIELDS`. La búsqueda visible de la lista es **client-side** sobre lo cargado (matchea nombre + preview). Lección hotfix `cd10c78` de staff: nunca server-sortear/filtrar por columna denormalizada (da 400) — `defaultSort`/`isSortable`/`searchFields` solo columnas reales (`status`, `assignee_type`, `assignee_user_id`, `channel_account_id`, `last_message_at`, `unread_count`, `created_on`). Los deep-links por `*_id` se traducen a filtros en el repo.
 
 ### Deep-links por estado / canal / asignación
-`status`, `channel_account_id`, `unassigned`, `assignee_user_id` y `conv` (la conversación abierta) son `useQueryState` (`nuqs`) con chip × y deep-link. Permite linkear "las conversaciones sin asignar del canal WhatsApp Estética" o abrir un hilo directo (`/conversaciones/bandeja?conv=abc`) desde un dashboard o desde el detalle de un contacto en crm (futuro). El `defaultSort=last_message_at desc` del prefetch RSC y de la lista **deben coincidir** (lección desync footer crm; `useTableQuery` con `defaultPageSize` = el `limit` del prefetch).
+`status`, `channel_account_id`, `unassigned`, `assignee_user_id` y `c` (la conversación abierta) son `useQueryState` (`nuqs`) con chip × y deep-link. Permite linkear "las conversaciones sin asignar del canal WhatsApp Estética" o abrir un hilo directo (`/conversaciones/bandeja?c=abc`) desde un dashboard o desde el detalle de un contacto en crm (futuro). El `defaultSort=last_message_at desc` del prefetch RSC y de la lista **deben coincidir** (lección desync footer crm; `useTableQuery` con `defaultPageSize` = el `limit` del prefetch).
 
 ### "Hoy"/fechas relativas siempre client-only (TZ)
 Toda fecha que afecte el render (agrupación del hilo por día, "hace 2 min", separador "Hoy"/"Ayer", "⟳ hace Ns") se computa **client-only** (`useEffect`/`useMemo` montados en cliente, no en SSR). Se **reusa** el helper `formatRelative(iso)` de `lib/utils/date.ts` (creado en crm). El servidor en UTC desfasaría el día en Lima (UTC-5) — bug recurrente de staff/crm.
@@ -565,7 +565,7 @@ Toda fecha que afecte el render (agrupación del hilo por día, "hace 2 min", se
 Textos directos como strings en cada componente (misma decisión que catalog/clinic/staff/crm). Si negocio pide multilingüe, introducir `next-intl` después.
 
 ### Mobile / responsive
-Mismo criterio que clinic/staff/crm (template optimizado para desktop interno): sidebar colapsado por default. El **inbox de 2 paneles** en pantallas angostas **colapsa a una vista** (lista O hilo, no ambos): sin `?conv=` se ve la lista a ancho completo; al seleccionar, el hilo ocupa todo + un back "← Volver a la bandeja" que limpia `?conv=`. (Patrón master-detail de WhatsApp/Gmail mobile.) El composer colapsa a una fila. La DataTable de Canales scrollea horizontal; el drawer va a 100 % del width en mobile.
+Mismo criterio que clinic/staff/crm (template optimizado para desktop interno): sidebar colapsado por default. El **inbox de 2 paneles** en pantallas angostas **colapsa a una vista** (lista O hilo, no ambos): sin `?c=` se ve la lista a ancho completo; al seleccionar, el hilo ocupa todo + un back "← Volver a la bandeja" que limpia `?c=`. (Patrón master-detail de WhatsApp/Gmail mobile.) El composer colapsa a una fila. La DataTable de Canales scrollea horizontal; el drawer va a 100 % del width en mobile.
 
 ### Accesibilidad básica
 - La lista de conversaciones es navegable por teclado (`role="list"`/`listitem`, flechas ↑↓ para moverse, Enter para abrir); la conversación seleccionada tiene `aria-selected`.
@@ -719,7 +719,7 @@ Todo en **español**, tono profesional y breve. Identificadores de código (`key
 Las pantallas de este doc se construyen en el orden de fases del módulo (ver [`README.md`](./README.md), [`backend.md`](./backend.md) y la spec §12 F0–F4). Cada checkbox es una tarea de UI.
 
 ### F0 — Prep (sin pantallas funcionales)
-- [ ] Sidebar: grupo "Conversaciones" en `NAV_ITEMS` con 3 children (Bandeja / Mi bandeja / Canales), gate `MENU-CONVERSATIONS` + permiso por child (`CONVERSATIONS_READ` / `MY_CONVERSATIONS_READ` / `CHANNEL_ACCOUNTS_READ`); íconos Fluent verificados con fallback (`ChatRegular`/`MailInboxRegular`/`PersonMailRegular`/`ChannelRegular`).
+- [ ] Sidebar: grupo "Conversaciones" en `NAV_ITEMS` con 3 children (Bandeja / Mi bandeja / Canales), gate `MENU-CONVERSATIONS` + permiso por child (`CONVERSATIONS_READ` / `MY_CONVERSATIONS_READ` / `CHANNEL_ACCOUNTS_READ`); íconos Fluent verificados con fallback (`ChatRegular`/`MailInboxRegular`/`PersonMailRegular`/`PlugConnectedRegular`).
 - [ ] `lib/constants/endpoints.ts`: bloque `ENDPOINTS.CONVERSATIONS` (channel-accounts, channel-accounts/active, list, {id}, {id}/messages, {id}/messages/list [fallback server-side; el path primario de lectura del hilo es el listener Firestore], realtime/token, take, release, close, reopen, mark-read, me/conversations/list). (Los webhooks NO van en el front — los llama Meta.)
 - [ ] `types/conversations.types.ts`: todas las interfaces espejo de Pydantic (`ChannelAccountItem`/`Detail`/`Option`, `ConversationListItem`/`Detail`, `MessageItem`, `MessageAttachmentItem`, `ConversationAssignmentLogItem`, `MessageSendRequest`, `TakeConversationRequest`, `ReleaseConversationRequest`, enums `ConversationStatus`/`AssigneeType`/`MessageDirection`/`SenderType`/`ContentType`/`AttachmentType`/`MessageExternalStatus`; reuse `ChannelType` de crm.types).
 - [ ] `lib/schemas/conversation.schema.ts`: Zod de `channelAccountSchema` + `messageSendSchema` + `releaseConversationSchema`.
@@ -730,7 +730,7 @@ Las pantallas de este doc se construyen en el orden de fases del módulo (ver [`
 - [ ] Migración backend `0015_conv_channel_account` (no toca UI).
 
 ### F2 — Inbox read-only (recibir + ver)
-- [ ] **Pantalla 1 — Iteración A** `/conversaciones/bandeja`: `InboxShell` de 2 paneles; panel izq = lista (`ConversationListItem` memoizado, filtros estado/canal/sin-asignar/mías con chip + deep-link, búsqueda client-side, badge no-leídos, estados loading/empty/no-results/error) con **polling** silencioso (pausable, pausa en pestaña oculta, reconciliación in-place); panel der = hilo **read-only** (header con badges, `MessageBubble` inbound/outbound/system, estados de mensaje **en vivo**, `DayGroup` client-only, paginación scroll-up) alimentado por **listener Firestore real-time** (`getRealtimeToken` server action + `signInWithCustomToken` + `onSnapshot`); `?conv=` URL state; detach/`unsubscribe` del listener al cambiar de conversación; indicador "● En vivo"; estados empty (sin conversaciones / sin selección). SIN composer ni handoff.
+- [ ] **Pantalla 1 — Iteración A** `/conversaciones/bandeja`: `InboxShell` de 2 paneles; panel izq = lista (`ConversationListItem` memoizado, filtros estado/canal/sin-asignar/mías con chip + deep-link, búsqueda client-side, badge no-leídos, estados loading/empty/no-results/error) con **polling** silencioso (pausable, pausa en pestaña oculta, reconciliación in-place); panel der = hilo **read-only** (header con badges, `MessageBubble` inbound/outbound/system, estados de mensaje **en vivo**, `DayGroup` client-only, paginación scroll-up) alimentado por **listener Firestore real-time** (`getRealtimeToken` server action + `signInWithCustomToken` + `onSnapshot`); `?c=` URL state; detach/`unsubscribe` del listener al cambiar de conversación; indicador "● En vivo"; estados empty (sin conversaciones / sin selección). SIN composer ni handoff.
 - [ ] Dep frontend `firebase` (solo `firebase/app` + `firebase/auth` + `firebase/firestore`) + config pública `NEXT_PUBLIC_FIREBASE_*` (no son secretos); `lib/firebase/client.ts` (init + `signInWithCustomToken`) + server action `getRealtimeToken()` → `POST /conversaciones/realtime/token`.
 - [ ] **Pantalla 2 — Iteración A** `/conversaciones/mis-conversaciones`: reuse del `InboxShell` con `fetcher=listMyConversations` y `showAssignmentFilters={false}` + empty propio.
 - [ ] Migración backend `0016_conv_threads` (no toca UI).

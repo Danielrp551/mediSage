@@ -102,7 +102,7 @@ Todos bajo `/api/v1/staff/`. Listado paginado con `POST /list` + `QueryRequest`.
 | Método | Ruta | Permiso |
 |---|---|---|
 | `GET` | `/me/doctor` | `MY_DOCTOR_PROFILE_READ` |
-| `PUT` | `/me/doctor` | `MY_DOCTOR_PROFILE_WRITE` (solo `bio`/`photo_url`/`signature_url`/`slot_duration_min`; **NO** `branches`/`verticals` — eso es admin) |
+| `PUT` | `/me/doctor` | `MY_DOCTOR_PROFILE_WRITE` (solo `cmp_code`/`bio`/`photo_url`/`signature_url`/`slot_duration_min`; **NO** `branches`/`verticals`/`active` — eso es admin) |
 | `GET` | `/me/availability?from=&to=` | `MY_AVAILABILITY_READ` |
 | `POST` | `/me/availability` | `MY_AVAILABILITY_WRITE` |
 | `PUT` | `/me/availability/{block_id}` | `MY_AVAILABILITY_WRITE` |

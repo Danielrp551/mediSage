@@ -172,6 +172,11 @@ class Product(PrimaryKeyMixin, ActiveMixin, SoftDeleteMixin, TimestampMixin, Bas
     service_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("service.id"), nullable=False, index=True
     )
+    # Vertical padre denormalizada, copiada del service en el create. FK sin
+    # relationship — el path canónico es product -> service -> vertical.
+    vertical_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("vertical.id"), nullable=False, index=True
+    )
     code: Mapped[str] = mapped_column(String(60), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
@@ -561,10 +566,11 @@ class ServiceRepository(BaseRepository[Service]):
     async def list_active(
         self, db: AsyncSession, vertical_id: str | None = None
     ) -> list[Service]:
+        # Sin eager-load: el único consumidor mapea a ServiceOption, que nunca
+        # toca `service.vertical`. Cargarlo aquí sería un SELECT batched inútil.
         stmt = (
             select(Service)
             .where(Service.active.is_(True), Service.deleted_at.is_(None))
-            .options(selectinload(Service.vertical))
             .order_by(Service.display_order.asc(), Service.name.asc())
         )
         if vertical_id is not None:
@@ -575,8 +581,10 @@ class ServiceRepository(BaseRepository[Service]):
 
 # repositories/product.py
 class ProductRepository(BaseRepository[Product]):
+    # `vertical_id` (denormalizado) está en el whitelist para que la página de
+    # Products pueda filtrar por vertical sin un join.
     ALLOWED_FIELDS = {
-        "service_id", "code", "name", "active",
+        "service_id", "vertical_id", "code", "name", "active",
         "base_price", "currency", "duration_min",
         "requires_appointment", "is_package",
         "created_on", "updated_on",
@@ -609,10 +617,11 @@ class ProductRepository(BaseRepository[Product]):
     async def list_active(
         self, db: AsyncSession, service_id: str | None = None
     ) -> list[Product]:
+        # Sin eager-load: el único consumidor mapea a ProductOption, que solo
+        # lee columnas (nunca las relaciones service/vertical).
         stmt = (
             select(Product)
             .where(Product.active.is_(True), Product.deleted_at.is_(None))
-            .options(selectinload(Product.service).selectinload(Service.vertical))
             .order_by(Product.name.asc())
         )
         if service_id is not None:
@@ -706,7 +715,7 @@ Todos los endpoints usan los envelopes del template:
 
 #### `GET /api/v1/catalog/verticals/{id}` → `SingleResponse[VerticalDetail]`
 
-#### `PATCH /api/v1/catalog/verticals/{id}`
+#### `PUT /api/v1/catalog/verticals/{id}`
 
 **Request**: cualquier subset de `VerticalUpdate`. `code` no es actualizable (omitir o el server lo ignora).
 
@@ -718,22 +727,19 @@ Todos los endpoints usan los envelopes del template:
 ```json
 {
   "success": false,
-  "detail": "Cannot delete vertical with 3 active service(s). Disable or delete services first.",
+  "detail": "Cannot delete vertical with 3 service(s) still attached. Delete its services first.",
   "code": "VERTICAL_HAS_ACTIVE_CHILDREN"
 }
 ```
 
 #### `GET /api/v1/catalog/verticals/active`
 
-**Response**: `SingleResponse[list[VerticalOption]]`
+**Response**: `list[VerticalOption]` — lista plana **sin** envelope `{success, data}` (igual que `admin.roles.active`). El frontend lee el array directamente.
 ```json
-{
-  "success": true,
-  "data": [
-    { "id": "8c5a...", "code": "estetica_facial", "name": "Estética facial", "color": "#FF6B6B", "icon": "Sparkle24Regular" },
-    { "id": "9d6b...", "code": "dental", "name": "Dental", "color": "#3B82F6", "icon": "ToothRegular" }
-  ]
-}
+[
+  { "id": "8c5a...", "code": "estetica_facial", "name": "Estética facial", "color": "#FF6B6B", "icon": "Sparkle24Regular" },
+  { "id": "9d6b...", "code": "dental", "name": "Dental", "color": "#3B82F6", "icon": "ToothRegular" }
+]
 ```
 
 ### Service
@@ -788,7 +794,7 @@ Todos los endpoints usan los envelopes del template:
 
 **Error 409** si hay productos activos:
 ```json
-{ "success": false, "detail": "Cannot delete service with 4 active product(s).", "code": "SERVICE_HAS_ACTIVE_CHILDREN" }
+{ "success": false, "detail": "Cannot delete service with 4 product(s) still attached. Delete its products first.", "code": "SERVICE_HAS_ACTIVE_CHILDREN" }
 ```
 
 #### `GET /api/v1/catalog/services/active?vertical_id=...`
@@ -912,26 +918,27 @@ def _to_item(
     )
 ```
 
-Para `service.products_count` y `service.vertical_name`: similar, batch lookup. Para `product.service_name` / `product.vertical_name`: el `selectinload(Product.service).selectinload(Service.vertical)` ya carga ambos en el listado.
+Para `service.products_count` y `service.vertical_name`: similar, batch lookup. Para `product.service_name` / `product.vertical_name`: el `selectinload(Product.service).selectinload(Service.vertical)` ya carga ambos en el listado paginado (`list_paginated`) y en `get_full`. Los endpoints `/active` **no** eager-loadean: mapean a `ProductOption` / `ServiceOption`, que solo leen columnas y nunca tocan la relación.
 
 ### Soft delete con children
 
-`DELETE /verticals/{id}` **NO** hace cascade. Si hay `service` activos (con `deleted_at IS NULL`) asociados, el service lanza `BadRequestException(code="VERTICAL_HAS_ACTIVE_CHILDREN")` con conteo:
+`DELETE /verticals/{id}` **NO** hace cascade. Si hay `service` vivos (no soft-deleted, `deleted_at IS NULL` — un servicio meramente deshabilitado sigue conservando el FK) asociados, el service lanza `ConflictException(code="VERTICAL_HAS_ACTIVE_CHILDREN")` (HTTP 409) con conteo:
 
 ```python
-async def soft_delete(db: AsyncSession, vertical_id: str, actor_id: str) -> None:
+async def soft_delete(db: AsyncSession, vertical_id: str, *, actor_id: str) -> None:
     vertical = await vertical_repository.get_by_id(db, vertical_id)
     if vertical is None:
         raise NotFoundException("Vertical not found")
-    active_services = await vertical_repository.count_active_services(db, vertical_id)
-    if active_services > 0:
-        raise BadRequestException(
-            f"Cannot delete vertical with {active_services} active service(s). "
-            "Disable or delete services first.",
+    child_services = await vertical_repository.count_active_services(db, vertical_id)
+    if child_services > 0:
+        raise ConflictException(
+            f"Cannot delete vertical with {child_services} service(s) still attached. "
+            "Delete its services first.",
             code="VERTICAL_HAS_ACTIVE_CHILDREN",
         )
-    await vertical_repository.soft_delete(db, vertical)
     vertical.updated_by = actor_id
+    vertical.updated_on = utc_now()
+    await vertical_repository.soft_delete(db, vertical)
 ```
 
 Para `service` la misma regla con `products`.
@@ -1014,6 +1021,7 @@ CREATE INDEX ix_service_vertical_id ON service (vertical_id);
 CREATE TABLE product (
     id                    VARCHAR(36) PRIMARY KEY,
     service_id            VARCHAR(36) NOT NULL REFERENCES service(id),
+    vertical_id           VARCHAR(36) NOT NULL REFERENCES vertical(id),  -- denormalizado del service padre
     code                  VARCHAR(60) NOT NULL,
     name                  VARCHAR(160) NOT NULL,
     description           VARCHAR(1000),
@@ -1032,9 +1040,10 @@ CREATE TABLE product (
     CONSTRAINT uq_product_service_code UNIQUE (service_id, code)
 );
 CREATE INDEX ix_product_service_id ON product (service_id);
+CREATE INDEX ix_product_vertical_id ON product (vertical_id);
 ```
 
-**Sin `ON DELETE CASCADE`** en FKs: `service.vertical_id` y `product.service_id` son `RESTRICT` (default), reforzando la regla de service "no borrar padre con hijos activos".
+**Sin `ON DELETE CASCADE`** en FKs: `service.vertical_id`, `product.service_id` y `product.vertical_id` son `RESTRICT` (default), reforzando la regla de service "no borrar padre con hijos activos".
 
 ## Seed
 
@@ -1091,11 +1100,11 @@ async def create_vertical(
     return await vertical_service.create(db, payload, auth.user.id)
 
 
-@router.get("/active", response_model=SingleResponse[list[VerticalOption]])
+@router.get("/active", response_model=list[VerticalOption])
 async def list_active_verticals(
     db: DBSession,
     _perm = Depends(RequirePermission("VERTICALS_READ")),
-) -> SingleResponse[list[VerticalOption]]:
+) -> list[VerticalOption]:
     return await vertical_service.list_active(db)
 
 
@@ -1111,7 +1120,7 @@ async def get_vertical(
     return await vertical_service.get_by_id(db, vertical_id)
 
 
-@router.patch("/{vertical_id}", response_model=SingleResponse[VerticalDetail])
+@router.put("/{vertical_id}", response_model=SingleResponse[VerticalDetail])
 async def update_vertical(
     vertical_id: VerticalIdPath,
     payload: VerticalUpdate,
@@ -1135,12 +1144,12 @@ async def delete_vertical(
 Análogos para `service` y `product`. `service` y `product` agregan el query param para el endpoint `/active`:
 
 ```python
-@router.get("/active", response_model=SingleResponse[list[ServiceOption]])
+@router.get("/active", response_model=list[ServiceOption])
 async def list_active_services(
     db: DBSession,
     vertical_id: str | None = None,
     _perm = Depends(RequirePermission("SERVICES_READ")),
-) -> SingleResponse[list[ServiceOption]]:
+) -> list[ServiceOption]:
     return await service_service.list_active(db, vertical_id=vertical_id)
 ```
 

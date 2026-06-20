@@ -143,11 +143,11 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "BOT_CONFIGURATION_VERSIONS_WRITE","name": "Write bot configuration versions","module": "BOTS"},
     {"code": "BOT_TOOLS_READ",                  "name": "Read bot tools",                  "module": "BOTS"},
     {"code": "BOT_TOOLS_WRITE",                 "name": "Write bot tools",                 "module": "BOTS"},
-    {"code": "BOT_STATE_READ",                  "name": "Read bot conversation state",     "module": "BOTS"},
-    {"code": "BOT_STATE_WRITE",                 "name": "Reset bot conversation state",    "module": "BOTS"},
+    {"code": "BOT_STATE_READ",                  "name": "Read bot state",                  "module": "BOTS"},
+    {"code": "BOT_STATE_WRITE",                 "name": "Write bot state",                 "module": "BOTS"},
     {"code": "BOT_EVENTS_READ",                 "name": "Read bot events",                 "module": "BOTS"},
     {"code": "BOT_TOOL_CALLS_READ",             "name": "Read bot tool calls",             "module": "BOTS"},
-    {"code": "BOT_ENGINE_INVOKE",               "name": "Invoke bot engine manually",      "module": "BOTS"},
+    {"code": "BOT_ENGINE_INVOKE",               "name": "Invoke bot engine",               "module": "BOTS"},
 
     # ── Module: scheduling ──────────────────────────────────────────────
     {"code": "MENU-SCHEDULING",             "name": "Menu Scheduling",            "module": "SCHEDULING"},
@@ -174,8 +174,8 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "PROMOTIONS_CREATE",    "name": "Create promotions",    "module": "MARKETING"},
     {"code": "PROMOTIONS_UPDATE",    "name": "Update promotions",    "module": "MARKETING"},
     {"code": "PROMOTIONS_DELETE",    "name": "Delete promotions",    "module": "MARKETING"},
-    {"code": "PROMOTION_VALIDATE",   "name": "Validate promotion",   "module": "MARKETING"},
-    {"code": "PROMOTION_APPLY",      "name": "Apply promotion",      "module": "MARKETING"},
+    {"code": "PROMOTION_VALIDATE",   "name": "Validate promotion eligibility/price", "module": "MARKETING"},
+    {"code": "PROMOTION_APPLY",      "name": "Apply promotion (create usage)",       "module": "MARKETING"},
     {"code": "PROMOTION_USAGES_READ","name": "Read promotion usages","module": "MARKETING"},
 ]
 ```
@@ -278,7 +278,7 @@ ASESOR_PERMISSION_CODES: set[str] = {
 
 ### `SYSTEM`
 
-User técnico no autenticable. **Sin permisos asignados al role**. Su uso es como `created_by` / `actor_id` para operaciones automáticas. El backend NUNCA debería resolver `CurrentAuth` a este user — el active=false lo impide via el login normal.
+User técnico no autenticable. Se le asigna un role `SYSTEM` dedicado que **no lleva ningún permiso** (`SYSTEM_PERMISSION_CODES = set()`), así el role solo etiqueta al actor sin otorgarle accesos. Su uso es como `created_by` / `actor_id` para operaciones automáticas. El backend NUNCA debería resolver `CurrentAuth` a este user — el active=false lo impide via el login normal.
 
 ```python
 SYSTEM_PERMISSION_CODES: set[str] = set()  # vacío explícitamente
@@ -323,14 +323,16 @@ async def _seed_role(
     return role
 
 
-async def _seed_system_user(db: AsyncSession, actor_id: str) -> User:
+async def _seed_system_user(db: AsyncSession, role: Role, actor_id: str) -> User:
     """User técnico para audit columns de operaciones automáticas (bot, sistema).
-    Marcado active=false para que no pueda autenticarse."""
+    Marcado active=false para que no pueda autenticarse. Lleva el role SYSTEM
+    (sin permisos) solo para etiquetar al actor."""
     SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000002"
     existing = (
         await db.execute(select(User).where(User.id == SYSTEM_USER_ID))
     ).scalars().first()
     if existing is not None:
+        existing.roles = [role]
         return existing
     now = datetime.now(timezone.utc)
     user = User(
@@ -344,7 +346,7 @@ async def _seed_system_user(db: AsyncSession, actor_id: str) -> User:
         created_on=now,
         updated_by=actor_id,
         updated_on=now,
-        roles=[],
+        roles=[role],
     )
     db.add(user)
     logger.info("seed.user.created email=system@medisage.internal active=false")
@@ -378,7 +380,7 @@ async def seed() -> None:
             await db.flush()
 
             await _seed_admin_user(db, admin_role, actor_id)
-            await _seed_system_user(db, actor_id)
+            await _seed_system_user(db, system_role, actor_id)
 
             # Seed de catálogos configurables (estados):
             await _seed_lead_statuses(db, actor_id)
@@ -405,7 +407,7 @@ Cada uno se implementa como `_seed_<catalog>_statuses(db, actor_id)` análogo a 
 - [ ] Catálogos seedeados: `lead_status` (7), `customer_status` (5), `appointment_status` (8).
 - [ ] Matriz de transiciones seedeada: `lead_status_transition` (base lead) + `customer_status_transition` (base customer) — ver [ADR-008](../decisions/ADR-008-configurable-status-transition-matrix.md).
 - [ ] Test smoke: login con admin bootstrap funciona y los 3 roles aparecen en `/roles/list`.
-- [ ] Test smoke: el JWT del admin contiene los 117 permisos como claims.
+- [ ] Test smoke: el JWT del admin contiene los 116 permisos como claims.
 - [ ] Si se asignan los roles `DOCTOR` o `ASESOR` a un nuevo user, el JWT contiene exactamente el subset documentado arriba.
 
 ## Mantenimiento futuro

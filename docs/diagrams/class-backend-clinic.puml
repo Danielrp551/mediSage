@@ -1,6 +1,6 @@
 @startuml class-backend-clinic
 ' Propósito: jerarquía OO del módulo clinic (Branch, Office, horarios y excepciones) — modelos, repos y services funcionales
-' Última actualización: 2026-05-28
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/clinic/ y backend/app/shared/
 
 !theme plain
@@ -113,20 +113,25 @@ package "app.modules.clinic.repositories" <<Frame>> {
       +ALLOWED_FIELDS: set
       --
       +get_by_code(db, code): Branch?
-      +list_options(db, only_active): list<Branch>
+      +list_active(db): list<Branch>
+      +get_by_ids(db, ids): list<Branch>  ' helper cross-módulo (staff)
+      +count_active_offices(db, branch_id): int  ' guard de borrado
+      +count_active_offices_map(db, branch_ids): dict<str, int>  ' offices_count batch
     }
     class OfficeRepository {
       +ALLOWED_FIELDS: set
       --
       +get_by_branch_and_code(db, branch_id, code): Office?
       +get_full(db, office_id): Office?  ' eager load: branch + verticals
-      +list_options(db, branch_id?, vertical_id?, only_active): list<Office>
+      +list_active(db, branch_id?, vertical_id?): list<Office>
+      +count_apt_verticals_map(db, office_ids): dict<str, int>  ' verticals_count batch
+      +branch_name_map(db, branch_ids): dict<str, str>  ' branch_name denormalizado
     }
     class OfficeOperatingHoursRepository {
       +ALLOWED_FIELDS: set
       --
       +list_for_office(db, office_id): list<OfficeOperatingHours>
-      +replace_all_for_office(db, office_id, items): list<OfficeOperatingHours>
+      +soft_delete_for_office(db, office_id): None  ' retira los bloques vivos (usado por el replace atómico del service)
     }
     class OfficeClosureRepository {
       +ALLOWED_FIELDS: set
@@ -145,7 +150,7 @@ package "app.modules.clinic.services" <<Frame>> {
     class "branch.py" as br_svc <<module>> {
       +get_by_id(db, branch_id)
       +list_paginated(db, query)
-      +list_options(db)
+      +list_active(db)
       +create(db, payload, actor_id)
       +update(db, branch_id, payload, actor_id)
       +soft_delete(db, branch_id, actor_id)
@@ -154,21 +159,21 @@ package "app.modules.clinic.services" <<Frame>> {
     class "office.py" as off_svc <<module>> {
       +get_by_id(db, office_id)
       +list_paginated(db, query)
-      +list_options(db, branch_id?, vertical_id?)
+      +list_active(db, branch_id?, vertical_id?)
       +create(db, payload, actor_id)
       +update(db, office_id, payload, actor_id)  ' incluye vertical_ids
       +soft_delete(db, office_id, actor_id)
     }
 
-    class "office_hours.py" as oh_svc <<module>> {
+    class "office_operating_hours.py" as oh_svc <<module>> {
       +list_for_office(db, office_id)
-      +replace_all(db, office_id, items, actor_id)
+      +replace(db, office_id, payload, actor_id)
     }
 
     class "office_closure.py" as cl_svc <<module>> {
-      +list_for_office(db, office_id, frm, to)
+      +list_for_office(db, office_id, date_from, date_to)
       +create(db, office_id, payload, actor_id)
-      +delete(db, office_id, closure_id, actor_id)
+      +soft_delete(db, office_id, closure_id, actor_id)
     }
   }
 }

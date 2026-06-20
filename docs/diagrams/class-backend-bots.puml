@@ -1,6 +1,6 @@
 @startuml class-backend-bots
 ' Propósito: jerarquía OO del módulo bots — modelos, repos, services, BotEngine abstracto (Embedded multi-proveedor; External diferido)
-' Última actualización: 2026-06-04 (reconciliación CQRS/Cloud Tasks — ADR-005 act., ADR-011, ADR-012)
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/bots/
 
 !theme plain
@@ -54,9 +54,9 @@ package "app.modules.bots.models" <<Frame>> {
     +external_webhook_url: str?
     +external_webhook_secret_name: str?
     +notes: str?
-    +is_active: bool = true
     --
     ' UNIQUE (bot_configuration_id, version)
+    ' is_active (schema) = ActiveMixin.active — NO es una columna nueva
   }
 
   class ConversationBotState <<entity>> {
@@ -77,7 +77,8 @@ package "app.modules.bots.models" <<Frame>> {
     +parameters_schema: JSON
     +target_service: str
     +requires_confirmation: bool = false
-    +is_active: bool = true
+    --
+    ' is_active (schema) = ActiveMixin.active — NO es una columna nueva
   }
 
   class BotToolCall <<entity, immutable>> {
@@ -111,7 +112,7 @@ package "app.modules.bots.models" <<Frame>> {
     +error: str?
     +metadata: JSON?
     --
-    ' UNIQUE (conversation_id, turn_number)
+    ' INDEX NO único (conversation_id, turn_number) — varios eventos por turno
     ' SIN SoftDelete
   }
 }
@@ -126,12 +127,11 @@ package "app.modules.bots.enums" <<Frame>> {
     general
     custom
   }
-  enum Provider <<enum>> {
-    claude
+  enum BotProvider <<enum>> {
     openai
+    claude
     vertex_ai
     azure_openai
-    langchain
     external_webhook
   }
   enum BotEventType <<enum>> {
@@ -245,18 +245,29 @@ package "app.modules.bots.services.engine" <<Frame>> {
   }
 
   ' Adaptadores por provider (subset común JSON Schema OpenAI ≈ Anthropic tool use)
-  class "providers/openai.py" as ProvOpenAI { +complete(system, messages, tools, params) }
-  class "providers/claude.py" as ProvClaude { +complete(system, messages, tools, params) }
+  class "providers/openai.py" as ProvOpenAI {
+    +complete(system, messages, tools, params)
+  }
+  class "providers/claude.py" as ProvClaude {
+    +complete(system, messages, tools, params)
+  }
 
   class TOOL_REGISTRY <<module-level dict, by code>> {
-    ' MVP (seedeadas): crm + catalog
+    ' Poblado al boot por tools/__init__.py (importa 5 módulos). El dispatcher resuelve por `code`.
+    ' catalog + crm (registradas; NO seedeadas en bot_tool):
     +"list_verticals" → catalog.vertical.list_active
     +"list_services_by_vertical" → catalog.service.list_active
     +"list_products_by_vertical" → catalog.product.list_active
     +"resolve_or_create_contact" → crm.person.find_by_identifier_or_create
     +"register_lead_note" → crm.lead_activity.log (NOTE)
     +"set_lead_status" → crm.person_lead_status.transition (requires_confirmation)
-    ' DIFERIDAS (no seedear hasta scheduling #7): book_appointment / check_availability / cancel_appointment
+    ' scheduling + marketing (registradas Y seedeadas — BOT_TOOL_SEED):
+    +"check_availability" → scheduling.availability.compute_available_slots
+    +"book_appointment" → scheduling.appointment.create_appointment (requires_confirmation)
+    +"cancel_appointment" → scheduling.transition.cancel (requires_confirmation)
+    +"list_eligible_promotions" → marketing.promotion_usage.eligible_for
+    ' clock (registrada; NO seedeada; sin BD):
+    +"get_current_datetime" → ancla temporal (Settings.BOT_TIMEZONE)
   }
 
   class BotInvocationContext <<dataclass>> {

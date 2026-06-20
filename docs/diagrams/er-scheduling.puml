@@ -1,6 +1,6 @@
 @startuml er-scheduling
 ' Propósito: modelo relacional del módulo scheduling — modelo FINAL (5 entidades): catálogo de estados de cita + matriz de transiciones configurable (ADR-008) + Appointment (unidad persistida del calendario) + dos audit-trails inmutables (status history + change log). La disponibilidad NO es una tabla — se calcula on-the-fly (ADR-006) a partir de fuentes de otros módulos.
-' Última actualización: 2026-06-06 — modelo final (5 entidades + matriz; disponibilidad on-the-fly ADR-006/007)
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/scheduling/models/
 
 !theme plain
@@ -189,7 +189,7 @@ entity "user" as t_user <<external>> #lightgrey {
 entity "lead_activity" as t_la <<external>> #lightgrey {
   ' Módulo: crm
   * id : varchar(36) <<PK>>
-  related_appointment_id : varchar(36) <<nullable, FK aditiva→appointment>>
+  related_appointment_id : varchar(36) <<nullable, SIN FK (columna+índice solamente)>>
   ...
 }
 
@@ -225,8 +225,8 @@ t_appt ||--o{ t_acl
 t_user |o--o{ t_ash : "changed_by"
 t_user |o--o{ t_acl : "changed_by"
 
-' LeadActivity (crm) referencia a Appointment (FK aditiva que crea esta migración)
-t_appt ||--o{ t_la : "APPOINTMENT_BOOKED/\nCANCELLED/ATTENDED\n(emitido en crm)"
+' LeadActivity (crm) referencia a Appointment SOLO por id (sin FK constraint, ADR-009)
+t_appt .. t_la : "APPOINTMENT_BOOKED/\nCANCELLED/ATTENDED\n(emitido en crm, ref por id)"
 
 ' ─────────────────────────────────────────────────────────────
 ' Notas
@@ -328,9 +328,10 @@ note as N_FK
   + la self-FK ""previous_appointment_id"". Lo que NO
   se declara es ""relationship"" ORM cross-módulo (se
   resuelven por id + batch maps, cero N+1).
-  Esta migración cierra además de forma ADITIVA la FK
-  forward ""crm.lead_activity.related_appointment_id → appointment""
-  que crm dejó pendiente.
+  En cambio, ""crm.lead_activity.related_appointment_id""
+  sigue siendo una columna ""varchar(36)""+índice SIN FK
+  constraint: las migraciones de scheduling (0020/0021)
+  NO la tocan — crm referencia la cita sólo por id.
 end note
 N_FK .. t_la
 

@@ -1,6 +1,6 @@
 @startuml class-backend-catalog
 ' Propósito: jerarquía OO del módulo catalog (Vertical → Service → Product) — modelos, repos y services funcionales
-' Última actualización: 2026-05-28
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/catalog/ y backend/app/shared/
 
 !theme plain
@@ -75,6 +75,7 @@ package "app.modules.catalog.models" <<Frame>> {
 
     class Product <<entity>> {
       +service_id: str <<FK>>
+      +vertical_id: str <<FK, denormalizado>>
       +code: str
       +name: str
       +description: str?
@@ -100,20 +101,28 @@ package "app.modules.catalog.repositories" <<Frame>> {
       +ALLOWED_FIELDS: set
       --
       +get_by_code(db, code): Vertical?
-      +list_options(db, only_active): list<Vertical>
+      +list_active(db): list<Vertical>
+      +get_by_ids(db, ids): list<Vertical>
+      +count_active_services(db, vertical_id): int
+      +count_active_services_map(db, vertical_ids): dict<str,int>
+      +count_active_products(db, vertical_id): int
+      +count_active_products_map(db, vertical_ids): dict<str,int>
     }
     class ServiceRepository {
       +ALLOWED_FIELDS: set
       --
       +get_by_vertical_and_code(db, vertical_id, code): Service?
-      +list_options(db, vertical_id?, only_active): list<Service>
+      +get_full(db, service_id): Service?
+      +list_active(db, vertical_id?): list<Service>
+      +count_active_products(db, service_id): int
+      +count_active_products_map(db, service_ids): dict<str,int>
     }
     class ProductRepository {
       +ALLOWED_FIELDS: set
       --
       +get_by_service_and_code(db, service_id, code): Product?
-      +list_options(db, service_id?, only_active): list<Product>
       +get_full(db, product_id): Product?
+      +list_active(db, service_id?): list<Product>
     }
   }
 }
@@ -127,7 +136,7 @@ package "app.modules.catalog.services" <<Frame>> {
     class "vertical.py" as vert_svc <<module>> {
       +get_by_id(db, vertical_id)
       +list_paginated(db, query)
-      +list_options(db)
+      +list_active(db)
       +create(db, payload, actor_id)
       +update(db, vertical_id, payload, actor_id)
       +soft_delete(db, vertical_id, actor_id)
@@ -136,14 +145,14 @@ package "app.modules.catalog.services" <<Frame>> {
     class "service.py" as svc_svc <<module>> {
       +get_by_id(...)
       +list_paginated(...)
-      +list_options(db, vertical_id?)
+      +list_active(db, vertical_id?)
       +create(...) / update(...) / soft_delete(...)
     }
 
     class "product.py" as prod_svc <<module>> {
       +get_by_id(...)
       +list_paginated(...)
-      +list_options(db, service_id?)
+      +list_active(db, service_id?)
       +create(...) / update(...) / soft_delete(...)
     }
   }

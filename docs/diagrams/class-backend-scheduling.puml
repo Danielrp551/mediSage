@@ -1,7 +1,7 @@
 @startuml class-backend-scheduling
 ' Propósito: jerarquía OO del módulo scheduling (modelo FINAL, 5 entidades) — catálogo de estados + matriz de transiciones configurable (ADR-008),
-'            Appointment (unidad persistida del calendario), dos audit-trails inmutables, repos + services (availability on-the-fly ADR-006/007 + lifecycle + bot facade).
-' Última actualización: 2026-06-06 — modelo final (5 entidades + matriz; disponibilidad on-the-fly ADR-006/007)
+'            Appointment (unidad persistida del calendario), dos audit-trails inmutables, repos + services (availability on-the-fly ADR-006/007 + lifecycle).
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/scheduling/ y backend/app/shared/
 
 !theme plain
@@ -185,7 +185,7 @@ package "app.modules.scheduling.repositories" <<Frame>> {
 ' ─────────────────────────────────────────────────────────────
 package "app.modules.scheduling.services" <<Frame>> {
   class "appointment_status.py" as as_svc <<module>> {
-    +list_options(db) / list_paginated(db, query)
+    +list_active(db) / list_paginated(db, query)
     +get_by_id(db, status_id)
     +create/update/soft_delete(...)  ' 1 is_initial (MULTIPLE_INITIAL_STATUS), guard *_IN_USE
     +get_transitions(db, status_id) / set_transitions(db, status_id, to_ids, actor_id)
@@ -223,13 +223,20 @@ package "app.modules.scheduling.services" <<Frame>> {
     ' attend → crm.promote_to_customer (atómico) + LeadActivity(APPOINTMENT_ATTENDED)
     ' Side-effects por code del destino (confirmed_at/cancelled_at/attended_at)
   }
-  class "bot_facade.py" as bot_svc <<module>> {
-    +book_from_bot(db, ctx, doctor_id, office_id, product_id, ...): Appointment
-    +cancel_from_bot(db, ctx, appointment_id): Appointment
+}
+
+' ─────────────────────────────────────────────────────────────
+' Integración del bot (módulo bots) — NO hay facade en scheduling
+' ─────────────────────────────────────────────────────────────
+package "app.modules.bots.services.engine.tools" <<Frame>> {
+  class "scheduling.py" as bot_tools <<module>> {
+    +check_availability(args, ctx, db): dict   ' → availability.compute_available_slots
+    +book_appointment(args, ctx, db): dict      ' → appointment.create_appointment (begin_nested)
+    +cancel_appointment(args, ctx, db): dict    ' → transition.cancel
     --
-    ' SYSTEM, source='bot', respeta TODOS los invariantes (sin override).
-    ' bots/services/engine/tools/scheduling.py invoca vía TOOL_REGISTRY:
-    ' check_availability / book_appointment / cancel_appointment
+    ' 3 tools registradas en TOOL_REGISTRY (por code). Corren como SYSTEM
+    ' (actor_id=SYSTEM_USER_ID, source='bot'), respetan TODOS los invariantes
+    ' (sin override). Llaman a los services DIRECTO (NO hay bot_facade.py).
   }
 }
 
@@ -322,9 +329,9 @@ tr_svc   ..> AppointmentRepository
 tr_svc   ..> AppointmentStatusRepository
 tr_svc   ..> AppointmentStatusTransitionRepository
 tr_svc   ..> AppointmentStatusHistoryRepository
-bot_svc  ..> appt_svc
-bot_svc  ..> tr_svc
-bot_svc  ..> av_svc
+bot_tools ..> appt_svc
+bot_tools ..> tr_svc
+bot_tools ..> av_svc
 
 ' ─────────────────────────────────────────────────────────────
 ' Notas
@@ -387,15 +394,18 @@ note bottom of tr_svc
   ""(APPOINTMENT_ATTENDED)"". ""reschedule"" vive en appointment.py.
 end note
 
-note bottom of bot_svc
-  **Bot facade (SYSTEM)**
-  ""/appointments/from-bot"" + ""/{id}/cancel-from-bot"".
-  Corre como SYSTEM, ""source='bot'"", respeta TODOS los
-  invariantes (incl. ""min_hours_to_cancel"" — el bot NO
-  hace override). ""bots/.../tools/scheduling.py"" registra
-  3 tools en ""TOOL_REGISTRY"" (check_availability /
-  book_appointment / cancel_appointment). Reschedule por
-  bot = cancel + book (sin 4ta tool en el MVP).
+note bottom of bot_tools
+  **Integración del bot (SYSTEM) — sin facade**
+  NO existe ""bot_facade.py"" ni rutas ""/from-bot""/
+  ""/cancel-from-bot"". ""bots/.../engine/tools/scheduling.py""
+  registra 3 tools en ""TOOL_REGISTRY"" (check_availability /
+  book_appointment / cancel_appointment) que llaman a los
+  services de scheduling DIRECTO. Corren como SYSTEM,
+  ""source='bot'"", respetan TODOS los invariantes (incl.
+  ""min_hours_to_cancel"" — el bot NO hace override).
+  ""book_appointment"" envuelve ""create_appointment"" en su
+  propio ""begin_nested"" (atomicidad en el path del bot).
+  Reschedule por bot = cancel + book (sin 4ta tool en el MVP).
 end note
 
 note as N_FK
@@ -405,8 +415,9 @@ note as N_FK
   ""Appointment"" declara ""ForeignKey"" reales + la self-FK
   ""previous_appointment_id"", pero SIN ""relationship"" ORM
   (se resuelven por id + batch maps, cero N+1).
-  La migración cierra de forma ADITIVA la FK forward
-  ""crm.lead_activity.related_appointment_id → appointment"".
+  ""crm.lead_activity.related_appointment_id"" sigue siendo
+  columna ""varchar(36)""+índice SIN FK: scheduling NO la
+  cierra (crm referencia la cita sólo por id).
 end note
 N_FK .. Person
 

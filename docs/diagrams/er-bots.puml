@@ -1,6 +1,6 @@
 @startuml er-bots
 ' Propósito: modelo relacional del módulo bots (BotConfiguration + Version + State + Tools + Events)
-' Última actualización: 2026-06-04 (reconciliación CQRS/Cloud Tasks — ADR-005 act., ADR-011, ADR-012)
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/bots/models/
 
 !theme plain
@@ -55,9 +55,9 @@ entity "bot_configuration_version" as t_bcv {
   external_webhook_url : varchar(500) <<nullable>>
   external_webhook_secret_name : varchar(255) <<nullable>>
   notes : text <<nullable>>
-  * is_active : boolean = true
   --
   ' UNIQUE (bot_configuration_id, version)
+  ' is_active (schema) = ActiveMixin.active — NO es una segunda columna
   * active : boolean
   deleted_at : timestamptz <<nullable>>
   * created_on : timestamptz
@@ -101,8 +101,8 @@ entity "bot_tool" as t_bt {
   * parameters_schema : jsonb
   * target_service : varchar(120)
   * requires_confirmation : boolean = false
-  * is_active : boolean = true
   --
+  ' is_active (schema) = ActiveMixin.active — NO es una segunda columna
   * active : boolean
   deleted_at : timestamptz <<nullable>>
   * created_on : timestamptz
@@ -161,7 +161,7 @@ entity "bot_event" as t_be {
   error : text <<nullable>>
   metadata : jsonb <<nullable>>
   --
-  ' UNIQUE (conversation_id, turn_number)
+  ' INDEX NO único (conversation_id, turn_number) — varios eventos por turno
   ' SIN SoftDelete — traza
   * active : boolean
   * created_on : timestamptz
@@ -271,7 +271,9 @@ end note
 
 note right of t_be
   **Observabilidad por turno**
-  UNIQUE (conversation_id, turn_number).
+  Index NO único (conversation_id, turn_number):
+  varios eventos por turno (turn_started +
+  turn_completed/turn_failed) comparten turn_number.
   Inmutable.
   Indexes: (bot_configuration_id, created_on),
   (event_type, created_on).

@@ -493,19 +493,17 @@ export const ENDPOINTS = {
     CREATE: `${CLINIC}/offices`,
     UPDATE: (id: string) => `${CLINIC}/offices/${id}`, // ← PUT
     DELETE: (id: string) => `${CLINIC}/offices/${id}`,
-    // Nested: operating hours (bulk replace).
-    HOURS_GET: (id: string) => `${CLINIC}/offices/${id}/operating-hours`,
-    HOURS_REPLACE: (id: string) => `${CLINIC}/offices/${id}/operating-hours`, // ← PUT bulk
-    // Nested: closures (individual CRUD).
-    CLOSURES_LIST: (id: string) => `${CLINIC}/offices/${id}/closures`,
-    CLOSURES_CREATE: (id: string) => `${CLINIC}/offices/${id}/closures`,
-    CLOSURES_DELETE: (id: string, closureId: string) =>
+    // Nested: operating hours (una key para GET + PUT bulk replace).
+    OPERATING_HOURS: (id: string) => `${CLINIC}/offices/${id}/operating-hours`,
+    // Nested: closures (una key para LIST + CREATE; CLOSURE para el DELETE por id).
+    CLOSURES: (id: string) => `${CLINIC}/offices/${id}/closures`,
+    CLOSURE: (id: string, closureId: string) =>
       `${CLINIC}/offices/${id}/closures/${closureId}`,
   },
 } as const;
 ```
 
-> **Query params**: `BRANCHES.ACTIVE` no toma params. `OFFICES.ACTIVE` acepta `?branch_id=` y/o `?vertical_id=` — se concatenan en el action (ver `listActiveOffices`). `CLOSURES_LIST` acepta `?from=&to=` para acotar el rango — se concatenan en `listClosures`.
+> **Query params**: `BRANCHES.ACTIVE` no toma params. `OFFICES.ACTIVE` acepta `?branch_id=` y/o `?vertical_id=` — se concatenan en el action (ver `listActiveOffices`). `CLOSURES` acepta `?from=&to=` para acotar el rango — se concatenan en `listClosures`.
 
 ## Navigation — extender `lib/constants/navigation.ts`
 
@@ -522,12 +520,12 @@ export const NAV_ITEMS: NavItem[] = [
   {
     key: "clinic",
     label: "Clínica",
-    icon: "BuildingRegular",
+    icon: "BuildingMultipleRegular",
     children: [
       {
         key: "branches",
         label: "Sedes",
-        icon: "BuildingMultipleRegular",
+        icon: "BuildingRegular",
         url: "/clinic/branches",
         permissions: ["MENU-CLINIC"],
       },
@@ -545,7 +543,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 ```
 
-> **Íconos** (todos existen en `@fluentui/react-icons` v9): grupo `BuildingRegular`, Sedes `BuildingMultipleRegular`, Consultorios `ConferenceRoomRegular`. Registrarlos en el `iconMap` del `Sidebar.tsx` (mismo paso que se hizo para los íconos de catalog). Alternativas válidas si alguno no resuelve: `LocationRegular` (Sedes), `DoorRegular` (Consultorios).
+> **Íconos** (todos existen en `@fluentui/react-icons` v9): grupo `BuildingMultipleRegular`, Sedes `BuildingRegular`, Consultorios `ConferenceRoomRegular`. Registrarlos en el `iconMap` del `Sidebar.tsx` (mismo paso que se hizo para los íconos de catalog). Alternativas válidas si alguno no resuelve: `LocationRegular` (Sedes), `DoorRegular` (Consultorios).
 
 > El sidebar (`components/layout/Sidebar/Sidebar.tsx`) ya filtra items por `permissions` vs `useAuth().permissions`. Si el user no tiene `MENU-CLINIC`, no ve el grupo. El detalle del office (`/clinic/offices/[id]`) **no** está en `NAV_ITEMS` (no es navegable desde el sidebar; se llega desde la lista) — su gating es `requirePermission("OFFICES_READ")` en el RSC.
 
@@ -717,10 +715,13 @@ import type { MutationResult } from "./user.actions";
 const HOURS_TAG = "clinic:office-hours";
 
 export async function listOfficeHours(officeId: string): Promise<OfficeOperatingHoursRow[]> {
-  // GET returns the full pattern as a RAW list (no envelope), one row per block.
-  return backendClient.get<OfficeOperatingHoursRow[]>(ENDPOINTS.OFFICES.HOURS_GET(officeId), {
-    tags: [HOURS_TAG, `clinic:office-hours:${officeId}`],
-  });
+  // GET devuelve un envelope SingleResponse ({success, data:[...]}), una fila por
+  // bloque (ordenadas día → opens_at). Se lee `data`.
+  const res = await backendClient.get<ApiSingle<OfficeOperatingHoursRow[]>>(
+    ENDPOINTS.OFFICES.OPERATING_HOURS(officeId),
+    { tags: [HOURS_TAG, `clinic:office-hours:${officeId}`] },
+  );
+  return res.data;
 }
 
 // Bulk atomic replace — the ENTIRE weekly pattern is sent and replaces what
@@ -735,7 +736,7 @@ export async function replaceOfficeHours(
   }
   try {
     const data = await backendClient.put<ApiSingle<OfficeOperatingHoursRow[]>>(
-      ENDPOINTS.OFFICES.HOURS_REPLACE(officeId), // ← PUT bulk
+      ENDPOINTS.OFFICES.OPERATING_HOURS(officeId), // ← PUT bulk
       parsed.data, // { hours: [...] }
     );
     revalidateTag(`clinic:office-hours:${officeId}`, "max");
@@ -764,11 +765,13 @@ export async function listClosures(
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   const qs = params.toString();
-  const base = ENDPOINTS.OFFICES.CLOSURES_LIST(officeId);
+  const base = ENDPOINTS.OFFICES.CLOSURES(officeId);
   const url = qs ? `${base}?${qs}` : base;
-  return backendClient.get<OfficeClosureItem[]>(url, {
+  // GET devuelve un envelope SingleResponse ({success, data:[...]}). Se lee `data`.
+  const res = await backendClient.get<ApiSingle<OfficeClosureItem[]>>(url, {
     tags: [CLOSURES_TAG, `clinic:office-closures:${officeId}`],
   });
+  return res.data;
 }
 
 export async function createClosure(
@@ -788,7 +791,7 @@ export async function createClosure(
       ends_at: new Date(parsed.data.ends_at).toISOString(),
     };
     const data = await backendClient.post<ApiSingle<OfficeClosureItem>>(
-      ENDPOINTS.OFFICES.CLOSURES_CREATE(officeId),
+      ENDPOINTS.OFFICES.CLOSURES(officeId),
       payload,
     );
     revalidateTag(`clinic:office-closures:${officeId}`, "max");
@@ -803,7 +806,7 @@ export async function deleteClosure(
   closureId: string,
 ): Promise<MutationResult<null>> {
   try {
-    await backendClient.delete(ENDPOINTS.OFFICES.CLOSURES_DELETE(officeId, closureId));
+    await backendClient.delete(ENDPOINTS.OFFICES.CLOSURE(officeId, closureId));
     revalidateTag(`clinic:office-closures:${officeId}`, "max");
     return { ok: true };
   } catch (e) {

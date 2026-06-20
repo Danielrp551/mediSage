@@ -1,6 +1,6 @@
 @startuml class-backend-admin
-' Propósito: jerarquía OO del módulo admin (User/Role/Permission) — mixins, BaseRepository, services funcionales
-' Última actualización: 2026-05-26
+' Propósito: jerarquía OO del módulo admin (User/Role/Permission/TokenFamily) — mixins, BaseRepository, services funcionales (incl. auth)
+' Última actualización: 2026-06-20
 ' Código de referencia: backend/app/modules/admin/ y backend/app/shared/
 
 !theme plain
@@ -82,6 +82,15 @@ package "app.modules.admin.models" <<Frame>> {
       +description: str
       +module: str
     }
+
+    class TokenFamily <<entity>> {
+      +family_id: str <<unique>>
+      +user_id: str <<FK user.id>>
+      +current_jti: str
+      +created_at: datetime
+      +revoked_at: datetime?
+      +reason: str?
+    }
   }
 }
 
@@ -96,17 +105,34 @@ package "app.modules.admin.repositories" <<Frame>> {
       --
       +get_by_email(db, email): User?
       +get_full(db, user_id): User?
+      +get_audit_info_map(db, user_ids): dict<str, User>
+      +list_active_by_role(db, role_name): list<User>
+      +has_role(db, user_id, role_name): bool
     }
     class RoleRepository {
       +ALLOWED_FIELDS: set
       --
+      +list_active(db): list<Role>
       +get_by_ids(db, ids): list<Role>
+      +get_by_name(db, name): Role?
     }
     class PermissionRepository {
       +ALLOWED_FIELDS: set
       --
+      +list_active(db): list<Permission>
       +get_by_ids(db, ids): list<Permission>
+      +get_by_code(db, code): Permission?
     }
+  }
+
+  ' token_family.py NO es subclase de BaseRepository: es un módulo
+  ' de funciones (mismo patrón que los services), no una clase ORM.
+  class "token_family.py" as tf_repo <<module>> {
+    +create_family(db, family_id, user_id, initial_jti): TokenFamily
+    +get_family(db, family_id): TokenFamily?
+    +get_family_for_update(db, family_id): TokenFamily?
+    +rotate_jti(db, family, new_jti): None
+    +revoke(db, family, reason): None
   }
 }
 
@@ -125,14 +151,23 @@ package "app.modules.admin.services" <<Frame>> {
     }
 
     class "role.py" as role_svc <<module>> {
+      +list_active(...)
       +get_by_id(...)
       +list_paginated(...)
-      +create(...) / update(...) / delete(...)
+      +create(...) / update(...)
     }
 
     class "permission.py" as perm_svc <<module>> {
+      +list_active(...)
+      +get_by_id(...)
       +list_paginated(...)
-      +list_options(...)
+      +create(...) / update(...)
+    }
+
+    class "auth.py" as auth_svc <<module>> {
+      +login(db, email, password): LoginResponse
+      +refresh(db, refresh_token): LoginResponse
+      +logout(db, refresh_token): None
     }
   }
 }
@@ -154,12 +189,20 @@ TimestampMixin  <|-- Role
 PrimaryKeyMixin <|-- Permission
 TimestampMixin  <|-- Permission
 
+' TokenFamily solo hereda PrimaryKeyMixin (sin Active/SoftDelete/Timestamp):
+' lleva sus propias columnas created_at / revoked_at en su lugar.
+PrimaryKeyMixin <|-- TokenFamily
+
 note bottom of TimestampMixin
-  **Patrón aplicado a las 3 entidades**
+  **Patrón aplicado a las 3 entidades de dominio**
   ""User"", ""Role"" y ""Permission""
   heredan los 4 mixins:
   ""PrimaryKeyMixin, ActiveMixin,""
   ""SoftDeleteMixin, TimestampMixin""
+
+  ""TokenFamily"" es la excepción: solo
+  hereda ""PrimaryKeyMixin"" (gestiona sus
+  propias columnas de ciclo de vida).
 
   (En el diagrama solo se dibujan algunas
   herencias para no saturar visualmente.)
@@ -175,10 +218,14 @@ User "1..*" --- "0..*" Role        : "user_role"
 Role "1..*" --- "0..*" Permission  : "role_permission"
 User "1..*" --- "0..*" Permission  : "user_permission\n(directa)"
 
+' Usuario → familias de refresh-token (1:N, una por sesión de login)
+User "1" --- "0..*" TokenFamily    : "token_family"
+
 ' Repositorios manejan su modelo
-UserRepository       ..> User       : manages
-RoleRepository       ..> Role       : manages
-PermissionRepository ..> Permission : manages
+UserRepository       ..> User        : manages
+RoleRepository       ..> Role        : manages
+PermissionRepository ..> Permission  : manages
+tf_repo              ..> TokenFamily : manages
 
 ' Services usan repositorios
 user_svc ..> UserRepository
@@ -187,6 +234,8 @@ user_svc ..> PermissionRepository
 role_svc ..> RoleRepository
 role_svc ..> PermissionRepository
 perm_svc ..> PermissionRepository
+auth_svc ..> UserRepository
+auth_svc ..> tf_repo
 
 ' Notas explicativas
 note right of BaseRepository
@@ -214,6 +263,15 @@ note right of User
   devuelve permisos directos
   + heredados vía roles.
   Usado para emitir el JWT.
+end note
+
+note bottom of auth_svc
+  **Flujo de autenticación**
+  ""login"" crea una ""TokenFamily"" y emite
+  el par access/refresh. ""refresh"" rota el
+  ""current_jti"" (o revoca la familia si
+  detecta reuso). ""logout"" revoca la familia.
+  Es el único service que toca ""token_family"".
 end note
 
 @enduml

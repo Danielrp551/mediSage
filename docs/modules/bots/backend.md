@@ -2,7 +2,7 @@
 
 > **Última actualización**: 2026-06-04 (fase de documentación, ANTES de implementar)
 > **Audiencia**: developer implementando `backend/app/modules/bots/` (incl. el sub-paquete `services/engine/`) + el cross-cutting nuevo `backend/app/core/cloud_tasks.py` + los **enganches aditivos** a `conversations` (`message.send_bot_outbound`, hook de `find_or_create_open`, enqueue en el webhook processor).
-> **Pre-requisito**: leer [`README.md`](README.md) (overview del módulo), [`../../../backend/CLAUDE.md`](../../../backend/CLAUDE.md) (patrones del template), [`../conversations/backend.md`](../conversations/backend.md) (**el molde directo** — CQRS/Firestore, outbox, `send_outbound`, `find_or_create_open`, webhook processor, `secrets.py`/`firestore.py`), [`../crm/backend.md`](../crm/backend.md) (gold-standard: catálogos configurables, matriz, denorm batch sin N+1, `find_by_identifier_or_create`, `lead_activity.log`, ADR-009), [`../../decisions/ADR-005-bot-engine-abstraction.md`](../../decisions/ADR-005-bot-engine-abstraction.md) (**revisado 2026-06-04**: Firestore-no-message-FK, Cloud Tasks dispatch, embedded multi-proveedor OpenAI default, external diferido, enganches conversations), [`../../decisions/ADR-009-forward-fk-deferred-cross-module.md`](../../decisions/ADR-009-forward-fk-deferred-cross-module.md) (FKs forward diferidas), [`../../decisions/ADR-010-runtime-secret-resolution.md`](../../decisions/ADR-010-runtime-secret-resolution.md), [`../../decisions/ADR-011-firestore-message-stream-cqrs.md`](../../decisions/ADR-011-firestore-message-stream-cqrs.md) (**el stream de mensajes vive en Firestore — el bot lee el historial del hilo de ahí, NO de Postgres**), y [`../../decisions/ADR-012-cloud-tasks-bot-dispatch.md`](../../decisions/ADR-012-cloud-tasks-bot-dispatch.md) (**NUEVO**: el turno del bot corre async vía Cloud Tasks → endpoint interno OIDC).
+> **Pre-requisito**: leer [`README.md`](README.md) (overview del módulo), [`../../../backend/CLAUDE.md`](../../../backend/CLAUDE.md) (patrones del template), [`../conversations/backend.md`](../conversations/backend.md) (**el molde directo** — CQRS/Firestore, outbox, `send_outbound`, `find_or_create_open`, webhook processor, `secrets.py`/`firestore.py`), [`../crm/backend.md`](../crm/backend.md) (gold-standard: catálogos configurables, matriz, denorm batch sin N+1, `find_by_identifier_or_create`, `lead_activity.log`, ADR-009), [`../../decisions/ADR-005-bot-engine-abstraction.md`](../../decisions/ADR-005-bot-engine-abstraction.md) (**revisado 2026-06-04**: Firestore-no-message-FK, Cloud Tasks dispatch, embedded multi-proveedor OpenAI default, external diferido, enganches conversations), [`../../decisions/ADR-009-forward-fk-deferred-cross-module.md`](../../decisions/ADR-009-forward-fk-deferred-cross-module.md) (FKs forward diferidas), [`../../decisions/ADR-010-runtime-secret-resolution.md`](../../decisions/ADR-010-runtime-secret-resolution.md), [`../../decisions/ADR-011-firestore-message-stream-cqrs.md`](../../decisions/ADR-011-firestore-message-stream-cqrs.md) (**el stream de mensajes vive en Firestore — el bot lee el historial del hilo de ahí, NO de Postgres**), y [`../../decisions/ADR-012-cloud-tasks-bot-dispatch.md`](../../decisions/ADR-012-cloud-tasks-bot-dispatch.md) (**NUEVO**: el turno del bot corre async vía Cloud Tasks → endpoint interno autenticado por shared-secret).
 
 > **Contrato autoritativo**: este doc respeta la **spec compartida de `bots`** (`C:/tmp/bots_spec.md` durante la fase de documentación; luego consolidada en [`README.md`](README.md)). Los nombres EXACTOS de entidades/campos/endpoints/permisos/códigos-de-error/enums/fases salen de ahí (en particular las **reconciliaciones §0**, que distinguen el diseño viejo 2026-05-28 del estado real). Si algo aquí discrepa de la spec o de [`README.md`](README.md)/[`ui.md`](ui.md)/[`frontend.md`](frontend.md), **gana la spec** y hay que corregir este doc.
 
@@ -18,7 +18,7 @@
 > 8. **Mixins del template** (`app.shared.base_model`): `PrimaryKeyMixin` (`id` varchar(36)), `ActiveMixin` (`active`), `SoftDeleteMixin` (`deleted_at`), `TimestampMixin` (`created_on`/`created_by`/`updated_on`/`updated_by`). **`BotToolCall` y `BotEvent` NO llevan `SoftDeleteMixin`** — son trazas/audit inmutable (no se soft-deletean).
 > 9. **JSONB variant**: las columnas `jsonb` usan `JSON().with_variant(JSONB(), "postgresql")` (idéntico a `crm.lead_activity.payload` / `conversations.message_outbox.payload`): JSONB en Postgres (prod), JSON en sqlite (el smoke usa `create_all`, no alembic). La migración escribe `JSONB` (solo corre en Postgres).
 
-`bots` es el **módulo #6** de medisage (catalog→clinic→staff→crm→**conversations COMPLETOS en prod**; sigue bots; luego scheduling #7, marketing #8). Es **el cerebro** que atiende automáticamente una conversación cuando `Conversation.assignee_type='bot'`: arma un prompt con el historial del hilo (leído de **Firestore**, ADR-011), llama a un LLM (OpenAI `gpt-4.1-mini` por defecto, o Claude), corre un loop de **tool-calling** contra herramientas de `crm`/`catalog`, y responde por WhatsApp reusando el pipe de `conversations`. El turno NO corre en el webhook: este **encola una Cloud Task** y un endpoint interno (`POST /api/v1/bots/engine/dispatch`, OIDC) corre el turno con CPU asignada (**ADR-012**).
+`bots` es el **módulo #6** de medisage (catalog→clinic→staff→crm→**conversations COMPLETOS en prod**; sigue bots; luego scheduling #7, marketing #8). Es **el cerebro** que atiende automáticamente una conversación cuando `Conversation.assignee_type='bot'`: arma un prompt con el historial del hilo (leído de **Firestore**, ADR-011), llama a un LLM (OpenAI `gpt-4.1-mini` por defecto, o Claude), corre un loop de **tool-calling** contra herramientas de `crm`/`catalog`, y responde por WhatsApp reusando el pipe de `conversations`. El turno NO corre en el webhook: este **encola una Cloud Task** y un endpoint interno (`POST /api/v1/bots/engine/dispatch`, autenticado por shared-secret) corre el turno con CPU asignada (**ADR-012**).
 
 > **🔑 Tres cosas que distinguen este diseño del overview viejo (`docs/modules/bots.md` + ADR-005 original, 2026-05-28) — leerlas ANTES de los models** (reconciliaciones §0 de la spec):
 > 1. **Async del turno = Cloud Tasks**, NO `BackgroundTasks` ni síncrono. El webhook de `conversations`, tras su pipe síncrono, llama `bots.cloud_tasks.enqueue_turn(conversation_id, mid)` (solo si `assignee_type=='bot'`). Reintentos+backoff+DLQ los da la cola. ADR-012.
@@ -32,7 +32,7 @@
 ```
 backend/app/
 ├── core/
-│   └── cloud_tasks.py                     # NUEVO cross-cutting: cliente lazy Cloud Tasks + enqueue_turn (OIDC). Molde secrets.py/firestore.py  ── F3
+│   └── cloud_tasks.py                     # NUEVO cross-cutting: cliente lazy Cloud Tasks + enqueue_turn (shared-secret header). Molde secrets.py/firestore.py  ── F3
 └── modules/bots/
     ├── __init__.py
     ├── enums.py                           # BotType, BotProvider, ToolCallStatus, BotEventType  (StrEnum; NO catálogos en BD)
@@ -87,10 +87,10 @@ backend/app/
         ├── bot_configuration.py           # /configurations/* (+ /versions/*, /activate-version, /tools M:N)
         ├── bot_tool.py                     # /tools/*
         ├── conversation_bot_state.py       # /conversations/{cid}/state + state/reset + events + tool-calls
-        └── engine.py                       # /engine/dispatch (OIDC, sin RBAC) + /engine/dispatch-manual (RBAC)
+        └── engine.py                       # /engine/dispatch (shared-secret, sin RBAC) + /engine/dispatch-manual (RBAC)
 ```
 
-> **El `engine` es un sub-paquete de `services`** (cohesión por dominio, igual que `conversations.services.webhook_processor`): el router `engine.py` solo autentica (OIDC del dispatch / RBAC del manual) y delega a `services.engine.embedded.dispatch_turn`. Un provider nuevo = un módulo nuevo en `providers/`, sin tocar el engine (despacho por `BotConfigurationVersion.provider`). Una tool nueva = un `@register_tool` en `tools/`, sin tocar el dispatcher.
+> **El `engine` es un sub-paquete de `services`** (cohesión por dominio, igual que `conversations.services.webhook_processor`): el router `engine.py` solo autentica (shared-secret del dispatch / RBAC del manual) y delega a `services.engine.embedded.dispatch_turn`. Un provider nuevo = un módulo nuevo en `providers/`, sin tocar el engine (despacho por `BotConfigurationVersion.provider`). Una tool nueva = un `@register_tool` en `tools/`, sin tocar el dispatcher.
 > **`models/associations.py`**: `bots` SÍ introduce un M:N nuevo (`bot_configuration_tool`) → va en `associations.py` (igual que `admin/associations.py`), para que SQLAlchemy lo vea antes de los modelos que lo referencian.
 
 ### 1.1 Registro del módulo
@@ -109,12 +109,12 @@ from app.modules.bots.routers import router as bots_router
 app.include_router(bots_router, prefix=settings.API_V1_PREFIX)   # /api/v1/bots/...
 ```
 
-> **`/engine/dispatch` es interno, NO va en un router top-level aparte** (a diferencia de `conversations.webhooks`): vive dentro del aggregator de `bots` bajo `/bots/engine/dispatch`, pero su dependencia de auth es **OIDC/shared-secret** (no `RequirePermission`), porque lo invoca Cloud Tasks (§9). El aggregator `routers/__init__.py` replica el patrón de `crm`/`conversations`:
+> **`/engine/dispatch` es interno, NO va en un router top-level aparte** (a diferencia de `conversations.webhooks`): vive dentro del aggregator de `bots` bajo `/bots/engine/dispatch`, pero su dependencia de auth es **shared-secret** (header `X-Bot-Dispatch-Secret`, comparado con `hmac.compare_digest`; no `RequirePermission`), porque lo invoca Cloud Tasks (§9). El aggregator `routers/__init__.py` replica el patrón de `crm`/`conversations`:
 
 ```python
 """
 Aggregates the bots sub-routers under one prefix. `main.py` includes this `router` once.
-El sub-router `engine` declara endpoints internos (/engine/dispatch OIDC, /engine/dispatch-manual
+El sub-router `engine` declara endpoints internos (/engine/dispatch shared-secret, /engine/dispatch-manual
 RBAC) además del CRUD. Orden: configuration/tool antes que el catch-all de state por /{cid}.
 """
 
@@ -948,7 +948,7 @@ from pydantic import BaseModel, Field
 
 
 class DispatchTurnRequest(BaseModel):
-    """Body de POST /engine/dispatch (target de Cloud Tasks, OIDC) y de
+    """Body de POST /engine/dispatch (target de Cloud Tasks, shared-secret) y de
     POST /engine/dispatch-manual (RBAC, debugging). input_message_id = el `mid` (doc-id
     Firestore) del inbound que disparó el turno (opcional: en el dispatch manual no hay un
     mensaje nuevo, el engine toma el último inbound del hilo desde Firestore)."""
@@ -1801,26 +1801,31 @@ async def dispatch_turn(db, *, conversation_id: str, input_message_id: str | Non
 
 ## 7. `app/core/cloud_tasks.py` — cliente lazy + `enqueue_turn` (ADR-012)
 
-Cross-cutting reusable (molde `app/core/secrets.py`/`firestore.py`): cliente del SDK de Cloud Tasks **lazy** (no al import → el boot/smoke sin GCP no rompe) + helper `enqueue_turn` que crea una tarea HTTP con token **OIDC** apuntando a `POST /api/v1/bots/engine/dispatch`.
+Cross-cutting reusable (molde `app/core/secrets.py`/`firestore.py`): cliente del SDK de Cloud Tasks **lazy** (no al import → el boot/smoke sin GCP no rompe) + helper `enqueue_turn` que crea una tarea HTTP con el header **`X-Bot-Dispatch-Secret`** (== `BOT_DISPATCH_SECRET`) apuntando a `POST /api/v1/bots/engine/dispatch`.
 
 ```python
 """
 Cloud Tasks dispatch del turno del bot (ADR-012). El webhook de conversations, tras su pipe
 síncrono, encola UNA tarea (enqueue_turn) → la cola la entrega a POST /api/v1/bots/engine/dispatch
-con un token OIDC (Cloud Run valida el audience). El endpoint corre dispatch_turn con CPU
-asignada (el turno llama a un LLM = segundos + loops de tool-calling). Reintentos+backoff+DLQ+
-rate-limit los configura la COLA (infra/CI), no el código.
+con el header X-Bot-Dispatch-Secret (== BOT_DISPATCH_SECRET; el endpoint lo compara en tiempo
+constante con hmac.compare_digest). El endpoint corre dispatch_turn con CPU asignada (el turno
+llama a un LLM = segundos + loops de tool-calling). Reintentos+backoff+DLQ+rate-limit los
+configura la COLA (infra/CI), no el código.
 
 - El cliente del SDK se inicializa LAZY (no al import) → la app bootea sin GCP (local/test).
-- En local/dev (ENV_NAME=dev o CLOUD_TASKS_QUEUE vacío) enqueue_turn es NO-OP (o llama el
-  dispatch inline para debugging — flag CLOUD_TASKS_INLINE). El smoke NUNCA toca Cloud Tasks.
-- La SA de Cloud Run necesita roles/cloudtasks.enqueuer + actuar como la SA del OIDC token
-  (roles/iam.serviceAccountUser sobre la SA invoker).
+- En local/dev (ENV_NAME=dev o CLOUD_TASKS_QUEUE vacío) enqueue_turn es NO-OP. El smoke NUNCA
+  toca Cloud Tasks; el dispatch se prueba vía /engine/dispatch-manual (RBAC BOT_ENGINE_INVOKE).
+- Auth del dispatch = shared-secret (no OIDC): se eligió porque el servicio es PÚBLICO
+  (Meta/Vercel) → OIDC degradaría a verificación in-app sumando fallas solo-en-prod
+  (cert-fetch/clock-skew/drift de audiencia/IAM actAs). OIDC = hardening futuro si el endpoint
+  se separa a un Cloud Run privado propio. La SA de Cloud Run solo necesita
+  roles/cloudtasks.enqueuer (sin actAs/invoker SA — el auth es el shared-secret).
 Dep nueva: google-cloud-tasks>=2.16,<3 (pin en pyproject.toml).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -1829,48 +1834,68 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Nombre del header del shared-secret. UNA sola fuente, importada por el enqueue (acá) y por el
+# verify del endpoint /engine/dispatch → sin drift de nombre (gotcha de falla silenciosa en prod).
+DISPATCH_SECRET_HEADER = "X-Bot-Dispatch-Secret"
+
 _client: Any = None  # lazy CloudTasksAsyncClient
 
 
 def _get_client() -> Any:
     global _client
     if _client is None:
-        from google.cloud import tasks_v2   # import diferido (solo Cloud Run)
+        import google.cloud.tasks_v2 as tasks_v2   # import diferido (solo Cloud Run)
         _client = tasks_v2.CloudTasksAsyncClient()
     return _client
 
 
 async def enqueue_turn(*, conversation_id: str, input_message_id: str | None) -> None:
     """Encola un turno del bot. NO-OP en dev / sin cola configurada (el webhook ya respondió
-    200 a Meta; en local el dispatch se prueba vía /engine/dispatch-manual). El payload va al
-    endpoint interno con un token OIDC (audience = la URL del servicio)."""
+    200 a Meta; en local el dispatch se prueba vía /engine/dispatch-manual). El header
+    X-Bot-Dispatch-Secret (== BOT_DISPATCH_SECRET) autentica el dispatch en el endpoint."""
     settings = get_settings()
-    if not settings.CLOUD_TASKS_QUEUE or settings.ENV_NAME == "dev":
-        logger.info("cloud tasks disabled; skipping bot turn enqueue",
-                    extra={"conversation_id": conversation_id})
+    if settings.ENV_NAME == "dev" or not settings.CLOUD_TASKS_QUEUE:
         return
-    parent = _get_client().queue_path(
-        settings.GCP_PROJECT_ID, settings.CLOUD_TASKS_LOCATION, settings.CLOUD_TASKS_QUEUE)
-    url = f"{settings.SERVICE_BASE_URL}{settings.API_V1_PREFIX}/bots/engine/dispatch"
+    import google.cloud.tasks_v2 as tasks_v2
+    from google.api_core.exceptions import AlreadyExists
+
+    client = _get_client()
+    # rstrip('/'): SERVICE_BASE_URL con trailing slash + API_V1_PREFIX que ya empieza con '/'
+    # daría '//api/...' → 404 (4xx no reintentable) → turno perdido en silencio.
+    url = f"{settings.SERVICE_BASE_URL.rstrip('/')}{settings.API_V1_PREFIX}/bots/engine/dispatch"
     body = json.dumps(
         {"conversation_id": conversation_id, "input_message_id": input_message_id}
     ).encode()
-    task = {
+    task: dict[str, Any] = {
         "http_request": {
-            "http_method": "POST",
+            "http_method": tasks_v2.HttpMethod.POST,
             "url": url,
-            "headers": {"Content-Type": "application/json"},
-            "body": body,
-            "oidc_token": {
-                "service_account_email": settings.CLOUD_TASKS_INVOKER_SA,
-                "audience": settings.SERVICE_BASE_URL,
+            "headers": {
+                "Content-Type": "application/json",
+                DISPATCH_SECRET_HEADER: settings.BOT_DISPATCH_SECRET,
             },
+            "body": body,
         }
     }
-    await _get_client().create_task(parent=parent, task=task)
+    if input_message_id:
+        # Nombre determinista: mismo inbound (reintento de Meta) → mismo nombre → dedupe del enqueue.
+        digest = hashlib.sha256(f"{conversation_id}:{input_message_id}".encode()).hexdigest()
+        task["name"] = client.task_path(
+            settings.GCP_PROJECT_ID,
+            settings.CLOUD_TASKS_LOCATION,
+            settings.CLOUD_TASKS_QUEUE,
+            digest,
+        )
+    parent = client.queue_path(
+        settings.GCP_PROJECT_ID, settings.CLOUD_TASKS_LOCATION, settings.CLOUD_TASKS_QUEUE
+    )
+    try:
+        await client.create_task(parent=parent, task=task)
+    except AlreadyExists:
+        logger.info("bot turn ya encolado (dedupe)", extra={"conversation_id": conversation_id})
 ```
 
-> **Settings nuevos** (en `app/core/config.py:Settings`, defaults vacíos para que el smoke `ENV_NAME=dev` no toque nada): `OPENAI_API_KEY: str = ""`, `ANTHROPIC_API_KEY: str = ""`, `BOT_DEFAULT_MODEL: str = "gpt-4.1-mini"`, `MAX_TOOL_ITERATIONS_PER_TURN: int = 5`, `CLOUD_TASKS_QUEUE: str = ""`, `CLOUD_TASKS_LOCATION: str = "us-central1"`, `CLOUD_TASKS_INVOKER_SA: str = ""`, `SERVICE_BASE_URL: str = ""` (la URL pública del servicio Cloud Run, para construir el target del task + el audience OIDC). `GCP_PROJECT_ID` ya existe (lo agregó conversations). **Deps runtime**: `openai>=1.x` (nueva), `anthropic>=0.40` (ya está por conversations), `google-cloud-tasks>=2.16,<3` (nueva). **Agregar `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` a `--set-secrets` y `CLOUD_TASKS_*`/`SERVICE_BASE_URL`/`BOT_DEFAULT_MODEL`/`MAX_TOOL_ITERATIONS_PER_TURN` a `--set-env-vars` de AMBOS workflows deploy** (lección transversal §0.7/§0.15 de conversations: los workflows backend NO seteaban env vars nuevas).
+> **Settings nuevos** (en `app/core/config.py:Settings`, defaults vacíos para que el smoke `ENV_NAME=dev` no toque nada): `OPENAI_API_KEY: str = ""`, `ANTHROPIC_API_KEY: str = ""`, `BOT_DEFAULT_MODEL: str = "gpt-4.1-mini"`, `MAX_TOOL_ITERATIONS_PER_TURN: int = 5`, `CLOUD_TASKS_QUEUE: str = ""`, `CLOUD_TASKS_LOCATION: str = "us-central1"`, `BOT_DISPATCH_SECRET: str = ""` (el shared-secret del dispatch; el endpoint `/engine/dispatch` lo compara con `hmac.compare_digest`), `SERVICE_BASE_URL: str = ""` (la URL pública del servicio Cloud Run, para construir el target del task). `GCP_PROJECT_ID` ya existe (lo agregó conversations). **El auth del dispatch NO usa un invoker SA ni audience OIDC** — es el `BOT_DISPATCH_SECRET`. **Deps runtime**: `openai>=1.x` (nueva), `anthropic>=0.40` (ya está por conversations), `google-cloud-tasks>=2.16,<3` (nueva). **Agregar `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`BOT_DISPATCH_SECRET` a `--set-secrets` y `CLOUD_TASKS_*`/`SERVICE_BASE_URL`/`BOT_DEFAULT_MODEL`/`MAX_TOOL_ITERATIONS_PER_TURN` a `--set-env-vars` de AMBOS workflows deploy** (lección transversal §0.7/§0.15 de conversations: los workflows backend NO seteaban env vars nuevas).
 
 ---
 
@@ -1993,15 +2018,20 @@ Patrón shipped: permiso vía `dependencies=[Depends(RequirePermission("CODE"))]
 
 | Método | Ruta | Auth | Envelope / Body |
 |---|---|---|---|
-| POST | `/engine/dispatch` | **OIDC / shared-secret, NO RBAC** (target de Cloud Tasks) | `DispatchTurnRequest` → `200 {success:true}` |
+| POST | `/engine/dispatch` | **shared-secret (header `X-Bot-Dispatch-Secret`), NO RBAC** (target de Cloud Tasks) | `DispatchTurnRequest` → `200 {success:true}` |
 | POST | `/engine/dispatch-manual` | `BOT_ENGINE_INVOKE` (debugging de admin) | `DispatchTurnRequest` → `SingleResponse[ConversationBotStateDetail]` |
 
 ```python
 # routers/engine.py (extracto)
-from fastapi import APIRouter, Depends, Request, status
+import hmac
+from typing import Annotated
 
-from app.core.dependencies import CurrentAuth, DBSession
-from app.core.permissions import RequirePermission
+from fastapi import APIRouter, Depends, Header, status
+
+from app.core.cloud_tasks import DISPATCH_SECRET_HEADER
+from app.core.config import get_settings
+from app.core.dependencies import CurrentAuth, DBSession, RequirePermission
+from app.core.exceptions import ForbiddenException
 from app.modules.bots.schemas.engine import DispatchTurnRequest
 from app.modules.bots.services.engine import embedded as engine
 from app.modules.conversations.services import message as conv_message
@@ -2009,17 +2039,25 @@ from app.modules.conversations.services import message as conv_message
 router = APIRouter(prefix="/engine", tags=["bots"])
 
 
-async def verify_oidc(request: Request) -> None:
-    """Auth del dispatch interno: valida el token OIDC que Cloud Tasks adjunta (audience =
-    SERVICE_BASE_URL). En Cloud Run, el ingress/IAM ya valida el OIDC del invoker SA; acá se
-    re-chequea el audience/issuer del Authorization: Bearer. En dev (sin GCP) se acepta un
-    shared-secret header (X-Bot-Dispatch-Secret == Settings.BOT_DISPATCH_SECRET)."""
-    ...
+async def verify_dispatch_secret(
+    x_bot_dispatch_secret: Annotated[str | None, Header(alias=DISPATCH_SECRET_HEADER)] = None,
+) -> None:
+    """Auth del endpoint interno `/engine/dispatch` (target de Cloud Tasks, sin RBAC): compara el
+    header con `BOT_DISPATCH_SECRET` en TIEMPO CONSTANTE. Un secret CONFIGURADO vacío → 403 SIEMPRE
+    (nunca aceptar un header ausente contra un secret vacío). Mismo primitivo que la firma de Meta."""
+    expected = get_settings().BOT_DISPATCH_SECRET.strip()
+    provided = (x_bot_dispatch_secret or "").strip()
+    if not expected or not hmac.compare_digest(provided, expected):
+        raise ForbiddenException("Dispatch no autorizado", code="BOT_DISPATCH_UNAUTHORIZED")
 
 
-@router.post("/dispatch", status_code=status.HTTP_200_OK, dependencies=[Depends(verify_oidc)])
+@router.post(
+    "/dispatch",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(verify_dispatch_secret)],
+)
 async def dispatch(payload: DispatchTurnRequest, db: DBSession) -> dict:
-    """Target de Cloud Tasks. SIN RBAC (lo invoca la cola con OIDC). Corre el turno; dispara el
+    """Target de Cloud Tasks. SIN RBAC: lo autentica el shared-secret. Corre el turno; dispara el
     relay síncrono del outbox a Firestore tras el flush (mismo patrón que el webhook/composer)."""
     await engine.dispatch_turn(
         db, conversation_id=payload.conversation_id, input_message_id=payload.input_message_id)
@@ -2039,7 +2077,7 @@ async def dispatch_manual(
     return await state_service.get_state(db, payload.conversation_id)
 ```
 
-> **`/engine/dispatch` SIN RBAC**: lo invoca Cloud Tasks con un token **OIDC** (Cloud Run valida el audience del invoker SA). NO usa `RequirePermission`/`CurrentAuth`. La defensa de fondo es el IAM de Cloud Run (`--no-allow-unauthenticated` + el invoker SA con `roles/run.invoker`); `verify_oidc` re-chequea el audience. En dev (sin GCP) acepta un `X-Bot-Dispatch-Secret` (`Settings.BOT_DISPATCH_SECRET`). **`BOT_ENGINE_INVOKE` gatea SOLO el dispatch MANUAL** (admin, debugging). **El relay síncrono** del outbox lo dispara el router (igual que el composer/webhook de conversations — evita el ciclo de import con `conversation`).
+> **`/engine/dispatch` SIN RBAC**: lo invoca Cloud Tasks con el header **`X-Bot-Dispatch-Secret`** (== `BOT_DISPATCH_SECRET`, comparado en tiempo constante con `hmac.compare_digest`). NO usa `RequirePermission`/`CurrentAuth`. `verify_dispatch_secret` rechaza con `403 BOT_DISPATCH_UNAUTHORIZED` si el header no matchea (o si el secret configurado está vacío). El mismo shared-secret aplica en dev/smoke (no hay rama OIDC). **`BOT_ENGINE_INVOKE` gatea SOLO el dispatch MANUAL** (admin, debugging). **El relay síncrono** del outbox lo dispara el router (igual que el composer/webhook de conversations — evita el ciclo de import con `conversation`).
 
 ---
 
@@ -2053,7 +2091,7 @@ Canónicos en [`_seed-and-roles.md`](../_seed-and-roles.md) (`module="BOTS"`). *
 - **ASESOR**: read-only — `MENU-BOTS`, `BOT_CONFIGURATIONS_READ`, `BOT_STATE_READ`, `BOT_EVENTS_READ`, `BOT_TOOL_CALLS_READ` (puede ver qué hizo el bot en una conversación; NO configura ni dispara). **NO** `BOT_*_WRITE`/`BOT_ENGINE_INVOKE`/`BOT_CONFIGURATIONS_{CREATE,UPDATE,DELETE}`.
 - **DOCTOR**: sin permisos en bots.
 
-> El `/engine/dispatch` NO usa RBAC (OIDC de Cloud Tasks). `BOT_ENGINE_INVOKE` gatea solo `/engine/dispatch-manual`. Los sets `ASESOR_PERMISSION_CODES`/`ADMIN_PERMISSION_CODES` se filtran por código (idempotente, a prueba de orden de módulos). El user/role `SYSTEM` (`00000000-0000-0000-0000-000000000002`, seed crm F0) es el `created_by`/`actor_id` de las trazas (`BotEvent`/`BotToolCall`/`ConversationBotState`) y de las tools (que corren como SYSTEM).
+> El `/engine/dispatch` NO usa RBAC (shared-secret `X-Bot-Dispatch-Secret` de Cloud Tasks). `BOT_ENGINE_INVOKE` gatea solo `/engine/dispatch-manual`. Los sets `ASESOR_PERMISSION_CODES`/`ADMIN_PERMISSION_CODES` se filtran por código (idempotente, a prueba de orden de módulos). El user/role `SYSTEM` (`00000000-0000-0000-0000-000000000002`, seed crm F0) es el `created_by`/`actor_id` de las trazas (`BotEvent`/`BotToolCall`/`ConversationBotState`) y de las tools (que corren como SYSTEM).
 
 ---
 
@@ -2374,11 +2412,11 @@ Un bot de demostración + su primera versión (provider=openai/`gpt-4.1-mini`) +
 - [ ] `schemas/{conversation_bot_state,bot_event,bot_tool_call,engine}.py` (incl. `DispatchTurnRequest`/`ResetBotStateRequest`).
 - [ ] `repositories/{conversation_bot_state,bot_event,bot_tool_call}.py`.
 - [ ] `services/engine/{__init__ (engine_factory),base,embedded (dispatch_turn + loop tool-calling),providers/{openai,claude}}.py` (adaptadores con `complete()`; import lazy de los SDK).
-- [ ] **`app/core/cloud_tasks.py`** (cliente lazy + `enqueue_turn` OIDC; NO-OP en dev) + Settings + dep `google-cloud-tasks` + `openai` en `pyproject.toml`.
+- [ ] **`app/core/cloud_tasks.py`** (cliente lazy + `enqueue_turn` con header `X-Bot-Dispatch-Secret`; NO-OP en dev) + Settings + dep `google-cloud-tasks` + `openai` en `pyproject.toml`.
 - [ ] **Enganches conversations** (aditivos): `message.send_bot_outbound` + hook bot en `find_or_create_open` + enqueue en `webhook_processor/whatsapp.process_inbound`.
 - [ ] `services/{conversation_bot_state,bot_event,bot_tool_call}.py` (read-only depuración + reset_state).
-- [ ] `routers/{conversation_bot_state,engine}.py` (`/state`/`state/reset`/`events`/`tool-calls`; `/engine/dispatch` OIDC + `/engine/dispatch-manual` RBAC).
-- [ ] **Infra Cloud Tasks** (qa/prod): cola + IAM (`roles/cloudtasks.enqueuer` para la SA del servicio, `roles/run.invoker` para el invoker SA, `--no-allow-unauthenticated` en `/engine/dispatch`). Provider creds (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`) en `--set-secrets`.
+- [ ] `routers/{conversation_bot_state,engine}.py` (`/state`/`state/reset`/`events`/`tool-calls`; `/engine/dispatch` shared-secret + `/engine/dispatch-manual` RBAC).
+- [ ] **Infra Cloud Tasks** (qa/prod): cola + IAM (`roles/cloudtasks.enqueuer` para la SA del servicio; el dispatch lo autentica el shared-secret, no IAM → sin invoker SA ni `--no-allow-unauthenticated`, el servicio es público para Meta/Vercel). Provider creds (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`) + `BOT_DISPATCH_SECRET` en `--set-secrets`.
 - [ ] (Frontend F3) panel de depuración por conversación (state + timeline BotEvent + tool calls) — ver [`ui.md`](ui.md).
 - [ ] Test: `dispatch-manual` sobre un hilo `assignee_type='bot'` con bot+versión → `BotEvent(turn_started/completed)` + outbound del bot (sender_type='bot') + `ConversationBotState.turn_count++`; dispatch sobre hilo no-bot → `400 CONVERSATION_NOT_BOT`; bot sin versión → `400 NO_CURRENT_VERSION`; loop de tool-calling con una tool registrada → `BotToolCall(success)`; tool con target sin registry → `BotToolCall(error, TOOL_NOT_REGISTERED)`; provider external_webhook → `400 PROVIDER_NOT_SUPPORTED`; `state/reset` limpia slots + salta a la versión vigente; `max_turns_per_conversation` corta el turno. (Smoke: el adaptador del provider y las escrituras Firestore se mockean — el smoke valida el flujo del turno + las trazas, no la llamada real al LLM.)
 
@@ -2415,7 +2453,7 @@ Un bot de demostración + su primera versión (provider=openai/`gpt-4.1-mini`) +
 ## 16. Decisiones para ADRs / consolidación
 
 - **ADR-005 (REVISAR, mantener Accepted, "act. 2026-06-04")**: el ADR original (2026-05-28) es PRE-Firestore/CQRS, PRE-Cloud-Tasks y PRE-orden-real. Actualizar con: (a) **Mensajes en Firestore** (ADR-011) → `BotEvent.input/output_message_id` = `mid` Firestore varchar(255), NO FK; el bot lee el historial de Firestore; (b) **Async = Cloud Tasks** (ADR-012), NO BackgroundTasks/síncrono; (c) **Embedded multi-proveedor** (OpenAI default `gpt-4.1-mini` + Claude), `ExternalBotEngine` DISEÑADO pero DIFERIDO (campos sin impl); (d) **Tools = crm + catalog SOLO** (scheduling diferido); (e) **enganches conversations** aditivos (`send_bot_outbound`, hook bot en `find_or_create_open`, enqueue en el webhook); (f) credenciales provider = `Settings.OPENAI_API_KEY`/`ANTHROPIC_API_KEY` globales (resolución per-bot vía secret_resolver = futuro); (g) guards `MAX_TOOL_ITERATIONS_PER_TURN`/`max_turns_per_conversation`.
-- **ADR-012 (NUEVO, Accepted, 2026-06-04)**: "Cloud Tasks dispatch del turno del bot". **Context**: el turno llama a un LLM (segundos + loops de tool-calling) = trabajo lento must-complete; BackgroundTasks no sobrevive el apagado de la instancia ni la CPU throttling post-response de Cloud Run, sin reintentos. **Decision**: el webhook (tras su pipe síncrono) encola una Cloud Task → `POST /api/v1/bots/engine/dispatch` (OIDC, sin RBAC, CPU asignada) corre `dispatch_turn`; reintentos+backoff+DLQ+rate-limit los da la cola. `app/core/cloud_tasks.py` (cliente lazy + `enqueue_turn`, molde `secrets.py`/`firestore.py`). **Alternatives**: BackgroundTasks (RECHAZADA: no durable, CPU throttled); síncrono en el webhook (RECHAZADA: Meta timeout + bloquea el ack); Pub/Sub (viable, descartada a favor de Cloud Tasks por el target HTTP directo + OIDC nativo). **Consequences**: durabilidad + reintentos + CPU; complejidad (cola + IAM invoker SA + endpoint interno OIDC). Referencia a ADR-005 (revisado) y ADR-011.
+- **ADR-012 (NUEVO, Accepted, 2026-06-04)**: "Cloud Tasks dispatch del turno del bot". **Context**: el turno llama a un LLM (segundos + loops de tool-calling) = trabajo lento must-complete; BackgroundTasks no sobrevive el apagado de la instancia ni la CPU throttling post-response de Cloud Run, sin reintentos. **Decision**: el webhook (tras su pipe síncrono) encola una Cloud Task → `POST /api/v1/bots/engine/dispatch` (shared-secret, sin RBAC, CPU asignada) corre `dispatch_turn`; reintentos+backoff+DLQ+rate-limit los da la cola. El ADR ofreció OIDC-o-shared-secret para el auth del dispatch; **se shipeó shared-secret** (header `X-Bot-Dispatch-Secret` == `BOT_DISPATCH_SECRET`, comparado con `hmac.compare_digest`) porque el servicio es público (Meta/Vercel) → OIDC degradaría a verificación in-app sumando fallas solo-en-prod; OIDC = hardening futuro si el endpoint se separa a un Cloud Run privado. `app/core/cloud_tasks.py` (cliente lazy + `enqueue_turn`, molde `secrets.py`/`firestore.py`). **Alternatives**: BackgroundTasks (RECHAZADA: no durable, CPU throttled); síncrono en el webhook (RECHAZADA: Meta timeout + bloquea el ack); Pub/Sub (viable, descartada a favor de Cloud Tasks por el target HTTP directo + control de reintentos/dedupe por task). **Consequences**: durabilidad + reintentos + CPU; complejidad (cola + `roles/cloudtasks.enqueuer` + endpoint interno autenticado por shared-secret). Referencia a ADR-005 (revisado) y ADR-011.
 - **Diagramas**: regenerar `er-bots.puml` (7 entidades + M:N `bot_configuration_tool`; `channel_account`/`conversation`/`person`/`vertical` como external punteados; `bot_event.input/output_message_id` anotado "mid Firestore, NO FK"; las 2 forward FK constraints a conversations) + `class-backend-bots.puml` (modelos + repos + services + el **engine package**: `BotEngine`/`EmbeddedBotEngine`/`engine_factory`/adaptadores `OpenAIProvider`/`ClaudeProvider`/`TOOL_REGISTRY`/`BotInvocationContext`/tools crm·catalog; `app/core/cloud_tasks.py`; los enganches conversations consumidos). Índice `docs/diagrams/README.md`.
 - **Overview viejo**: borrar `docs/modules/bots.md` (consolidado en el README) y repuntar TODOS sus links (`grep "modules/bots.md"`) al `bots/README.md`.
 - **Memoria**: crear/actualizar `project_medisage_bots_plan.md` + puntero en MEMORY.md.

@@ -15,7 +15,6 @@ Diagramas vivos del sistema en **PlantUML** (`.puml`). Source de verdad de la ar
 docs/diagrams/
 ├── README.md                   ← este archivo
 ├── _template-class.puml        ← copia para nuevos class diagrams
-├── _template-sequence.puml     ← copia para nuevos sequence diagrams
 ├── _template-er.puml           ← copia para nuevos ER diagrams
 ├── class-backend-admin.puml    ← class diagram módulo admin (User/Role/Permission)
 ├── ...                         ← un .puml por diagrama
@@ -43,8 +42,8 @@ docs/diagrams/
 
 | Archivo | Cubre | Estado |
 |---|---|---|
-| [`class-backend-admin.puml`](class-backend-admin.puml) | `User/Role/Permission` + mixins + `BaseRepository` + services | ✅ |
-| [`er-admin.puml`](er-admin.puml) | Tablas `user`, `role`, `permission` + 3 tablas de asociación | ✅ |
+| [`class-backend-admin.puml`](class-backend-admin.puml) | `User/Role/Permission/TokenFamily` + mixins + `BaseRepository` + services (incl. `auth`) | ✅ |
+| [`er-admin.puml`](er-admin.puml) | Tablas `user`, `role`, `permission`, `token_family` + 3 tablas de asociación | ✅ |
 | `class-frontend-state.puml` | AuthProvider, hooks, providers | _pendiente_ |
 | `sequence-auth-login.puml` | Login → JWT + cookie | _pendiente_ |
 | `sequence-auth-refresh.puml` | Rotación de refresh + revocación por `family` | _pendiente_ |
@@ -61,12 +60,12 @@ Cada módulo tiene su ER (relacional) y su Class (modelos + repos + services). L
 | `clinic` (Branch / Office / horarios) | [er-clinic.puml](er-clinic.puml) ✅ | [class-backend-clinic.puml](class-backend-clinic.puml) ✅ | [clinic/](../modules/clinic/README.md) (overview + [backend](../modules/clinic/backend.md) + [ui](../modules/clinic/ui.md) + [frontend](../modules/clinic/frontend.md)) | — |
 | `staff` (Doctor 1:1 User + disponibilidad) | [er-staff.puml](er-staff.puml) ✅ | [class-backend-staff.puml](class-backend-staff.puml) ✅ | [staff/](../modules/staff/README.md) (overview + [backend](../modules/staff/backend.md) + [ui](../modules/staff/ui.md) + [frontend](../modules/staff/frontend.md)) | [ADR-002](../decisions/ADR-002-doctor-entity-extends-user.md), [ADR-007](../decisions/ADR-007-doctor-availability-concrete-blocks.md) |
 | `crm` (Person + estados separados) | [er-crm.puml](er-crm.puml) ✅ | [class-backend-crm.puml](class-backend-crm.puml) ✅ | [crm/](../modules/crm/README.md) (overview + [backend](../modules/crm/backend.md) + [ui](../modules/crm/ui.md) + [frontend](../modules/crm/frontend.md)) | [ADR-003](../decisions/ADR-003-person-with-separated-lifecycle-statuses.md), [ADR-008](../decisions/ADR-008-configurable-status-transition-matrix.md), [ADR-009](../decisions/ADR-009-forward-fk-deferred-cross-module.md) |
-| `conversations` (ChannelAccount + multicanal) | [er-conversations.puml](er-conversations.puml) ✅ | [class-backend-conversations.puml](class-backend-conversations.puml) ✅ | [conversations/](../modules/conversations/README.md) (overview + [backend](../modules/conversations/backend.md) + [ui](../modules/conversations/ui.md) + [frontend](../modules/conversations/frontend.md)) | [ADR-004](../decisions/ADR-004-conversation-channel-account.md), [ADR-010](../decisions/ADR-010-runtime-secret-resolution.md) |
+| `conversations` (ChannelAccount + multicanal) | [er-conversations.puml](er-conversations.puml) ✅ | [class-backend-conversations.puml](class-backend-conversations.puml) ✅ | [conversations/](../modules/conversations/README.md) (overview + [backend](../modules/conversations/backend.md) + [ui](../modules/conversations/ui.md) + [frontend](../modules/conversations/frontend.md)) | [ADR-004](../decisions/ADR-004-conversation-channel-account.md), [ADR-010](../decisions/ADR-010-runtime-secret-resolution.md), [ADR-011](../decisions/ADR-011-firestore-message-stream-cqrs.md) |
 | `bots` (motor agnóstico) | [er-bots.puml](er-bots.puml) ✅ | [class-backend-bots.puml](class-backend-bots.puml) ✅ | [bots/](../modules/bots/README.md) (overview + [backend](../modules/bots/backend.md) + [ui](../modules/bots/ui.md) + [frontend](../modules/bots/frontend.md)) | [ADR-005](../decisions/ADR-005-agnostic-bot-engine.md), [ADR-012](../decisions/ADR-012-cloud-tasks-bot-dispatch.md) |
 | `scheduling` (Appointment + slots híbridos) | [er-scheduling.puml](er-scheduling.puml) ✅ | [class-backend-scheduling.puml](class-backend-scheduling.puml) ✅ | [scheduling/](../modules/scheduling/README.md) (overview + [backend](../modules/scheduling/backend.md) + [ui](../modules/scheduling/ui.md) + [frontend](../modules/scheduling/frontend.md)) | [ADR-006](../decisions/ADR-006-hybrid-calendar-slots.md), [ADR-008](../decisions/ADR-008-configurable-status-transition-matrix.md) |
 | `marketing` (Campaign + Promotion + Usage) | [er-marketing.puml](er-marketing.puml) ✅ | [class-backend-marketing.puml](class-backend-marketing.puml) ✅ | [marketing/](../modules/marketing/README.md) (overview + [backend](../modules/marketing/backend.md) + [ui](../modules/marketing/ui.md) + [frontend](../modules/marketing/frontend.md)) | [ADR-009](../decisions/ADR-009-forward-fk-deferred-cross-module.md), [ADR-013](../decisions/ADR-013-marketing-campaign-status-and-atomic-apply.md) |
 
-Doc consolidado: [`docs/modules/_seed-and-roles.md`](../modules/_seed-and-roles.md) — 117 permisos + 4 roles seed + patches a `seed.py`.
+Doc consolidado: [`docs/modules/_seed-and-roles.md`](../modules/_seed-and-roles.md) — 116 permisos + 4 roles seed + patches a `seed.py`.
 
 ## Cómo renderizar
 

@@ -29,7 +29,8 @@ frontend/src/
 │       └── calendar.ts                  ← NUEVO: grano de la grilla (horas visibles, paso, etiquetas día)
 ├── actions/
 │   ├── doctor.actions.ts
-│   └── doctor-availability.actions.ts   ← incluye las variantes /me (F3)
+│   ├── doctor-availability.actions.ts   ← admin (por doctor): list/create/update/deleteDoctorAvailability
+│   └── me.actions.ts                    ← F3 self-service: getMyDoctor/updateMyDoctor + list/create/update/deleteMyAvailability
 └── app/(main)/staff/
     ├── doctors/
     │   ├── page.tsx                     ← LISTA de doctores (drawer de creación)
@@ -315,7 +316,7 @@ const dateField = z.string().regex(DATE_ISO_REGEX, "Fecha como AAAA-MM-DD");
 // los FK obligatorios (branch_id/office_id). El emparejamiento office↔branch y el
 // doctor↔branch son invariantes de service (OFFICE_NOT_IN_BRANCH / DOCTOR_NOT_IN_BRANCH),
 // no validables en Zod (cruzan datos): se muestran como error de servidor.
-export const availabilityBlockSchema = z
+export const doctorAvailabilityBlockSchema = z
   .object({
     branch_id: z.string().min(1, "Elige una sede"),
     office_id: z.string().min(1, "Elige un consultorio"),
@@ -339,9 +340,9 @@ export const availabilityBlockSchema = z
 // Además del closes>opens por bloque (ya validado arriba), valida NO-SOLAPAMIENTO
 // entre bloques del MISMO día dentro del propio body (el backend además cruza con
 // los existentes en BD). Adyacentes (next.opens == prev.closes) son válidos.
-export const availabilityBulkSchema = z
+export const doctorAvailabilityBulkSchema = z
   .object({
-    blocks: z.array(availabilityBlockSchema).min(1, "Agrega al menos un bloque"),
+    blocks: z.array(doctorAvailabilityBlockSchema).min(1, "Agrega al menos un bloque"),
   })
   .superRefine((data, ctx) => {
     // Agrupar por fecha, ordenar por apertura, marcar cur.opens < prev.closes.
@@ -371,7 +372,7 @@ export const availabilityBulkSchema = z
 // Editar un bloque: todos opcionales, pero si vienen opens_at Y closes_at se
 // valida la relación. (El cross-field completo y el no-overlap con vecinos del día
 // los hace el backend con los datos de BD; aquí sólo el sanity local.)
-export const availabilityUpdateSchema = z
+export const doctorAvailabilityUpdateSchema = z
   .object({
     branch_id: z.string().min(1).optional(),
     office_id: z.string().min(1).optional(),
@@ -389,9 +390,9 @@ export const availabilityUpdateSchema = z
     }
   });
 
-export type AvailabilityBlockInput = z.infer<typeof availabilityBlockSchema>;
-export type AvailabilityBulkInput = z.infer<typeof availabilityBulkSchema>;
-export type AvailabilityUpdateInput = z.infer<typeof availabilityUpdateSchema>;
+export type DoctorAvailabilityBlockInput = z.infer<typeof doctorAvailabilityBlockSchema>;
+export type DoctorAvailabilityBulkInput = z.infer<typeof doctorAvailabilityBulkSchema>;
+export type DoctorAvailabilityUpdateInput = z.infer<typeof doctorAvailabilityUpdateSchema>;
 ```
 
 > **Validación por bloque + no-overlap por día = espejo del backend** (`AVAILABILITY_OVERLAP`, invariante #3). Igual que `officeHoursReplaceSchema._no_overlaps` en clinic, pero aquí agrupando por **`date`** (no por `day_of_week`). El cliente previene el error en español; el backend es la fuente de verdad y además cruza contra los bloques ya persistidos en esa fecha (que el cliente puede no conocer si su ventana visible no los trae). La grilla **también** marca inline el solape al pintar (ver [DoctorAvailabilityTab](#doctoravailabilitytabtsx--la-grilla-semanal)).
@@ -524,11 +525,12 @@ Mismo molde que clinic/catalog: validar con Zod en el action → llamar backend 
 
 | Tag | Cubre | Se invalida cuando |
 |---|---|---|
-| `staff:doctors` | listas y detalle de doctores | crear/editar/borrar doctor |
-| `staff:availability:{doctorId}` | bloques de disponibilidad de UN doctor | crear(bulk)/editar/borrar un bloque de ese doctor |
-| `staff:availability:me` | bloques de disponibilidad del doctor logueado (`/me`) | mutaciones self-service |
+| `staff:doctors` | listas y detalle de doctores | crear/editar/borrar doctor; **también** en cada mutación de disponibilidad por-doctor (admin) |
+| `staff:availability:{doctorId}` | bloques de disponibilidad de UN doctor | crear(bulk)/editar/borrar un bloque de ese doctor (admin) |
+| `staff:me` | perfil del doctor logueado (`/me/doctor`) | `updateMyDoctor` + cada mutación de disponibilidad self-service |
+| `staff:me:availability` | bloques de disponibilidad del doctor logueado (`/me`) | crear/editar/borrar un bloque self-service |
 
-> **Por qué tag por-doctor** (`staff:availability:{id}`): la agenda de un doctor es independiente de la de otro; taggear por id evita invalidar el cache de todos al guardar uno (mismo criterio que `clinic:office-hours:${officeId}`). El `/me` usa un tag fijo `staff:availability:me` porque su id se resuelve server-side desde el token.
+> **Por qué tag por-doctor** (`staff:availability:{id}`): la agenda de un doctor es independiente de la de otro; taggear por id evita invalidar el cache de todos al guardar uno (mismo criterio que `clinic:office-hours:${officeId}`). Las mutaciones de disponibilidad admin revalidan **además** `staff:doctors` (el listado/detalle también puede reflejar la agenda). El `/me` usa tags fijos `staff:me` + `staff:me:availability` —separados de `staff:doctors` porque el doctor no ve la lista admin— y su id se resuelve server-side desde el token.
 
 ### `actions/doctor.actions.ts`
 
@@ -640,7 +642,7 @@ export async function deleteDoctor(id: string): Promise<MutationResult<null>> {
 
 ### `actions/doctor-availability.actions.ts`
 
-Incluye **las dos variantes**: por-doctor (admin, F2) y `/me` (self, F3). Mismo molde, distinto endpoint + tag.
+Contiene **solo** las variantes por-doctor (admin, F2): `listDoctorAvailability` / `createDoctorAvailability` / `updateDoctorAvailability` / `deleteDoctorAvailability`. Las variantes `/me` (self, F3) viven en su propio archivo [`actions/me.actions.ts`](#actionsmeactionsts--self-service-f3) — no se mezclan aquí. Cada mutación revalida **dos** tags: `staff:doctors` (el listado/detalle denormaliza la disponibilidad) **y** `staff:availability:{doctorId}` (la agenda de ese doctor).
 
 ```ts
 "use server";
@@ -649,16 +651,23 @@ import { revalidateTag } from "next/cache";
 
 import { ENDPOINTS } from "@/lib/constants/endpoints";
 import {
-  availabilityBulkSchema,
-  availabilityUpdateSchema,
+  doctorAvailabilityBulkSchema,
+  doctorAvailabilityUpdateSchema,
 } from "@/lib/schemas/doctor-availability.schema";
 import { backendClient } from "@/services/backend.client";
 import { HttpError, type ApiSingle } from "@/types/api.types";
 import type { DoctorAvailabilityItem } from "@/types/staff.types";
+
 import type { MutationResult } from "./user.actions";
 
-const meTag = "staff:availability:me";
-const doctorTag = (doctorId: string) => `staff:availability:${doctorId}`;
+const DOCTORS_TAG = "staff:doctors";
+const availabilityTag = (doctorId: string) => `staff:availability:${doctorId}`;
+
+// El backend acepta "HH:MM" o "HH:MM:SS"; el form trabaja en "HH:MM", así que
+// normalizamos agregando ":00" cuando falta antes de mandar al backend.
+function toHms(time: string): string {
+  return time.length === 5 ? `${time}:00` : time;
+}
 
 function rangeQs(from?: string, to?: string): string {
   const p = new URLSearchParams();
@@ -668,9 +677,7 @@ function rangeQs(from?: string, to?: string): string {
   return qs ? `?${qs}` : "";
 }
 
-// ── Admin (por doctor) ──────────────────────────────────
-
-export async function listAvailability(
+export async function listDoctorAvailability(
   doctorId: string,
   from?: string,
   to?: string,
@@ -678,25 +685,33 @@ export async function listAvailability(
   // GET devuelve SingleResponse[list[Item]] → se lee `.data` (NO es /active).
   const res = await backendClient.get<ApiSingle<DoctorAvailabilityItem[]>>(
     `${ENDPOINTS.DOCTORS.AVAILABILITY_LIST(doctorId)}${rangeQs(from, to)}`,
-    { tags: [doctorTag(doctorId)] },
+    { tags: [DOCTORS_TAG, availabilityTag(doctorId)] },
   );
   return res.data;
 }
 
-export async function createAvailability(
+export async function createDoctorAvailability(
   doctorId: string,
   input: unknown, // { blocks: [...] }
 ): Promise<MutationResult<DoctorAvailabilityItem[]>> {
-  const parsed = availabilityBulkSchema.safeParse(input);
+  const parsed = doctorAvailabilityBulkSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
   }
+  const body = {
+    blocks: parsed.data.blocks.map((b) => ({
+      ...b,
+      opens_at: toHms(b.opens_at),
+      closes_at: toHms(b.closes_at),
+    })),
+  };
   try {
     const res = await backendClient.post<ApiSingle<DoctorAvailabilityItem[]>>(
       ENDPOINTS.DOCTORS.AVAILABILITY_CREATE(doctorId),
-      parsed.data,
+      body,
     );
-    revalidateTag(doctorTag(doctorId), "max");
+    revalidateTag(DOCTORS_TAG, "max");
+    revalidateTag(availabilityTag(doctorId), "max");
     return { ok: true, data: res.data };
   } catch (e) {
     // 400 AVAILABILITY_OVERLAP / OFFICE_NOT_IN_BRANCH / DOCTOR_NOT_IN_BRANCH en español.
@@ -704,44 +719,113 @@ export async function createAvailability(
   }
 }
 
-export async function updateAvailability(
+export async function updateDoctorAvailability(
   doctorId: string,
   blockId: string,
   input: unknown,
 ): Promise<MutationResult<DoctorAvailabilityItem>> {
-  const parsed = availabilityUpdateSchema.safeParse(input);
+  const parsed = doctorAvailabilityUpdateSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
   }
+  const body: Record<string, string> = { ...parsed.data };
+  if (parsed.data.opens_at) body.opens_at = toHms(parsed.data.opens_at);
+  if (parsed.data.closes_at) body.closes_at = toHms(parsed.data.closes_at);
   try {
     const res = await backendClient.put<ApiSingle<DoctorAvailabilityItem>>(
       ENDPOINTS.DOCTORS.AVAILABILITY_UPDATE(doctorId, blockId),
-      parsed.data,
+      body,
     );
-    revalidateTag(doctorTag(doctorId), "max");
+    revalidateTag(DOCTORS_TAG, "max");
+    revalidateTag(availabilityTag(doctorId), "max");
     return { ok: true, data: res.data };
   } catch (e) {
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
   }
 }
 
-export async function deleteAvailability(
+export async function deleteDoctorAvailability(
   doctorId: string,
   blockId: string,
 ): Promise<MutationResult<null>> {
   try {
     await backendClient.delete(ENDPOINTS.DOCTORS.AVAILABILITY_DELETE(doctorId, blockId)); // 204
-    revalidateTag(doctorTag(doctorId), "max");
+    revalidateTag(DOCTORS_TAG, "max");
+    revalidateTag(availabilityTag(doctorId), "max");
     return { ok: true };
   } catch (e) {
     // 404 AVAILABILITY_NOT_FOUND si el bloque no existe o no es del doctor (ownership).
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
   }
 }
+```
 
-// ── Self-service `/me` (F3) ─────────────────────────────
-// Mismas firmas SIN doctorId (el backend lo resuelve del token). Si el user no
-// tiene perfil, el backend devuelve 403 NOT_A_DOCTOR (se trata como error).
+> **`listDoctorAvailability` lee `.data`** (envelope `SingleResponse[list[Item]]`), a diferencia de `listActiveDoctors`/`listActiveOffices` que son listas crudas (`/active`). Es la única lista de staff que NO es `/active` y por eso lleva envelope — coincide con el contrato del backend (`GET /doctors/{id}/availability → SingleResponse[list[Item]]`).
+
+### `actions/me.actions.ts` — self-service (F3)
+
+El self-service del doctor logueado vive en su **propio archivo** `me.actions.ts` (separado de `doctor-availability.actions.ts`). Reúne el perfil (`getMyDoctor` / `updateMyDoctor`) y la disponibilidad self (`listMyAvailability` / `createMyAvailability` / `updateMyAvailability` / `deleteMyAvailability`). Las firmas van **sin `doctorId`** — el backend lo resuelve del token; si el user no tiene perfil, devuelve `403 NOT_A_DOCTOR` (se deja propagar). Tags propios, **separados** de `staff:doctors` (el doctor no ve la lista admin): `staff:me` (perfil) y `staff:me:availability` (agenda).
+
+```ts
+"use server";
+
+import { revalidateTag } from "next/cache";
+
+import { ENDPOINTS } from "@/lib/constants/endpoints";
+import { doctorSelfUpdateSchema } from "@/lib/schemas/doctor.schema";
+import {
+  doctorAvailabilityBulkSchema,
+  doctorAvailabilityUpdateSchema,
+} from "@/lib/schemas/doctor-availability.schema";
+import { backendClient } from "@/services/backend.client";
+import { HttpError, type ApiSingle } from "@/types/api.types";
+import type { DoctorAvailabilityItem, DoctorDetail } from "@/types/staff.types";
+
+import type { MutationResult } from "./user.actions";
+
+const ME_TAG = "staff:me";
+const ME_AVAILABILITY_TAG = "staff:me:availability";
+
+// Mismo helper que doctor-availability.actions.ts.
+function toHms(time: string): string {
+  return time.length === 5 ? `${time}:00` : time;
+}
+
+function rangeQs(from?: string, to?: string): string {
+  const p = new URLSearchParams();
+  if (from) p.set("from", from);
+  if (to) p.set("to", to);
+  const qs = p.toString();
+  return qs ? `?${qs}` : "";
+}
+
+// GET /me/doctor → SingleResponse<DoctorDetail>. El 403 NOT_A_DOCTOR se propaga
+// (el RSC lo captura para mostrar el estado vacío).
+export async function getMyDoctor(): Promise<ApiSingle<DoctorDetail>> {
+  return backendClient.get<ApiSingle<DoctorDetail>>(ENDPOINTS.ME.DOCTOR_GET, { tags: [ME_TAG] });
+}
+
+// PUT /me/doctor → SingleResponse<DoctorDetail>. Body = subset self-service
+// (cmp_code/bio/photo_url/signature_url/slot_duration_min); NO branch_ids/
+// vertical_ids/active (el schema no los tiene).
+export async function updateMyDoctor(
+  input: unknown,
+): Promise<MutationResult<ApiSingle<DoctorDetail>>> {
+  const parsed = doctorSelfUpdateSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+  try {
+    const data = await backendClient.put<ApiSingle<DoctorDetail>>(
+      ENDPOINTS.ME.DOCTOR_UPDATE, // ← PUT, not PATCH
+      parsed.data,
+    );
+    revalidateTag(ME_TAG, "max");
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
+  }
+}
 
 export async function listMyAvailability(
   from?: string,
@@ -749,7 +833,7 @@ export async function listMyAvailability(
 ): Promise<DoctorAvailabilityItem[]> {
   const res = await backendClient.get<ApiSingle<DoctorAvailabilityItem[]>>(
     `${ENDPOINTS.ME.AVAILABILITY_LIST}${rangeQs(from, to)}`,
-    { tags: [meTag] },
+    { tags: [ME_TAG, ME_AVAILABILITY_TAG] },
   );
   return res.data;
 }
@@ -757,27 +841,34 @@ export async function listMyAvailability(
 export async function createMyAvailability(
   input: unknown,
 ): Promise<MutationResult<DoctorAvailabilityItem[]>> {
-  const parsed = availabilityBulkSchema.safeParse(input);
+  const parsed = doctorAvailabilityBulkSchema.safeParse(input);
   if (!parsed.success) return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };
+  const body = {
+    blocks: parsed.data.blocks.map((b) => ({
+      ...b,
+      opens_at: toHms(b.opens_at),
+      closes_at: toHms(b.closes_at),
+    })),
+  };
   try {
     const res = await backendClient.post<ApiSingle<DoctorAvailabilityItem[]>>(
       ENDPOINTS.ME.AVAILABILITY_CREATE,
-      parsed.data,
+      body,
     );
-    revalidateTag(meTag, "max");
+    revalidateTag(ME_TAG, "max");
+    revalidateTag(ME_AVAILABILITY_TAG, "max");
     return { ok: true, data: res.data };
   } catch (e) {
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
   }
 }
 
-// updateMyAvailability / deleteMyAvailability siguen el mismo molde con
-// ENDPOINTS.ME.AVAILABILITY_UPDATE(blockId) / _DELETE(blockId) y revalidateTag(meTag).
+// updateMyAvailability(blockId, input) / deleteMyAvailability(blockId) siguen el
+// mismo molde con ENDPOINTS.ME.AVAILABILITY_UPDATE(blockId) / _DELETE(blockId) y
+// revalidan ambos tags (ME_TAG + ME_AVAILABILITY_TAG).
 ```
 
-> **El `/me/doctor` (perfil self)** vive en `doctor.actions.ts` o en su propio `me-doctor.actions.ts` — funciones `getMyDoctor()` (GET `ME.DOCTOR_GET`, lee `.data`) y `updateMyDoctor(input)` (PUT `ME.DOCTOR_UPDATE`, valida con un **subset** del `doctorUpdateSchema`: sólo `bio/photo_url/signature_url/slot_duration_min` — el self **no** edita branch_ids/vertical_ids, eso es admin). Revalida `staff:doctors` no aplica al self (no ve la lista); si se quiere refrescar su propia vista, `router.refresh()` basta. El 403 `NOT_A_DOCTOR` se propaga como error.
-
-> **`listAvailability` lee `.data`** (envelope `SingleResponse[list[Item]]`), a diferencia de `listActiveDoctors`/`listActiveOffices` que son listas crudas (`/active`). Es la única lista de staff que NO es `/active` y por eso lleva envelope — coincide con el contrato del backend (`GET /doctors/{id}/availability → SingleResponse[list[Item]]`).
+> **El perfil self (`/me/doctor`)** se valida con `doctorSelfUpdateSchema` = `doctorProfileBase.partial()`: `cmp_code/bio/photo_url/signature_url/slot_duration_min` — el self **no** edita branch_ids/vertical_ids/active (eso es admin). `updateMyDoctor` revalida `staff:me` (no `staff:doctors`, que no aplica al self porque no ve la lista). El 403 `NOT_A_DOCTOR` se propaga como error.
 
 ## Pages (RSC)
 
@@ -889,7 +980,7 @@ export default async function DoctorDetailPage({ params, searchParams }: PagePro
 }
 ```
 
-> **Por qué tab en query param y no sub-rutas** (`/doctors/[id]/availability`): un solo `getDoctor` poblando el header (nombre, CMP, estado, sedes/verticales count) sirve a las tres vistas; sub-rutas duplicarían ese fetch o forzarían un `layout.tsx` con su propio data-loading. El `?tab=` es deep-linkable, sobrevive refresh y no exige `layout.tsx`. La **disponibilidad** carga sus propios datos en el cliente (`listAvailability(from, to)`) cuando se selecciona el tab y se navega entre semanas — no en el RSC. Mismo criterio que `OfficeDetailShell`/`OfficeClosuresTab`.
+> **Por qué tab en query param y no sub-rutas** (`/doctors/[id]/availability`): un solo `getDoctor` poblando el header (nombre, CMP, estado, sedes/verticales count) sirve a las tres vistas; sub-rutas duplicarían ese fetch o forzarían un `layout.tsx` con su propio data-loading. El `?tab=` es deep-linkable, sobrevive refresh y no exige `layout.tsx`. La **disponibilidad** carga sus propios datos en el cliente (`listDoctorAvailability(doctorId, from, to)`) cuando se selecciona el tab y se navega entre semanas — no en el RSC. Mismo criterio que `OfficeDetailShell`/`OfficeClosuresTab`.
 
 ### Pages `/me` (F3)
 
@@ -1011,7 +1102,7 @@ Props: `{ doctorId: string; doctorBranches: BranchOption[]; canWrite: boolean }`
 const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()));
 
 // Bloques de la semana visible, indexados por id para edición/borrado O(1). Se
-// rellena con el resultado de listAvailability(from, to) del rango de la semana.
+// rellena con el resultado de listDoctorAvailability(from, to) del rango de la semana.
 const [blocks, setBlocks] = useState<Record<string, DoctorAvailabilityItem>>({});
 
 // Consultorio "activo" para pintar: al crear un bloque se usa este (branch, office).
@@ -1042,7 +1133,7 @@ const load = useCallback(() => {
   setListError(null);
   const from = toIsoDate(weekStart); // "YYYY-MM-DD" del lunes
   const to = toIsoDate(addDays(weekStart, 6)); // domingo
-  void listAvailability(doctorId, from, to)
+  void listDoctorAvailability(doctorId, from, to)
     .then((rows) => {
       if (reqId !== reqIdRef.current) return; // respuesta superada → descartar
       setBlocks(Object.fromEntries(rows.map((r) => [r.id, r])));
@@ -1067,10 +1158,10 @@ useEffect(() => { load(); }, [load]);
 
 **Interacción** (gated por `canWrite`; si `false`, todo lo de abajo se desactiva y la grilla queda en solo-lectura):
 
-- **Click en celda vacía** → crea un bloque en `(activeBranchId, activeOfficeId, date_de_la_columna)` con un default sugerido (p.ej. `opens_at` = hora de la celda, `closes_at` = +`slot_duration_min` o +`GRID_STEP_MIN`). Persiste vía `createAvailability(doctorId, { blocks: [oneBlock] })`.
-- **Click en un bloque** → lo selecciona (`selectedBlockId`); abre un editor inline/popover con `opens_at`/`closes_at` (Inputs) + botón Borrar. Guardar → `updateAvailability(doctorId, id, patch)`; Borrar → `deleteAvailability(doctorId, id)`.
-- **Drag (etapa 2)**: arrastrar en celdas vacías de **una** columna crea un bloque del rango arrastrado (snap a `GRID_STEP_MIN`); arrastrar el mismo rango horizontalmente sobre **varias** columnas crea el mismo horario en todos esos días → **alta masiva** `createAvailability(doctorId, { blocks: [...] })`. Arrastrar los bordes de un bloque existente lo redimensiona (PUT); arrastrar su cuerpo lo mueve de día/hora (PUT con `date`/`opens_at`/`closes_at`).
-- **Botón "Agregar disponibilidad"** (alterno al drag, para quien prefiere form): abre un drawer con consultorio + días marcados del rango + uno o más bloques horarios → arma `blocks: [...]` (producto cartesiano días × bloques) → `createAvailability` bulk. Valida con `availabilityBulkSchema` antes de enviar (incluido el no-overlap por día).
+- **Click en celda vacía** → crea un bloque en `(activeBranchId, activeOfficeId, date_de_la_columna)` con un default sugerido (p.ej. `opens_at` = hora de la celda, `closes_at` = +`slot_duration_min` o +`GRID_STEP_MIN`). Persiste vía `createDoctorAvailability(doctorId, { blocks: [oneBlock] })`.
+- **Click en un bloque** → lo selecciona (`selectedBlockId`); abre un editor inline/popover con `opens_at`/`closes_at` (Inputs) + botón Borrar. Guardar → `updateDoctorAvailability(doctorId, id, patch)`; Borrar → `deleteDoctorAvailability(doctorId, id)`.
+- **Drag (etapa 2)**: arrastrar en celdas vacías de **una** columna crea un bloque del rango arrastrado (snap a `GRID_STEP_MIN`); arrastrar el mismo rango horizontalmente sobre **varias** columnas crea el mismo horario en todos esos días → **alta masiva** `createDoctorAvailability(doctorId, { blocks: [...] })`. Arrastrar los bordes de un bloque existente lo redimensiona (PUT); arrastrar su cuerpo lo mueve de día/hora (PUT con `date`/`opens_at`/`closes_at`).
+- **Botón "Agregar disponibilidad"** (alterno al drag, para quien prefiere form): abre un drawer con consultorio + días marcados del rango + uno o más bloques horarios → arma `blocks: [...]` (producto cartesiano días × bloques) → `createDoctorAvailability` bulk. Valida con `doctorAvailabilityBulkSchema` antes de enviar (incluido el no-overlap por día).
 
 **Validación inline**: al crear/editar se valida `closes_at > opens_at` y el **no-solapamiento del mismo día** contra los `blocks` ya en estado (espeja invariante #3). Bloques en conflicto se marcan en rojo y el guardar se desactiva. El backend reconfirma y puede devolver `AVAILABILITY_OVERLAP`/`OFFICE_NOT_IN_BRANCH`/`DOCTOR_NOT_IN_BRANCH` → mostrar en `MessageBar` y, si aplica, resaltar el bloque ofensor.
 
@@ -1084,7 +1175,7 @@ useEffect(() => { load(); }, [load]);
 - **error**: `MessageBar intent="error"` con `listError`/`result.error`.
 - **read-only** (`!canWrite`): grilla visible, sin click-crear, sin drag, sin editor, sin "Agregar disponibilidad".
 
-> <a name="reuse-self-vs-admin"></a>**Reuse self vs admin**: para no duplicar la grilla, extraer un `<AvailabilityGrid>` que reciba como props las funciones de datos (`list`, `create`, `update`, `remove`), `branches` y `canWrite`. `DoctorAvailabilityTab` lo monta con las actions por-doctor (`(from,to)=>listAvailability(doctorId,from,to)`, etc.); `MyAvailabilityClient` (F3) lo monta con las actions `/me` (`listMyAvailability`, `createMyAvailability`, …) y `canWrite = hasPermission("MY_AVAILABILITY_WRITE")`. Misma UI, distinta capa de datos.
+> <a name="reuse-self-vs-admin"></a>**Reuse self vs admin**: para no duplicar la grilla, extraer un `<AvailabilityGrid>` que reciba como props las funciones de datos (`list`, `create`, `update`, `remove`), `branches` y `canWrite`. `DoctorAvailabilityTab` lo monta con las actions por-doctor de `doctor-availability.actions.ts` (`(from,to)=>listDoctorAvailability(doctorId,from,to)`, etc.); `MyAvailabilityClient` (F3) lo monta con las actions `/me` de `me.actions.ts` (`listMyAvailability`, `createMyAvailability`, …) y `canWrite = hasPermission("MY_AVAILABILITY_WRITE")`. Misma UI, distinta capa de datos.
 
 ### `DoctorAuditTab.tsx`
 
@@ -1092,7 +1183,7 @@ Idéntico al `AuditTab` de `UserDrawer.tsx` / `OfficeAuditTab.tsx`: Badge de est
 
 ### `MyProfileClient.tsx` / `MyAvailabilityClient.tsx` (F3)
 
-- **`MyProfileClient`**: versión reducida de `DoctorProfileTab` — sólo `bio`, `photo_url`, `signature_url`, `slot_duration_min` editables (gated `MY_DOCTOR_PROFILE_WRITE`). **No** muestra ni edita `branch_ids`/`vertical_ids` ni `cmp_code` (eso es admin). User (nombre/email) solo-lectura. Submit → `updateMyDoctor(values)`.
+- **`MyProfileClient`**: versión reducida de `DoctorProfileTab` — `cmp_code`, `bio`, `photo_url`, `signature_url`, `slot_duration_min` editables (gated `MY_DOCTOR_PROFILE_WRITE`, validados con `doctorSelfUpdateSchema`). **No** muestra ni edita `branch_ids`/`vertical_ids` ni `active` (eso es admin). User (nombre/email) solo-lectura. Submit → `updateMyDoctor(values)`.
 - **`MyAvailabilityClient`**: monta `<AvailabilityGrid>` con las actions `/me` (ver [reuse](#reuse-self-vs-admin)). Mismo look que el tab de admin; `canWrite = MY_AVAILABILITY_WRITE`. El selector de sede se limita a las sedes del propio doctor (`getMyDoctor().data.branches`).
 
 ## Decisiones del frontend (recap)
@@ -1107,7 +1198,7 @@ Idéntico al `AuditTab` de `UserDrawer.tsx` / `OfficeAuditTab.tsx`: Badge de est
 | Disponibilidad carga en cliente por semana, no en RSC | Primer paint instantáneo; la ventana se hidrata on-demand y al navegar semanas (fetch-token para descartar respuestas viejas). |
 | Modelo = bloques concretos por fecha (no pattern+override) | Confirmado por el usuario: los doctores re-definen sus horarios cada mes. "No disponible" = sin bloque; "vacaciones" = sin bloques. Reemplaza ADR-006 pattern/override. |
 | Calendario semanal **custom/bespoke**, sin librería | Fluent no trae calendario; se respeta el design system. Pieza más pesada del proyecto; construir incremental (click→form primero, drag después). |
-| `createAvailability` SIEMPRE es bulk (`{ blocks: [...] }`) | Un solo endpoint POST cubre 1 bloque (click) y N bloques (drag-multi-día / form). El backend valida overlap dentro del body + contra BD. |
+| `createDoctorAvailability` SIEMPRE es bulk (`{ blocks: [...] }`) | Un solo endpoint POST cubre 1 bloque (click) y N bloques (drag-multi-día / form). El backend valida overlap dentro del body + contra BD. |
 | Estado de bloques indexado por id (`Record<id, Item>`) | Edición/borrado O(1); el fetch-token rellena la ventana visible. |
 | Zod no-overlap por `date` (espeja `AVAILABILITY_OVERLAP`) | Previene el 422 en cliente en español; el backend reconfirma (y cruza con BD). |
 | `user_id` inmutable; delete NO toca el User | ADR-002: el Doctor es 1:1 con User; el soft-delete deshabilita sólo el perfil. El form lo refleja (user solo-lectura). |
@@ -1148,8 +1239,8 @@ Idéntico al `AuditTab` de `UserDrawer.tsx` / `OfficeAuditTab.tsx`: Badge de est
 
 ### F2 — DoctorAvailability (la grilla semanal)
 
-- [ ] Crear `src/lib/schemas/doctor-availability.schema.ts` (`availabilityBlockSchema` closes>opens + `availabilityBulkSchema` no-overlap por `date` + `availabilityUpdateSchema`).
-- [ ] Crear `src/actions/doctor-availability.actions.ts` (admin: `listAvailability[from,to]` lee `.data`, `createAvailability` bulk, `updateAvailability` PUT, `deleteAvailability` 204; tag por-doctor `staff:availability:{id}`).
+- [ ] Crear `src/lib/schemas/doctor-availability.schema.ts` (`doctorAvailabilityBlockSchema` closes>opens + `doctorAvailabilityBulkSchema` no-overlap por `date` + `doctorAvailabilityUpdateSchema`).
+- [ ] Crear `src/actions/doctor-availability.actions.ts` (admin: `listDoctorAvailability[from,to]` lee `.data`, `createDoctorAvailability` bulk, `updateDoctorAvailability` PUT, `deleteDoctorAvailability` 204; revalida `staff:doctors` + `staff:availability:{id}`).
 - [ ] Crear `_components/DoctorAvailabilityTab.tsx` + `<AvailabilityGrid>` reutilizable (estado `blocks` por id, `weekStart`, consultorio activo, **fetch-token** como `OfficeClosuresTab`, carga por rango de semana, click-crear + editar/borrar + "Agregar disponibilidad" bulk; drag como refinamiento etapa 2).
 - [ ] Reusar `listActiveOffices(branchId)` de clinic para poblar el selector de consultorio (filtrado por la sede activa, que a su vez se limita a `doctor.branches`).
 - [ ] **Smoke test (F2)**: en un doctor con sede S1/consultorio O1, elegir O1 activo → click en Lun 09:00 → bloque 09:00–09:30 creado y persistido → recargar el tab → persiste. Editar a 09:00–13:00 → guardar → reemplazo verificado. Borrar → desaparece. Navegar a la semana siguiente y volver → ventana correcta (fetch-token).
@@ -1160,10 +1251,10 @@ Idéntico al `AuditTab` de `UserDrawer.tsx` / `OfficeAuditTab.tsx`: Badge de est
 
 ### F3 — Self-service `/me`
 
-- [ ] Agregar a `actions/` las variantes self: `getMyDoctor`/`updateMyDoctor` (subset bio/photo/signature/slot) + `listMyAvailability`/`createMyAvailability`/`updateMyAvailability`/`deleteMyAvailability` (tag `staff:availability:me`).
+- [ ] Crear `src/actions/me.actions.ts` con las variantes self: `getMyDoctor`/`updateMyDoctor` (subset cmp_code/bio/photo/signature/slot vía `doctorSelfUpdateSchema`) + `listMyAvailability`/`createMyAvailability`/`updateMyAvailability`/`deleteMyAvailability` (tags `staff:me` + `staff:me:availability`).
 - [ ] Crear `src/app/(main)/staff/me/perfil/page.tsx` (`requirePermission("MY_DOCTOR_PROFILE_READ")`, maneja 403 `NOT_A_DOCTOR` con estado vacío) + `_components/MyProfileClient.tsx`.
 - [ ] Crear `src/app/(main)/staff/me/agenda/page.tsx` (`requirePermission("MY_AVAILABILITY_READ")`) + `_components/MyAvailabilityClient.tsx` que **monta `<AvailabilityGrid>`** con las actions `/me`.
-- [ ] **Smoke test (F3)**: logueado como user con role DOCTOR → "Mi perfil" edita bio/slot (no ve sedes/verticales/cmp) → guarda. "Mi agenda" → pinta un bloque → persiste. Logueado como admin **sin** perfil de doctor → "Mi perfil" muestra el estado vacío `NOT_A_DOCTOR` (no 404, no crash).
+- [ ] **Smoke test (F3)**: logueado como user con role DOCTOR → "Mi perfil" edita cmp/bio/slot (no ve sedes/verticales/estado) → guarda. "Mi agenda" → pinta un bloque → persiste. Logueado como admin **sin** perfil de doctor → "Mi perfil" muestra el estado vacío `NOT_A_DOCTOR` (no 404, no crash).
 - [ ] **Permisos test (F3)**: con `MY_AVAILABILITY_READ` sin `_WRITE`, "Mi agenda" es solo-lectura.
 
 ## Tareas adicionales (traducción del template existente)

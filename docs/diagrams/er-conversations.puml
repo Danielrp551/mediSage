@@ -1,6 +1,6 @@
 @startuml er-conversations
 ' Propósito: modelo del módulo conversations bajo el rediseño CQRS — control plane Postgres (fuente de verdad: ChannelAccount + Conversation + ConversationAssignmentLog + message_outbox) + data plane Firestore (read-model real-time del stream de mensajes). Los MENSAJES ya NO viven en Postgres: pasan a Firestore vía Transactional Outbox. Pipe de mensajería multicanal (WhatsApp en el MVP).
-' Última actualización: 2026-06-03 (REDISEÑO CQRS — brief conversations_firestore_redesign.md §1/§2/§10: -tablas message/message_attachment (a Firestore); +message_outbox (Postgres, cola transaccional); +Firestore como store externo <<external, Firestore>> con conversations/{cid} (doc espejo) + conversations/{cid}/messages/{mid} (el mensaje); relación conversation --proyección via outbox--> doc Firestore. channel_account/conversation/conversation_assignment_log + lead_activity (FK aditiva) + externos person/user SIN cambios. ADR-011.)
+' Última actualización: 2026-06-20 (REDISEÑO CQRS — brief conversations_firestore_redesign.md §1/§2/§10: -tablas message/message_attachment (a Firestore); +message_outbox (Postgres, cola transaccional, id=mid varchar(255) provisto por el caller — NO hereda PrimaryKeyMixin); +Firestore como store externo <<external, Firestore>> con conversations/{cid} (doc espejo) + conversations/{cid}/messages/{mid} (el mensaje); relación conversation --proyección via outbox--> doc Firestore. El relay corre SÍNCRONO en el request (BackgroundTasks DESCARTADO). channel_account/conversation/conversation_assignment_log + lead_activity (FK aditiva) + externos person/user SIN cambios. ADR-011.)
 ' Código de referencia: backend/app/modules/conversations/models/ (channel_account, conversation, conversation_assignment_log, message_outbox) + backend/app/core/firestore.py
 
 !theme plain
@@ -104,8 +104,10 @@ entity "message_outbox" as t_outbox {
   --
   ' Índice por (status, created_on) → el relay barre los pending.
   ' SIN SoftDelete — cola operativa (no audit de negocio).
-  ' El relay (BackgroundTasks MVP / Cloud Tasks prod) escribe a Firestore (Admin SDK)
-  '   con set(doc_id=mid) (create-if-absent) y marca done; reintenta con backoff.
+  ' El relay (SÍNCRONO en el request, misma sesión, antes del 200) escribe a Firestore
+  '   (Admin SDK) con set(doc_id=mid) (create-if-absent) y marca done; reintenta por-fila.
+  '   (BackgroundTasks DESCARTADO: no proyectaba en Cloud Run. Sweep/Cloud Task de filas
+  '    failed = relay_outbox_in_new_session.)
   * active : boolean
   * created_on : timestamptz
   * created_by : varchar(36)
@@ -306,11 +308,14 @@ note bottom of t_outbox
   NOTHING"" deduplica reenvíos de webhook. El
   ""unread_count++"" solo corre si el INSERT fue nuevo.
 
-  **Relay**: ""BackgroundTasks"" (MVP) / Cloud Tasks (prod)
-  barre ""(status,created_on)"" pendientes, escribe a
-  Firestore con el Admin SDK (""set(doc_id=mid)"",
-  create-if-absent) y marca ""done""; reintenta con
-  backoff (""attempts""/""last_error""). Reemplaza el
+  **Relay**: SÍNCRONO en el request (misma sesión, antes
+  del 200; ""message_service.relay_outbox(db)"") barre
+  ""(status,created_on)"" pendientes, escribe a Firestore
+  con el Admin SDK (""set(doc_id=mid)"", create-if-absent)
+  y marca ""done""; reintenta por-fila (""attempts""/
+  ""last_error""). ""BackgroundTasks"" DESCARTADO (no
+  proyectaba en Cloud Run); sweep/Cloud Task de filas
+  ""failed"" = ""relay_outbox_in_new_session"". Reemplaza el
   UNIQUE parcial de la vieja tabla ""message"". ADR-011.
 end note
 

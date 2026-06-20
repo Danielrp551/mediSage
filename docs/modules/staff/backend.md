@@ -635,18 +635,6 @@ class DoctorRepository(BaseRepository[Doctor]):
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
-    async def user_map(self, db: AsyncSession, doctor_ids: list[str]) -> dict[str, "User"]:
-        """Batch the 1:1 Users of a page of doctors — one query, no N+1. Powers
-        the denormalized DoctorItem.full_name / .email."""
-        if not doctor_ids:
-            return {}
-        result = await db.execute(
-            select(Doctor.id, User)
-            .join(User, User.id == Doctor.user_id)
-            .where(Doctor.id.in_(doctor_ids))
-        )
-        return {row[0]: row[1] for row in result.all()}
-
     async def count_branches_map(
         self, db: AsyncSession, doctor_ids: list[str]
     ) -> dict[str, int]:
@@ -687,7 +675,7 @@ class DoctorRepository(BaseRepository[Doctor]):
 doctor_repository = DoctorRepository()
 ```
 
-> El import de `User` (`from app.modules.admin.models.user import User`) va al tope del repo; se omite arriba por brevedad pero es necesario para `user_map`/los joins.
+> El repo **no** necesita importar `User`: los conteos de `branches`/`verticals` se baten contra las tablas M:N, y el `full_name`/`email` denormalizados los resuelve el service vía `user_repository.get_audit_info_map(...)` (un solo lookup que también cubre los actores de auditoría), no un join en el repo.
 
 ```python
 # repositories/doctor_availability.py
@@ -1064,7 +1052,7 @@ El service resuelve el `doctor` desde `CurrentAuth.user.id` (`doctor_repository.
 | PUT | `/me/availability/{block_id}` | `MY_AVAILABILITY_WRITE` | `SingleResponse[DoctorAvailabilityItem]` |
 | DELETE | `/me/availability/{block_id}` | `MY_AVAILABILITY_WRITE` | 204 |
 
-**`PUT /me/doctor`** acepta solo `bio`, `photo_url`, `signature_url`, `slot_duration_min` (un `DoctorSelfUpdate` reducido de `DoctorUpdate`). **NO** acepta `branch_ids`/`vertical_ids` ni `active` — asignar sedes/verticales y habilitar/deshabilitar es decisión del admin. Si el front manda esos campos, el service los descarta.
+**`PUT /me/doctor`** acepta solo `cmp_code`, `bio`, `photo_url`, `signature_url`, `slot_duration_min` (un `DoctorSelfUpdate` reducido de `DoctorUpdate`). **NO** acepta `branch_ids`/`vertical_ids` ni `active` — asignar sedes/verticales y habilitar/deshabilitar es decisión del admin. Si el front manda esos campos, el service los descarta.
 
 **Error 403** (user logueado sin perfil de doctor) en cualquier `/me/*`:
 ```json
@@ -1094,10 +1082,9 @@ async def create(
     branches = await _resolve_branches(db, payload.branch_ids)
     verticals = await _resolve_verticals(db, payload.vertical_ids)
 
-    # 3) The DOCTOR role (seeded). The new user gets exactly this role.
-    doctor_role = await role_repository.get_by_name(db, "DOCTOR")
-    if doctor_role is None:  # pragma: no cover — seed guarantees it exists
-        raise BadRequestException("El rol DOCTOR no está configurado")
+    # 3) The DOCTOR role (seeded). The new user gets exactly this role. The
+    #    lookup + guard live in a named helper `_get_doctor_role`.
+    doctor_role = await _get_doctor_role(db)
 
     # 4) Create the User (assigning the DOCTOR role). Generate a password if the
     #    caller didn't supply one — returned once in `generated_password`.
@@ -1116,7 +1103,6 @@ async def create(
         active=True,
         created_by=actor_id, created_on=now, updated_by=actor_id, updated_on=now,
         roles=[doctor_role],
-        permissions=[],
     )
     db.add(user)
     await db.flush()  # materialize user.id for the FK below
@@ -1179,6 +1165,17 @@ async def _resolve_verticals(db: AsyncSession, vertical_ids: list[str]) -> list[
         missing = sorted(set(vertical_ids) - found)
         raise BadRequestException(f"Vertical(es) no encontrada(s): {', '.join(missing)}")
     return verticals
+
+
+async def _get_doctor_role(db: AsyncSession) -> Role:
+    # Invariante de seed: el rol DOCTOR siempre existe (F0). Si falta, es un error
+    # de configuración — fallar claro con un `code` en vez de crear un user sin rol.
+    role = await role_repository.get_by_name(db, DOCTOR_ROLE_NAME)
+    if role is None:
+        raise BadRequestException(
+            "El rol DOCTOR no está configurado en el sistema", code="DOCTOR_ROLE_MISSING"
+        )
+    return role
 ```
 
 En `update`: solo si `branch_ids`/`vertical_ids` vienen en el payload (`exclude_unset`) se hace `doctor.branches = await _resolve_branches(...)` / `doctor.verticals = await _resolve_verticals(...)` (reemplazo total). Tras crear/actualizar, **recargar con `get_full`** para rehidratar `user`/`branches`/`verticals` (las relaciones `lazy="raise"` quedan sin cargar tras el `flush`/`refresh` — mismo patrón reload-via-get_full de `clinic`/`catalog`).
@@ -1187,7 +1184,7 @@ En `update`: solo si `branch_ids`/`vertical_ids` vienen en el payload (`exclude_
 
 ### Hidratar `full_name`/`email`/`branches_count`/`verticals_count` (denormalizado, sin N+1)
 
-`DoctorItem` lleva el `full_name`/`email` del User y los counts denormalizados. En el listado, tres lookups batch (User + 2 counts), igual que `clinic.office.list_paginated`:
+`DoctorItem` lleva el `full_name`/`email` del User y los counts denormalizados. En el listado, **un solo lookup de users** (que cubre tanto el `full_name`/`email` de cada doctor como los actores de auditoría `created_by`/`updated_by`) más dos conteos batch — sin N+1, igual que `clinic.office.list_paginated`:
 
 ```python
 # services/doctor.py — list_paginated
@@ -1195,21 +1192,28 @@ async def list_paginated(
     db: AsyncSession, query_request: QueryRequest
 ) -> PaginatedResponse[DoctorItem]:
     items, total = await doctor_repository.get_paginated(db, query_request)
-    users = await doctor_repository.user_map(db, [d.id for d in items])
-    bcounts = await doctor_repository.count_branches_map(db, [d.id for d in items])
-    vcounts = await doctor_repository.count_verticals_map(db, [d.id for d in items])
-    audit_users = await user_repository.get_audit_info_map(db, _collect_actor_ids(items))
+    doctor_ids = [d.id for d in items]
+    # Un solo lookup de users cubre tanto a los doctores (full_name/email) como a
+    # los actores de auditoría; dos conteos batch para los M:N. Sin N+1.
+    user_ids = {d.user_id for d in items} | _collect_actor_ids(items)
+    users = await user_repository.get_audit_info_map(db, user_ids)
+    bcounts = await doctor_repository.count_branches_map(db, doctor_ids)
+    vcounts = await doctor_repository.count_verticals_map(db, doctor_ids)
+    rows: list[DoctorItem] = []
+    for d in items:
+        du = users.get(d.user_id)
+        rows.append(
+            _to_item(
+                d, users,
+                full_name=du.full_name if du else "",
+                email=du.email if du else "desconocido@desconocido.local",
+                branches_count=bcounts.get(d.id, 0),
+                verticals_count=vcounts.get(d.id, 0),
+            )
+        )
     return PaginatedResponse(
         data=PaginatedData(
-            items=[
-                _to_item(
-                    d, audit_users,
-                    user=users.get(d.id),
-                    branches_count=bcounts.get(d.id, 0),
-                    verticals_count=vcounts.get(d.id, 0),
-                )
-                for d in items
-            ],
+            items=rows,
             total=total,
             skip=query_request.pagination.skip,
             limit=query_request.pagination.limit,
@@ -1217,7 +1221,7 @@ async def list_paginated(
     )
 ```
 
-`_to_item` recibe el `User` y desarma `full_name`/`email`; si por algún motivo el user no está (no debería pasar — el FK es NOT NULL), cae a strings vacíos. Para `DoctorDetail` (`get_by_id`, post-create, post-update), `get_full` ya hizo `selectinload(Doctor.user/branches/verticals)` con el filtro de soft-delete, así que `_to_detail` lee `doctor.user`, `doctor.branches`, `doctor.verticals` sin más queries.
+`_to_item` recibe el `full_name`/`email` ya resueltos del User; si por algún motivo el user no está (no debería pasar — el FK es NOT NULL), cae a un string vacío / placeholder. Para `DoctorDetail` (`get_by_id`, post-create, post-update), `get_full` ya hizo `selectinload(Doctor.user/branches/verticals)` con el filtro de soft-delete, así que `_to_detail` lee `doctor.user`, `doctor.branches`, `doctor.verticals` sin más queries.
 
 ### Invariantes de `DoctorAvailability` (validados en service, con código de error)
 
@@ -1357,7 +1361,7 @@ async def _require_my_doctor(db: AsyncSession, auth: AuthContext) -> Doctor:
     return doctor
 ```
 
-Cada función `/me/*` empieza resolviendo el doctor y luego delega en la **misma lógica** que el path admin (reusa `doctor_availability` service pasándole el `doctor.id` resuelto). El permiso (`MY_*` en vez de `DOCTOR_*`/`DOCTORS_*`) lo aplica el router; la diferencia funcional es solo de quién puede tocar qué. `PUT /me/doctor` usa un `DoctorSelfUpdate` reducido (solo `bio`/`photo_url`/`signature_url`/`slot_duration_min`) para que el doctor no pueda reasignarse sedes/verticales ni activarse.
+Cada función `/me/*` empieza resolviendo el doctor y luego delega en la **misma lógica** que el path admin (reusa `doctor_availability` service pasándole el `doctor.id` resuelto). El permiso (`MY_*` en vez de `DOCTOR_*`/`DOCTORS_*`) lo aplica el router; la diferencia funcional es solo de quién puede tocar qué. `PUT /me/doctor` usa un `DoctorSelfUpdate` reducido (solo `cmp_code`/`bio`/`photo_url`/`signature_url`/`slot_duration_min`) para que el doctor no pueda reasignarse sedes/verticales ni activarse.
 
 ### Inmutabilidad de `user_id` y de la identidad del User
 
@@ -1695,7 +1699,7 @@ El `seed()` invoca `_seed_role(...)` para ADMIN, DOCTOR y ASESOR tras `_seed_per
 ### F1 — Doctor (+ M:N doctor_branch / doctor_vertical)
 - [ ] `models/associations.py` (`doctor_branch`, `doctor_vertical`) + `models/doctor.py` + migration `0009_staff_doctor` (`down_revision="0008_clinic_office_closure"`).
 - [ ] `schemas/doctor.py` (`DoctorUserCreate`, `DoctorCreate` nested, `DoctorUpdate`, `DoctorItem`, `DoctorDetail`, `DoctorOption`, `DoctorCreatedResponse`) con validators de duplicados.
-- [ ] `repositories/doctor.py`: `ALLOWED_FIELDS`, `get_by_user_id`, `get_full` (con `with_loader_criteria` filtrando branches/verticals soft-deleted), `list_active(branch_id, vertical_id)`, `user_map`, `count_branches_map`, `count_verticals_map`.
+- [ ] `repositories/doctor.py`: `ALLOWED_FIELDS`, `get_by_user_id`, `get_full` (con `with_loader_criteria` filtrando branches/verticals soft-deleted), `list_active(branch_id, vertical_id)`, `count_branches_map`, `count_verticals_map`.
 - [ ] Agregar `branch_repository.get_by_ids` a `clinic` si no existe (cambio aditivo).
 - [ ] `services/doctor.py`: `create` NESTED (User + role DOCTOR + Doctor en una tx; `generated_password`), `_resolve_branches`/`_resolve_verticals`, reload-via-`get_full`, `soft_delete` (NO toca User).
 - [ ] `routers/doctor.py`: CRUD + `/active?branch_id=&vertical_id=` (lista cruda); `PUT` para update.
@@ -1719,7 +1723,7 @@ El `seed()` invoca `_seed_role(...)` para ADMIN, DOCTOR y ASESOR tras `_seed_per
 - [ ] Test rango: `GET ?from=&to=` filtra `date` BETWEEN; `closes_at <= opens_at` en el body → `422`.
 
 ### F3 — Self-service `/me`
-- [ ] `services/me.py`: `_require_my_doctor` (`get_by_user_id` → `403 NOT_A_DOCTOR`), `get_my_doctor`, `update_my_doctor` (solo `bio`/`photo`/`signature`/`slot_duration`), `list_my_availability`, `create/update/delete_my_availability` (delegan en `doctor_availability` service con `doctor.id`).
+- [ ] `services/me.py`: `_require_my_doctor` (`get_by_user_id` → `403 NOT_A_DOCTOR`), `get_my_doctor`, `update_my_doctor` (solo `cmp_code`/`bio`/`photo`/`signature`/`slot_duration`), `list_my_availability`, `create/update/delete_my_availability` (delegan en `doctor_availability` service con `doctor.id`).
 - [ ] `schemas/doctor.py`: agregar `DoctorSelfUpdate` (subset de `DoctorUpdate` sin `branch_ids`/`vertical_ids`/`active`).
 - [ ] `routers/me.py`: `GET`/`PUT /me/doctor` + `GET`/`POST`/`PUT`/`DELETE /me/availability/*` con permisos `MY_*`.
 - [ ] (Frontend F3) "Mi perfil" + "Mi agenda" (reusa el calendario de F2 en modo self) — ver [`ui.md`](ui.md).
