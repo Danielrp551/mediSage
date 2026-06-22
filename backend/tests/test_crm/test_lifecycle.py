@@ -275,7 +275,6 @@ async def test_customer_transition_not_allowed(
     client: AsyncClient, admin_credentials: dict
 ) -> None:
     headers = await auth_headers(client, admin_credentials)
-    opts = await customer_status_options(client, headers)
     person = await create_person(client, headers)
     await _create_lead(client, headers, person["id"])
     await client.post(

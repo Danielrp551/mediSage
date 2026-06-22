@@ -68,10 +68,10 @@ def _patch_common(monkeypatch, *, history=None, adapter=None):
     )
     monkeypatch.setattr(conv_message, "send_bot_outbound", _fake_send_bot_outbound)
     if adapter is not None:
-        monkeypatch.setitem(embedded._PROVIDER_ADAPTERS, _PROVIDER_OPENAI(), adapter)
+        monkeypatch.setitem(embedded._PROVIDER_ADAPTERS, _provider_openai(), adapter)
 
 
-def _PROVIDER_OPENAI():
+def _provider_openai():
     from app.modules.bots.enums import BotProvider
 
     return BotProvider.openai
@@ -161,9 +161,10 @@ async def _seed_conversation(
 
 
 async def _assign_tool(db: AsyncSession, bot_id: str, *, code: str, name: str) -> str:
+    from sqlalchemy import insert
+
     from app.modules.bots.models.associations import bot_configuration_tool
     from app.modules.bots.models.bot_tool import BotTool
-    from sqlalchemy import insert
 
     now = utc_now()
     tool = BotTool(
@@ -462,7 +463,7 @@ async def test_entrypoint_idempotent_skips_processed_input(
         raise AssertionError("no debió llamarse")
 
     _patch_common(monkeypatch)
-    monkeypatch.setitem(embedded_mod._PROVIDER_ADAPTERS, _PROVIDER_OPENAI(), _boom_adapter)
+    monkeypatch.setitem(embedded_mod._PROVIDER_ADAPTERS, _provider_openai(), _boom_adapter)
     # idempotente: retorna sin tocar el adapter
     await dispatch_turn(db_session, conversation_id=conv_id, input_message_id="dup-input")
     assert called["n"] == 0

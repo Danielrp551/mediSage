@@ -15,7 +15,6 @@ from tests.test_staff.helpers import (
     admin_headers,
     create_branch,
     create_doctor,
-    create_office,
     create_vertical,
 )
 

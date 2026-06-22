@@ -7,7 +7,6 @@ from httpx import AsyncClient
 from tests.test_crm.conftest import (
     CRM,
     auth_headers,
-    create_advisor,
     create_person,
     lead_status_options,
 )
