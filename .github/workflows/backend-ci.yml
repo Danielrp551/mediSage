@@ -44,4 +44,6 @@ jobs:
       - name: Tests
         env:
           SECRET_KEY: test-secret-key-with-enough-entropy
-        run: pytest -q
+        # Cobertura (RNF-04): gate duro al 80%. El build falla si la cobertura
+        # total cae por debajo (cobertura actual ~93%).
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=80 -q

@@ -33,6 +33,7 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    "pytest-bdd>=7.3.0",
     "aiosqlite>=0.20.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
@@ -62,6 +63,26 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = "-ra -q --strict-markers"
+# Carpeta base de los .feature (pytest-bdd). Cada HU vive en tests/features/<hu>.feature.
+bdd_features_base_dir = "tests/features"
+# Markers de trazabilidad prueba↔requisito (Anexo G.8). --strict-markers exige declararlos.
+markers = [
+    "rf(id): vincula la prueba a un Requerimiento Funcional, p.ej. RF-E04-18",
+    "rnf(id): vincula la prueba a un Requerimiento No Funcional, p.ej. RNF-04",
+]
+
+# Cobertura (RNF-04). El umbral se aplica en CI con --cov-fail-under=80.
+[tool.coverage.run]
+source = ["app"]
+omit = ["*/__init__.py"]
+# SQLAlchemy 2.0 async ejecuta el ORM dentro de un greenlet (greenlet_spawn) y los
+# writers de Firestore vía asyncio.to_thread → sin declarar estas concurrencias el
+# tracer pierde esos frames y SUB-reporta la cobertura real de los services async.
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
 
 [tool.mypy]
 python_version = "3.11"
