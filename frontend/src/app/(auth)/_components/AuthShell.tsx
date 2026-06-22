@@ -93,13 +93,13 @@ export function AuthShell({ children }: { children: ReactNode }) {
           Medisage
         </div>
         <div className={styles.heroBody}>
-          <h1 className={styles.heroHeadline}>The admin base, batteries included.</h1>
+          <h1 className={styles.heroHeadline}>Atención y reservas, automatizadas.</h1>
           <p className={styles.heroSubcopy}>
-            Auth, RBAC, audit, multi-environment deploys — everything wired so you
-            can start shipping the feature that actually matters.
+            Chatbots conversacionales, gestión de citas y CRM para clínicas
+            especializadas, en una sola plataforma.
           </p>
         </div>
-        <div className={styles.heroFooter}>© Medisage · Internal console</div>
+        <div className={styles.heroFooter}>© Medisage · Consola interna</div>
         <span className={styles.heroDecor} />
       </aside>
 

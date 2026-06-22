@@ -17,7 +17,7 @@ _MIN_SECRET_LEN = 32
 
 class Settings(BaseSettings):
     # ── General ──
-    PROJECT_NAME: str = "Bold Template Stack"
+    PROJECT_NAME: str = "MediSage"
     ENV_NAME: str = "dev"
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
