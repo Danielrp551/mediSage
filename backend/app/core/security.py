@@ -54,6 +54,7 @@ def create_access_token(
     payload: dict[str, Any] = {
         "sub": subject,
         "type": "access",
+        "jti": str(uuid.uuid4()),  # id único por token (auditoría + evita tokens idénticos en el mismo segundo)
         "iss": settings.JWT_ISSUER,
         "aud": settings.JWT_AUDIENCE,
         "iat": now,

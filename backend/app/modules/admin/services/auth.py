@@ -125,6 +125,11 @@ async def refresh(db: AsyncSession, *, refresh_token: str) -> LoginResponse:
         # The presented JTI is not the current one → this token was already
         # rotated → either replay or theft. Revoke the entire family.
         await token_family_repo.revoke(db, family, reason="refresh_reuse_detected")
+        # La revocación es un efecto de seguridad que DEBE persistir aunque a
+        # continuación se aborte con 401. get_db hace rollback ante cualquier
+        # excepción, lo que desharía el revoke; por eso se commitea explícitamente
+        # aquí (excepción justificada a la regla "los services no commitean").
+        await db.commit()
         logger.warning(
             "auth.refresh.reuse_detected family_id=%s user_id=%s presented=%s current=%s",
             family_id,
@@ -137,6 +142,7 @@ async def refresh(db: AsyncSession, *, refresh_token: str) -> LoginResponse:
     user = await user_repository.get_full(db, user_id)
     if user is None or not user.active:
         await token_family_repo.revoke(db, family, reason="user_inactive")
+        await db.commit()  # persistir el revoke pese al 401 (ver nota en el bloque de reuso)
         raise UnauthorizedException("User is no longer active")
 
     pair, _, new_jti = _issue_tokens(user, family_id=family_id)
