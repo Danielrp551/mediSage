@@ -1,20 +1,25 @@
 "use client";
 
 import {
+  Button,
   Dropdown,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   Option,
   Spinner,
   Tab,
   TabList,
   makeStyles,
+  mergeClasses,
   tokens,
 } from "@fluentui/react-components";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
 import { computeAvailability, fetchAppointmentsInRange } from "@/actions/appointment.actions";
+import { fetchExternalEvents } from "@/actions/calendar.actions";
+import { usePermissions } from "@/hooks/usePermissions";
 import { CALENDAR, WEEKDAY_LABELS, minutesToTime } from "@/lib/constants/calendar";
 import { appTokens } from "@/lib/theme/brand";
 import {
@@ -78,6 +83,31 @@ const useStyles = makeStyles({
     justifyContent: "center",
     padding: tokens.spacingVerticalXXXL,
   },
+  // Leyenda del overlay (cita medisage / evento externo / hueco libre).
+  legend: {
+    display: "flex",
+    gap: tokens.spacingHorizontalL,
+    flexWrap: "wrap",
+    fontSize: tokens.fontSizeBase200,
+    color: appTokens.chromeTextMuted,
+  },
+  legendItem: { display: "flex", alignItems: "center", gap: tokens.spacingHorizontalXS },
+  swatch: {
+    width: "14px",
+    height: "14px",
+    borderRadius: tokens.borderRadiusSmall,
+    flexShrink: 0,
+  },
+  swatchAppt: { backgroundColor: tokens.colorBrandBackground },
+  swatchExternal: {
+    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundImage: `repeating-linear-gradient(45deg, ${tokens.colorNeutralStroke2}, ${tokens.colorNeutralStroke2} 1px, transparent 1px, transparent 5px)`,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  swatchFree: {
+    border: `1px dashed ${tokens.colorBrandStroke1}`,
+    backgroundColor: tokens.colorBrandBackground2,
+  },
 });
 
 interface Props {
@@ -128,6 +158,11 @@ export function CalendarClient({ doctors, products, branches, statuses }: Props)
   const [doctorId, setDoctorId] = useState<string | null>(null);
   const [productId, setProductId] = useState<string | null>(null);
   const [statusId, setStatusId] = useState<string | null>(null);
+  // Overlay de eventos externos (F2): la lectura es POR SEDE. Solo visible/consultado con el
+  // permiso fino del overlay (lo tienen DOCTOR/ASESOR/ADMIN).
+  const { hasPermission } = usePermissions();
+  const canSeeExternal = hasPermission("CALENDAR_EXTERNAL_EVENTS_READ");
+  const [branchId, setBranchId] = useState<string | null>(null);
 
   // Drawers.
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -189,6 +224,19 @@ export function CalendarClient({ doctors, products, branches, statuses }: Props)
     queryKey: ["sched-cal-day", dayFromIso, dayToIso, statusId],
     queryFn: () => fetchAppointmentsInRange({ fromIso: dayFromIso, toIso: dayToIso, statusId }),
     enabled: view === "day" && !!day,
+  });
+
+  // ── Overlay informativo (F2): eventos externos de la sede en la semana (best-effort) ──
+  // Comparte las MISMAS cotas UTC que las citas (weekFromIso/weekToIso). Solo en modo semana,
+  // con sede elegida y permiso del overlay. NUNCA rompe la grilla (el backend es best-effort:
+  // una conexión caída viaja en sources_health, sin 5xx).
+  const externalQuery = useQuery({
+    queryKey: ["sched-cal-external", weekFromIso, weekToIso, branchId],
+    queryFn: () =>
+      fetchExternalEvents({ branchId: branchId as string, from: weekFromIso, to: weekToIso }),
+    // Requiere doctor: el grid (donde se pintan los eventos) sólo aparece con doctor elegido →
+    // sin él, no consultamos (evita un fetch desperdiciado y legend/aviso sin grilla debajo).
+    enabled: view === "week" && !!weekStart && !!doctorId && !!branchId && canSeeExternal,
   });
 
   // ── Columnas + eventos del modo semana ──
@@ -253,6 +301,33 @@ export function CalendarClient({ doctors, products, branches, statuses }: Props)
     return out;
   }, [weekQuery.data, freeQuery.data, productId]);
 
+  // Eventos externos → CalendarEvent kind "external" (mismos helpers TZ que las citas: hora
+  // local del navegador). Los all-day se OMITEN del MVP (no tienen hora de pared útil como
+  // bloque horario; banda en cabecera = refinamiento diferido).
+  const externalEvents = useMemo<CalendarEvent[]>(() => {
+    const out: CalendarEvent[] = [];
+    for (const ev of externalQuery.data?.events ?? []) {
+      if (ev.all_day) continue;
+      const startMin = localMinutesOf(ev.starts_at);
+      // Si el evento cruza la medianoche local (termina otro día), localMinutesOf(ends_at)
+      // "wrapea" (< startMin) y la grilla lo descartaría → recortarlo al fin del día (la grilla
+      // lo clipa a la ventana 07:00–21:00) para que NO desaparezca.
+      const endRaw = localMinutesOf(ev.ends_at);
+      const sameDay = localDateIsoOf(ev.ends_at) === localDateIsoOf(ev.starts_at);
+      out.push({
+        id: `ext-${ev.source_id}-${ev.external_id}`,
+        columnKey: localDateIsoOf(ev.starts_at),
+        startMin,
+        endMin: sameDay && endRaw > startMin ? endRaw : 24 * 60,
+        title: ev.title,
+        subtitle: minutesToTime(startMin),
+        kind: "external",
+        ariaLabel: `Evento externo: ${ev.title} · ${minutesToTime(startMin)}`,
+      });
+    }
+    return out;
+  }, [externalQuery.data]);
+
   // ── Columnas + eventos del modo día (columnas = doctores con ≥1 cita VISIBLE ese día) ──
   // Sólo las citas dentro de la ventana de la grilla (07:00–21:00): un doctor con citas
   // únicamente fuera de hora no debe aparecer como columna vacía (la grilla recorta esos
@@ -298,8 +373,17 @@ export function CalendarClient({ doctors, products, branches, statuses }: Props)
     return out;
   }, [visibleDayAppts]);
 
+  // En semana, los eventos externos se concatenan a las citas/huecos (capa aditiva). Memoizado
+  // y ANTES del early-return de abajo (Rules of Hooks); evita invalidar el layout interno de
+  // CalendarGrid en cada render. No depende de weekStart/day (solo de los memos ya computados).
+  const events = useMemo<CalendarEvent[]>(
+    () => (view === "week" ? [...weekEvents, ...externalEvents] : dayEvents),
+    [view, weekEvents, externalEvents, dayEvents],
+  );
+
   // ── Click sobre un evento: cita → detalle; hueco → reserva rápida ──
   const handleEventClick = (event: CalendarEvent) => {
+    if (event.kind === "external") return; // capa informativa: no abre detalle ni reserva
     if (event.kind === "appointment") {
       setDetailId(event.id);
       return;
@@ -343,7 +427,6 @@ export function CalendarClient({ doctors, products, branches, statuses }: Props)
   const activeQuery = view === "week" ? weekQuery : dayQuery;
   const periodLabel = view === "week" ? formatWeekRange(weekStart) : formatDayLabel(day);
   const columns = view === "week" ? weekColumns : dayColumns;
-  const events = view === "week" ? weekEvents : dayEvents;
 
   // Línea de "ahora": sólo si el día de hoy es una columna visible.
   const nowIndicator =
@@ -355,6 +438,18 @@ export function CalendarClient({ doctors, products, branches, statuses }: Props)
   const selectedDoctorName = doctors.find((d) => d.id === doctorId)?.full_name ?? "";
   const selectedProductName = products.find((p) => p.id === productId)?.name ?? "";
   const selectedStatusName = statuses.find((s) => s.id === statusId)?.name ?? "";
+  const selectedBranchName = branches.find((b) => b.id === branchId)?.name ?? "";
+  // Overlay activo (semana + sede + permiso): controla legend, aviso de salud y la query.
+  // Requiere doctor también: la legend/aviso sólo cuando el grid (con los eventos) está en pantalla.
+  const overlayActive = view === "week" && canSeeExternal && !!doctorId && !!branchId;
+  // El marcador CANÓNICO de fallo es `error` (None = OK), no `status`: un fallo de lectura
+  // (CALENDAR_READ_FAILED / provider 5xx) deja status="connected" + error=code → hay que mirar
+  // `error` o el aviso nunca saldría para el modo de fallo más común (rompería la mitad UI de §23).
+  const externalHealthWarn =
+    overlayActive &&
+    (externalQuery.data?.sources_health ?? []).some(
+      (h) => h.error != null || h.status !== "connected",
+    );
 
   return (
     <div className={styles.root}>
@@ -400,6 +495,22 @@ export function CalendarClient({ doctors, products, branches, statuses }: Props)
                 </Option>
               ))}
             </Dropdown>
+            {canSeeExternal ? (
+              <Dropdown
+                className={styles.filter}
+                placeholder="Calendarios externos: sede…"
+                value={selectedBranchName}
+                selectedOptions={branchId ? [branchId] : []}
+                onOptionSelect={(_, d) => setBranchId(d.optionValue || null)}
+              >
+                <Option value="">Sin calendarios externos</Option>
+                {branches.map((b) => (
+                  <Option key={b.id} value={b.id}>
+                    {b.name}
+                  </Option>
+                ))}
+              </Dropdown>
+            ) : null}
           </>
         ) : (
           <Dropdown
@@ -427,6 +538,40 @@ export function CalendarClient({ doctors, products, branches, statuses }: Props)
           onToday={goToday}
         />
       </div>
+
+      {overlayActive ? (
+        <div className={styles.legend}>
+          <span className={styles.legendItem}>
+            <span className={mergeClasses(styles.swatch, styles.swatchAppt)} /> Cita medisage
+          </span>
+          <span className={styles.legendItem}>
+            <span className={mergeClasses(styles.swatch, styles.swatchExternal)} /> Evento externo
+          </span>
+          <span className={styles.legendItem}>
+            <span className={mergeClasses(styles.swatch, styles.swatchFree)} /> Horario libre
+          </span>
+        </div>
+      ) : null}
+
+      {externalHealthWarn ? (
+        <MessageBar intent="warning">
+          <MessageBarBody>
+            Algunos calendarios externos no se pudieron leer. Revisa la conexión en Calendarios
+            externos.
+          </MessageBarBody>
+          <MessageBarActions
+            containerAction={
+              <Button
+                appearance="transparent"
+                size="small"
+                onClick={() => void externalQuery.refetch()}
+              >
+                Reintentar
+              </Button>
+            }
+          />
+        </MessageBar>
+      ) : null}
 
       {needsDoctor ? (
         <div className={styles.placeholder}>Elegí un doctor para ver su semana.</div>

@@ -11,6 +11,7 @@ import type {
   CalendarConnectionItem,
   CalendarProvider,
   ExternalCalendarOption,
+  ExternalEventsResponse,
   OAuthStartResponse,
 } from "@/types/calendar.types";
 import type { QueryRequest } from "@/types/query.types";
@@ -115,4 +116,26 @@ export async function replaceSources(
     // 404 BRANCH_NOT_FOUND (sede inexistente) / CALENDAR_CONNECTION_NOT_FOUND (detail en español).
     return { ok: false, error: e instanceof HttpError ? e.message : "Error inesperado" };
   }
+}
+
+// ── Overlay informativo (F2) — lectura best-effort, sin revalidate ──────────────────────────
+// La consume el CalendarClient de scheduling (mapea los ExternalEventItem a CalendarEvent
+// kind "external"). from/to = los MISMOS instantes UTC que la grilla ya calcula
+// (weekFromIso/weekToIso). El backend es best-effort: NUNCA 5xx — si una conexión falla, viaja
+// en sources_health. Lectura live on-demand: SIN tag → backendClient sirve cache:"no-store".
+// GET /calendar/external-events?branch_id=&from=&to= → SingleResponse[ExternalEventsResponse].
+export async function fetchExternalEvents(params: {
+  branchId: string;
+  from: string; // ISO 8601 UTC
+  to: string; // ISO 8601 UTC
+}): Promise<ExternalEventsResponse> {
+  const qs = new URLSearchParams({
+    branch_id: params.branchId,
+    from: params.from,
+    to: params.to,
+  });
+  const res = await backendClient.get<ApiSingle<ExternalEventsResponse>>(
+    `${ENDPOINTS.CALENDAR.EXTERNAL_EVENTS}?${qs.toString()}`,
+  );
+  return res.data; // { events, sources_health }
 }

@@ -14,14 +14,15 @@ build_auth_url/exchange_code/get_account_email/refresh/list_calendars; `list_eve
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from app.core.config import get_settings
 from app.modules.calendar.services.providers.base import (
     Credentials,
     ExternalCalendar,
+    ExternalEvent,
 )
 from app.shared.utils import utc_now
 
@@ -29,6 +30,7 @@ _AUTH_BASE = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
 _TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 _API_BASE = "https://graph.microsoft.com/v1.0"
 _SCOPE = "offline_access Calendars.Read User.Read"
+_MAX_PAGES = 10  # cota de paginación de list_events (@odata.nextLink, anti-runaway)
 
 
 class MicrosoftGraphAdapter:
@@ -132,6 +134,67 @@ class MicrosoftGraphAdapter:
             )
             for c in items
         ]
+
+    async def list_events(
+        self,
+        creds: Credentials,
+        *,
+        calendar_id: str,
+        time_min: datetime,
+        time_max: datetime,
+    ) -> list[ExternalEvent]:
+        import httpx  # lazy
+
+        events: list[ExternalEvent] = []
+        headers = {
+            "Authorization": f"Bearer {creds.access_token}",
+            "Prefer": 'outlook.timezone="UTC"',  # Graph devuelve los instantes en UTC
+        }
+        url = f"{_API_BASE}/me/calendars/{quote(calendar_id, safe='')}/calendarView"
+        params: dict[str, str] | None = {
+            "startDateTime": time_min.isoformat(),
+            "endDateTime": time_max.isoformat(),
+            "$top": "250",
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for _ in range(_MAX_PAGES):
+                resp = await client.get(url, headers=headers, params=params)
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+                for e in data.get("value", []):
+                    if e.get("isCancelled"):  # los cancelados no ocupan (paridad con Google)
+                        continue
+                    events.append(_parse_ms_event(e))
+                next_link = data.get("@odata.nextLink")
+                if not next_link:
+                    break
+                url = str(next_link)  # el nextLink ya trae todos los query params
+                params = None
+        return events
+
+
+def _parse_ms_event(e: dict[str, Any]) -> ExternalEvent:
+    start: dict[str, Any] = e.get("start", {})
+    end: dict[str, Any] = e.get("end", {})
+    return ExternalEvent(
+        external_id=str(e.get("id", "")),
+        title=str(e.get("subject") or "(sin título)"),
+        starts_at=_parse_graph_dt(str(start.get("dateTime", ""))),
+        ends_at=_parse_graph_dt(str(end.get("dateTime", ""))),
+        all_day=bool(e.get("isAllDay")),
+    )
+
+
+def _parse_graph_dt(value: str) -> datetime:
+    """Graph (Prefer outlook.timezone=UTC) devuelve UTC SIN 'Z', con fracción de hasta 7
+    dígitos → fromisoformat la rechaza. Normaliza a ≤6 dígitos y fija UTC si queda naive."""
+    s = value.strip().rstrip("Z")
+    if "." in s:
+        head, frac = s.split(".", 1)
+        frac = "".join(ch for ch in frac if ch.isdigit())[:6]
+        s = f"{head}.{frac}" if frac else head
+    dt = datetime.fromisoformat(s)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _creds_from_token(

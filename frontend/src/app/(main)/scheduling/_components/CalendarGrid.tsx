@@ -30,8 +30,8 @@ export interface CalendarEvent {
   endMin: number;
   title: string;
   subtitle?: string;
-  color?: string | null; // color del estado (cita); ignorado en huecos libres
-  kind: "appointment" | "free";
+  color?: string | null; // color del estado (cita); ignorado en huecos libres y externos
+  kind: "appointment" | "free" | "external";
   // Etiqueta accesible completa (incluye el estado en las citas, que el badge de color no
   // transmite a lectores de pantalla). Si falta, se compone una básica con title+subtitle.
   ariaLabel?: string;
@@ -155,6 +155,16 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorBrandBackground2,
     color: tokens.colorBrandForeground1,
     ":hover": { backgroundColor: tokens.colorBrandBackground2Hover },
+  },
+  // Evento externo (overlay informativo, F2): capa visualmente DISTINTA — rayado diagonal
+  // tenue neutral (ni color de estado ni marca) → se lee como "ajeno". NO clicable para reservar.
+  eventExternal: {
+    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundImage: `repeating-linear-gradient(45deg, ${tokens.colorNeutralStroke2}, ${tokens.colorNeutralStroke2} 1px, transparent 1px, transparent 7px)`,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    color: tokens.colorNeutralForeground2,
+    cursor: "default",
+    ":hover": { filter: "none" },
   },
   eventTitle: {
     fontSize: tokens.fontSizeBase200,
@@ -312,23 +322,26 @@ export function CalendarGrid({ columns, events, onEventClick, nowIndicator }: Pr
                 {positioned.map(({ event, top, height, lane, lanes }) => {
                   const widthPct = 100 / lanes;
                   const isFree = event.kind === "free";
+                  const isExternal = event.kind === "external";
+                  const kindClass = isFree
+                    ? styles.eventFree
+                    : isExternal
+                      ? styles.eventExternal
+                      : styles.eventAppointment;
                   return (
                     <button
                       key={event.id}
                       type="button"
-                      className={mergeClasses(
-                        styles.event,
-                        isFree ? styles.eventFree : styles.eventAppointment,
-                      )}
+                      className={mergeClasses(styles.event, kindClass)}
                       style={{
                         top,
                         height,
                         left: `calc(${lane * widthPct}% + 2px)`,
                         width: `calc(${widthPct}% - 4px)`,
-                        // Color del estado solo para citas (los huecos llevan estilo de clase).
-                        ...(isFree
-                          ? {}
-                          : { backgroundColor: event.color ?? tokens.colorNeutralBackground3 }),
+                        // Color del estado SOLO en citas (huecos y externos llevan estilo de clase).
+                        ...(event.kind === "appointment"
+                          ? { backgroundColor: event.color ?? tokens.colorNeutralBackground3 }
+                          : {}),
                       }}
                       aria-label={
                         event.ariaLabel ??
@@ -336,7 +349,10 @@ export function CalendarGrid({ columns, events, onEventClick, nowIndicator }: Pr
                           ? `Reservar ${event.subtitle ?? ""} ${event.title}`.trim()
                           : `${event.title} ${event.subtitle ?? ""}`.trim())
                       }
-                      onClick={() => onEventClick(event)}
+                      // Externo = informativo: NO abre reserva/detalle (la capa no es accionable).
+                      onClick={() => {
+                        if (!isExternal) onEventClick(event);
+                      }}
                     >
                       <span className={styles.eventTitle}>{event.title}</span>
                       {event.subtitle ? (

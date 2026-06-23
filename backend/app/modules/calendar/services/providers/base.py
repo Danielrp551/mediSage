@@ -73,13 +73,17 @@ class _CalendarAdapter(Protocol):
         """Los calendarios de la cuenta (para mapear a sedes)."""
         ...
 
-    # ── Superficie F2 (lectura del overlay) — documentada, NO implementada en F1a ──
-    # async def list_events(
-    #     self, creds: Credentials, *, calendar_id: str,
-    #     time_min: datetime, time_max: datetime,
-    # ) -> list[ExternalEvent]:
-    #     """Eventos de UN calendario en [time_min, time_max) (instantes UTC). Fase 2."""
-    #     ...
+    # ── Superficie F2 (lectura del overlay) ──
+    async def list_events(
+        self,
+        creds: Credentials,
+        *,
+        calendar_id: str,
+        time_min: datetime,
+        time_max: datetime,
+    ) -> list[ExternalEvent]:
+        """Eventos de UN calendario en [time_min, time_max) (instantes UTC). Fase 2."""
+        ...
 
     # ── Superficie FUTURA (documentada, NO implementada) ──
     # async def get_busy(self, creds, *, calendar_ids, time_min, time_max) -> list[tuple[datetime, datetime]]:

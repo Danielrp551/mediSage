@@ -14,14 +14,15 @@ F1a implementa build_auth_url/exchange_code/get_account_email/refresh/list_calen
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from app.core.config import get_settings
 from app.modules.calendar.services.providers.base import (
     Credentials,
     ExternalCalendar,
+    ExternalEvent,
 )
 from app.shared.utils import utc_now
 
@@ -30,6 +31,7 @@ _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _API_BASE = "https://www.googleapis.com/calendar/v3"
 _USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
 _SCOPE = "https://www.googleapis.com/auth/calendar.readonly openid email"
+_MAX_PAGES = 10  # cota de paginación de list_events (≤2500 eventos/calendario, anti-runaway)
 
 
 class GoogleCalendarAdapter:
@@ -123,6 +125,64 @@ class GoogleCalendarAdapter:
             )
             for c in items
         ]
+
+    async def list_events(
+        self,
+        creds: Credentials,
+        *,
+        calendar_id: str,
+        time_min: datetime,
+        time_max: datetime,
+    ) -> list[ExternalEvent]:
+        import httpx  # lazy
+
+        events: list[ExternalEvent] = []
+        params: dict[str, str] = {
+            "timeMin": time_min.isoformat(),
+            "timeMax": time_max.isoformat(),
+            "singleEvents": "true",  # expande recurrencias a instancias concretas
+            "orderBy": "startTime",
+            "maxResults": "250",
+        }
+        url = f"{_API_BASE}/calendars/{quote(calendar_id, safe='')}/events"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for _ in range(_MAX_PAGES):
+                resp = await client.get(
+                    url,
+                    headers={"Authorization": f"Bearer {creds.access_token}"},
+                    params=params,
+                )
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+                for e in data.get("items", []):
+                    if e.get("status") == "cancelled":  # los cancelados no ocupan
+                        continue
+                    events.append(_parse_google_event(e))
+                token = data.get("nextPageToken")
+                if not token:
+                    break
+                params = {**params, "pageToken": str(token)}
+        return events
+
+
+def _parse_google_event(e: dict[str, Any]) -> ExternalEvent:
+    start: dict[str, Any] = e.get("start", {})
+    end: dict[str, Any] = e.get("end", {})
+    return ExternalEvent(
+        external_id=str(e.get("id", "")),
+        title=str(e.get("summary") or "(sin título)"),
+        starts_at=_parse_google_dt(start),
+        ends_at=_parse_google_dt(end),
+        all_day="date" in start,  # all-day usa `date` (sin hora); con hora usa `dateTime`
+    )
+
+
+def _parse_google_dt(node: dict[str, Any]) -> datetime:
+    """`dateTime` (RFC3339 con offset/Z) → UTC; `date` (YYYY-MM-DD, all-day) → medianoche UTC."""
+    raw = node.get("dateTime")
+    if raw:
+        return datetime.fromisoformat(str(raw)).astimezone(UTC)
+    return datetime.fromisoformat(str(node["date"])).replace(tzinfo=UTC)
 
 
 def _creds_from_token(
