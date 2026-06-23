@@ -11,6 +11,7 @@ const CONVERSATIONS = "/api/v1/conversations";
 const BOTS = "/api/v1/bots";
 const SCHEDULING = "/api/v1/scheduling";
 const MARKETING = "/api/v1/marketing";
+const CALENDAR = "/api/v1/calendar";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -313,5 +314,23 @@ export const ENDPOINTS = {
     APPLY: `${MARKETING}/promotion-usages`, // POST (PROMOTION_APPLY) → crea PromotionUsage
     LIST: `${MARKETING}/promotion-usages/list`, // POST + QueryRequest (PROMOTION_USAGES_READ)
     COMPUTE_PRICE: `${MARKETING}/compute-price`, // POST {product_id, person_id, promotion_id?} (PROMOTION_VALIDATE)
+  },
+  // ── Calendar module (#9) ─────────────────────────────────
+  // Declarado en F0 (Prep), INERTE: ninguna pantalla lo consume aún. Las rutas backend se
+  // montan en F1 (conexión + mapeo) / F2 (lectura del overlay). El callback OAuth es PÚBLICO
+  // (lo invoca el navegador en el redirect del proveedor, no `backendClient`) → referencia
+  // documental. Los tokens NUNCA cruzan al front (el schema los omite).
+  CALENDAR: {
+    // OAuth (conectar la cuenta de la clínica)
+    OAUTH_START: (provider: string) => `${CALENDAR}/oauth/${provider}/start`, // GET → {auth_url} (CALENDAR_CONNECTIONS_WRITE)
+    OAUTH_CALLBACK: (provider: string) => `${CALENDAR}/oauth/${provider}/callback`, // PÚBLICO (gateado por state) → 302
+    // Conexiones + mapeo calendario→sede
+    CONNECTIONS_LIST: `${CALENDAR}/connections/list`, // POST + QueryRequest. PaginatedResponse[CalendarConnectionItem]
+    CONNECTION_GET: (id: string) => `${CALENDAR}/connections/${id}`, // SingleResponse[CalendarConnectionDetail]
+    CONNECTION_DELETE: (id: string) => `${CALENDAR}/connections/${id}`, // 204 (desconectar)
+    CONNECTION_CALENDARS: (id: string) => `${CALENDAR}/connections/${id}/calendars`, // GET live → ExternalCalendarOption[]
+    CONNECTION_SOURCES: (id: string) => `${CALENDAR}/connections/${id}/sources`, // PUT bulk replace del mapeo
+    // Lectura informativa (overlay)
+    EXTERNAL_EVENTS: `${CALENDAR}/external-events`, // GET ?branch_id=&from=&to= → ExternalEventsResponse (best-effort)
   },
 } as const;

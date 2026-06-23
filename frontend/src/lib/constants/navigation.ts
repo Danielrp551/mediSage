@@ -70,6 +70,16 @@ export const NAV_ITEMS: NavItem[] = [
         url: "/clinic/offices",
         permissions: ["MENU-CLINIC"],
       },
+      // Calendarios externos (módulo `calendar` #9) — la config vive en el grupo Clínica por
+      // UX. El child se gatea por el permiso fino CALENDAR_CONNECTIONS_READ (MENU-CALENDAR queda
+      // reservado, patrón scheduling). La página `/clinic/calendarios-externos` llega en F1.
+      {
+        key: "external-calendars",
+        label: "Calendarios externos",
+        icon: "CalendarLtrRegular", // ya registrado en el ICONS map del Sidebar
+        url: "/clinic/calendarios-externos",
+        permissions: ["CALENDAR_CONNECTIONS_READ"],
+      },
     ],
   },
   {

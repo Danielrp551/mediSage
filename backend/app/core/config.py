@@ -113,6 +113,20 @@ class Settings(BaseSettings):
         ""  # shared-secret del endpoint /engine/dispatch (Secret Manager por env)
     )
 
+    # ── Calendar (módulo #9, ADR-014) ──
+    # Integración de calendario externo (Google Calendar API + Microsoft Graph) vía OAuth. El
+    # cliente OAuth (client_id/secret) es GLOBAL por entorno (--set-secrets de Cloud Run); los
+    # tokens POR conexión viven en Secret Manager (ADR-010). Defaults vacíos → el módulo es
+    # INERTE (no se puede conectar) hasta configurar las credenciales; el smoke (ENV=dev) nunca
+    # toca OAuth. Las env-vars van a AMBOS workflows deploy (lección §9/§11).
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    GOOGLE_OAUTH_CLIENT_SECRET: str = ""  # Secret Manager
+    MICROSOFT_OAUTH_CLIENT_ID: str = ""
+    MICROSOFT_OAUTH_CLIENT_SECRET: str = ""  # Secret Manager
+    MICROSOFT_OAUTH_TENANT: str = "common"  # 'common' | 'organizations' | un tenant id
+    # Base pública para el callback OAuth (= SERVICE_BASE_URL, sin trailing slash).
+    CALENDAR_OAUTH_REDIRECT_BASE: str = ""
+
     @property
     def database_url(self) -> str:
         """Async SQLAlchemy connection string. Switches to Unix socket on Cloud Run."""
@@ -208,6 +222,26 @@ class Settings(BaseSettings):
                 f"missing or too short (need >= {_MIN_SECRET_LEN} chars) for ENV_NAME="
                 f"{self.ENV_NAME!r}. Set the per-environment secret (generate with: python -c "
                 "'import secrets; print(secrets.token_urlsafe(48))')."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _enforce_calendar_oauth(self) -> Settings:
+        """Si un proveedor de calendario está configurado (su `*_CLIENT_ID` seteado), fuera de
+        `dev` DEBE tener también su `*_CLIENT_SECRET` (el secret del cliente OAuth, en Secret
+        Manager). Falla RUIDOSA al boot ante un proveedor medio-configurado en vez de fallar
+        recién al conectar en runtime (mismo principio que `_enforce_bot_dispatch_secret`)."""
+        if self.ENV_NAME == "dev":
+            return self
+        if self.GOOGLE_OAUTH_CLIENT_ID and not self.GOOGLE_OAUTH_CLIENT_SECRET:
+            raise ValueError(
+                "GOOGLE_OAUTH_CLIENT_ID is set but GOOGLE_OAUTH_CLIENT_SECRET is missing for "
+                f"ENV_NAME={self.ENV_NAME!r}. Set the per-environment OAuth client secret."
+            )
+        if self.MICROSOFT_OAUTH_CLIENT_ID and not self.MICROSOFT_OAUTH_CLIENT_SECRET:
+            raise ValueError(
+                "MICROSOFT_OAUTH_CLIENT_ID is set but MICROSOFT_OAUTH_CLIENT_SECRET is missing "
+                f"for ENV_NAME={self.ENV_NAME!r}. Set the per-environment OAuth client secret."
             )
         return self
 

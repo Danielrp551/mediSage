@@ -207,6 +207,23 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     },
     {"code": "PROMOTION_APPLY", "name": "Apply promotion (create usage)", "module": "MARKETING"},
     {"code": "PROMOTION_USAGES_READ", "name": "Read promotion usages", "module": "MARKETING"},
+    # ── Module: calendar (#9, ADR-014) ──────────────────────────────────
+    {"code": "MENU-CALENDAR", "name": "Menu Calendar", "module": "CALENDAR"},
+    {
+        "code": "CALENDAR_CONNECTIONS_READ",
+        "name": "Read calendar connections",
+        "module": "CALENDAR",
+    },
+    {
+        "code": "CALENDAR_CONNECTIONS_WRITE",
+        "name": "Write calendar connections + mapping",
+        "module": "CALENDAR",
+    },
+    {
+        "code": "CALENDAR_EXTERNAL_EVENTS_READ",
+        "name": "Read external calendar events (overlay)",
+        "module": "CALENDAR",
+    },
 ]
 
 
@@ -243,6 +260,8 @@ DOCTOR_PERMISSION_CODES: set[str] = {
     "APPOINTMENTS_TRANSITION",
     "AVAILABILITY_READ",
     "MY_APPOINTMENTS_READ",
+    # Calendar (ve el overlay de eventos externos en la grilla) — módulo futuro
+    "CALENDAR_EXTERNAL_EVENTS_READ",
 }
 
 ASESOR_PERMISSION_CODES: set[str] = {
@@ -303,6 +322,10 @@ ASESOR_PERMISSION_CODES: set[str] = {
     "PROMOTION_VALIDATE",
     "PROMOTION_APPLY",
     "PROMOTION_USAGES_READ",
+    # Calendar (config read-only + overlay) — módulo futuro
+    "MENU-CALENDAR",
+    "CALENDAR_CONNECTIONS_READ",
+    "CALENDAR_EXTERNAL_EVENTS_READ",
 }
 
 # SYSTEM: rol del usuario técnico no autenticable. NO lleva permisos — solo existe
