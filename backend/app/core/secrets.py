@@ -69,6 +69,40 @@ async def resolve(secret_name: str) -> dict[str, str]:
     return creds
 
 
+async def put(name: str, payload: dict[str, Any]) -> None:
+    """Crea el secreto (si no existe) + agrega una versión con `payload` (JSON). Idempotente
+    en la creación (`AlreadyExists` se ignora). Invalida la cache del secreto para que el
+    próximo `resolve()` lea la versión nueva (rotación inmediata).
+
+    Lo usa `calendar` para guardar/rotar los tokens OAuth por conexión (ADR-010 extendido a
+    escritura). La SA de Cloud Run ya tiene `secretmanager.secretAccessor`; ESTO requiere
+    además `secretmanager.admin` (o secretVersionAdder + create). Error → CALENDAR_CREDENTIALS_
+    MISSING (espeja CHANNEL_CREDENTIALS_MISSING de `resolve`). Reusa el cliente lazy `_get_client`."""
+    settings = get_settings()
+    project = f"projects/{settings.GCP_PROJECT_ID}"
+    parent = f"{project}/secrets/{name}"
+    data = json.dumps(payload).encode("utf-8")
+    try:
+        client = _get_client()
+        from google.api_core.exceptions import AlreadyExists
+
+        try:
+            await client.create_secret(
+                parent=project,
+                secret_id=name,
+                secret={"replication": {"automatic": {}}},
+            )
+        except AlreadyExists:
+            pass  # el secreto ya existe → seguimos a add_version (idempotente)
+        await client.add_secret_version(parent=parent, payload={"data": data})
+    except Exception as exc:  # PermissionDenied / SDK ausente / cuota / etc.
+        raise BadRequestException(
+            "No se pudo escribir el secreto del calendario",
+            code="CALENDAR_CREDENTIALS_MISSING",
+        ) from exc
+    _CACHE.pop(name, None)  # invalida la cache (el próximo resolve lee la versión nueva)
+
+
 def clear_cache() -> None:
     """Invalida la cache (rotación inmediata de credenciales / tests)."""
     _CACHE.clear()
