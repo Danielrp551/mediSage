@@ -27,7 +27,8 @@ El template trae solo el seed del módulo `admin` (13 permisos + role `ADMIN`). 
 | `bots` | 14 | `MENU-BOTS` | BOT_CONFIGURATIONS, BOT_TOOLS, BOT_STATE, BOT_EVENTS, BOT_ENGINE_INVOKE |
 | `scheduling` | 13 | `MENU-SCHEDULING` | APPOINTMENT_STATUSES, APPOINTMENTS, AVAILABILITY |
 | `marketing` | 12 | `MENU-MARKETING` | CAMPAIGNS, PROMOTIONS, PROMOTION_USAGES |
-| **Total** | **116** | — | — |
+| `calendar` | 4 | `MENU-CALENDAR` | CALENDAR_CONNECTIONS, CALENDAR_EXTERNAL_EVENTS |
+| **Total** | **120** | — | — |
 
 ## Roles seed
 
@@ -177,6 +178,12 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
     {"code": "PROMOTION_VALIDATE",   "name": "Validate promotion eligibility/price", "module": "MARKETING"},
     {"code": "PROMOTION_APPLY",      "name": "Apply promotion (create usage)",       "module": "MARKETING"},
     {"code": "PROMOTION_USAGES_READ","name": "Read promotion usages","module": "MARKETING"},
+
+    # ── Module: calendar (#9, ADR-014) ──────────────────────────────────
+    {"code": "MENU-CALENDAR",                 "name": "Menu Calendar",                           "module": "CALENDAR"},
+    {"code": "CALENDAR_CONNECTIONS_READ",     "name": "Read calendar connections",               "module": "CALENDAR"},
+    {"code": "CALENDAR_CONNECTIONS_WRITE",    "name": "Write calendar connections + mapping",    "module": "CALENDAR"},
+    {"code": "CALENDAR_EXTERNAL_EVENTS_READ", "name": "Read external calendar events (overlay)",  "module": "CALENDAR"},
 ]
 ```
 
@@ -193,7 +200,7 @@ existing_or_new_admin.permissions = permissions  # todos los SEED_PERMISSIONS
 
 ### `DOCTOR`
 
-Permisos del doctor — set canónico (22 permisos; **efectivos hoy: 15** tras filtrar los códigos de módulos aún no implementados contra los 50 que existen pre-crm/scheduling):
+Permisos del doctor — set canónico (23 permisos; **efectivos hoy: 15** tras filtrar los códigos de módulos aún no implementados contra los 50 que existen pre-crm/scheduling):
 
 ```python
 DOCTOR_PERMISSION_CODES: set[str] = {
@@ -212,6 +219,8 @@ DOCTOR_PERMISSION_CODES: set[str] = {
     "MENU-SCHEDULING", "APPOINTMENT_STATUSES_READ",
     "APPOINTMENTS_READ", "APPOINTMENTS_TRANSITION",
     "AVAILABILITY_READ", "MY_APPOINTMENTS_READ",
+    # Calendar (ve el overlay de eventos externos en la grilla)
+    "CALENDAR_EXTERNAL_EVENTS_READ",
 }
 ```
 
@@ -225,7 +234,7 @@ DOCTOR_PERMISSION_CODES: set[str] = {
 
 ### `ASESOR`
 
-Permisos del asesor — set canónico (49 permisos; **efectivos hoy: 10** tras filtrar los códigos de módulos aún no implementados contra los 50 que existen pre-crm/scheduling):
+Permisos del asesor — set canónico (52 permisos; **efectivos hoy: 10** tras filtrar los códigos de módulos aún no implementados contra los 50 que existen pre-crm/scheduling):
 
 ```python
 ASESOR_PERMISSION_CODES: set[str] = {
@@ -263,6 +272,8 @@ ASESOR_PERMISSION_CODES: set[str] = {
     "MENU-MARKETING", "CAMPAIGNS_READ",
     "PROMOTIONS_READ", "PROMOTION_VALIDATE", "PROMOTION_APPLY",
     "PROMOTION_USAGES_READ",
+    # Calendar (config read-only + overlay)
+    "MENU-CALENDAR", "CALENDAR_CONNECTIONS_READ", "CALENDAR_EXTERNAL_EVENTS_READ",
 }
 ```
 

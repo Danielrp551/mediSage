@@ -57,6 +57,7 @@ PROPOSED → ACCEPTED → (SUPERSEDED | DEPRECATED)
 | [ADR-011](ADR-011-firestore-message-stream-cqrs.md) | Stream de mensajes en Firestore (CQRS read-model) — control plane Postgres + outbox + Custom Tokens | Accepted | 2026-06-03 |
 | [ADR-012](ADR-012-cloud-tasks-bot-dispatch.md) | Despacho del turno del bot vía Cloud Tasks (no síncrono, no BackgroundTasks) | Accepted | 2026-06-04 |
 | [ADR-013](ADR-013-marketing-campaign-status-and-atomic-apply.md) | marketing — status de campaña enum fijo (no matriz ADR-008) + aplicación de promoción atómica cross-módulo | Accepted | 2026-06-08 |
+| [ADR-014](ADR-014-external-calendar-integration.md) | Calendario externo — adaptador agnóstico + proveedores nativos (Google/Microsoft) + Fase 1 = lectura informativa a nivel clínica | Proposed | 2026-06-22 |
 | _(pendiente)_ | JWT en cookie httpOnly (no localStorage)     | —      | —     |
 | _(pendiente)_ | Permisos viajan en el access token           | —      | —     |
 | _(pendiente)_ | Arquitectura backend en 5 capas              | —      | —     |
