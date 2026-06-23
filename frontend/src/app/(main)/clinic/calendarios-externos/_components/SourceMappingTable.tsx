@@ -34,7 +34,7 @@ const useStyles = makeStyles({
   },
   headerRow: {
     display: "grid",
-    gridTemplateColumns: "1fr 200px 110px",
+    gridTemplateColumns: "minmax(0, 1fr) 260px 96px",
     gap: tokens.spacingHorizontalM,
     alignItems: "center",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
@@ -48,7 +48,7 @@ const useStyles = makeStyles({
   },
   row: {
     display: "grid",
-    gridTemplateColumns: "1fr 200px 110px",
+    gridTemplateColumns: "minmax(0, 1fr) 260px 96px",
     gap: tokens.spacingHorizontalM,
     alignItems: "center",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
@@ -83,6 +83,12 @@ const useStyles = makeStyles({
     color: appTokens.chromeTextMuted,
     padding: tokens.spacingVerticalS,
   },
+  // El <Dropdown> de Fluent trae min-width ~250px → se desbordaba de su celda y pisaba la
+  // columna "Habilitado". Lo constreñimos a su celda (+ la columna Sede ahora es 260px).
+  dropdown: { minWidth: 0, width: "100%" },
+  // Header "Habilitado" + Switch alineados a la derecha de su columna (se leen como una sola).
+  headerEnd: { justifySelf: "end" },
+  switchCell: { justifySelf: "end" },
 });
 
 // Sentinels del Dropdown de sede. Distintos de cualquier id de sede real (uuid).
@@ -280,7 +286,7 @@ export function SourceMappingTable({
         <div className={styles.headerRow}>
           <span>Calendario</span>
           <span>Sede</span>
-          <span>Habilitado</span>
+          <span className={styles.headerEnd}>Habilitado</span>
         </div>
         {rows.map((r, idx) => (
           <div key={r.external_calendar_id} className={styles.row}>
@@ -291,6 +297,7 @@ export function SourceMappingTable({
               {r.primary ? <Badge appearance="tint">⭐ prim.</Badge> : null}
             </div>
             <Dropdown
+              className={styles.dropdown}
               value={dropdownText(r)}
               selectedOptions={[dropdownValue(r)]}
               disabled={readOnly}
@@ -311,6 +318,7 @@ export function SourceMappingTable({
               ))}
             </Dropdown>
             <Switch
+              className={styles.switchCell}
               checked={r.is_enabled}
               disabled={readOnly || !r.mapped}
               onChange={(_, d) => setEnabled(idx, d.checked)}
