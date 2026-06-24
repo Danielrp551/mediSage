@@ -58,6 +58,7 @@ PROPOSED → ACCEPTED → (SUPERSEDED | DEPRECATED)
 | [ADR-012](ADR-012-cloud-tasks-bot-dispatch.md) | Despacho del turno del bot vía Cloud Tasks (no síncrono, no BackgroundTasks) | Accepted | 2026-06-04 |
 | [ADR-013](ADR-013-marketing-campaign-status-and-atomic-apply.md) | marketing — status de campaña enum fijo (no matriz ADR-008) + aplicación de promoción atómica cross-módulo | Accepted | 2026-06-08 |
 | [ADR-014](ADR-014-external-calendar-integration.md) | Calendario externo — adaptador agnóstico + proveedores nativos (Google/Microsoft) + Fase 1 = lectura informativa a nivel clínica | Proposed | 2026-06-22 |
+| [ADR-015](ADR-015-dashboards-materialized-aggregation.md) | Dashboards y Reportes (OE3) — módulo read-only, agregación materializada (daily rollup + job), reportes server-side, Fluent UI Charts | Proposed | 2026-06-24 |
 | _(pendiente)_ | JWT en cookie httpOnly (no localStorage)     | —      | —     |
 | _(pendiente)_ | Permisos viajan en el access token           | —      | —     |
 | _(pendiente)_ | Arquitectura backend en 5 capas              | —      | —     |
