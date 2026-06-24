@@ -127,6 +127,20 @@ class Settings(BaseSettings):
     # Base pública para el callback OAuth (= SERVICE_BASE_URL, sin trailing slash).
     CALENDAR_OAUTH_REDIRECT_BASE: str = ""
 
+    # ── Dashboards (módulo #10, OE3, ADR-015) ──
+    # Panel read-only: agrega data ya-en-prod a un rollup diario (dashboard_daily_metric)
+    # refrescado por un job programado (Cloud Scheduler → POST /dashboards/internal/refresh, auth
+    # shared-secret, molde ADR-012). Defaults INERTES (F0): el módulo NO está registrado y el
+    # refresco está APAGADO (DASHBOARD_REFRESH_ENABLED=False) → el validador no exige el secret y el
+    # deploy de F0 no se rompe. F1 provisiona el secret + el Cloud Scheduler y pone ENABLED=True en
+    # AMBOS workflows deploy (lección §9/§11).
+    DASHBOARD_REFRESH_ENABLED: bool = False
+    DASHBOARD_REFRESH_SECRET: str = (
+        ""  # Secret Manager: medisage-dashboard-refresh-secret-{qa,prod}
+    )
+    DASHBOARD_REFRESH_INTERVAL_MINUTES: int = 10  # cadencia del job (front refetchInterval ≈ esto)
+    DASHBOARD_REFRESH_WINDOW_DAYS: int = 90  # ventana móvil que el job recomputa cada ciclo
+
     @property
     def database_url(self) -> str:
         """Async SQLAlchemy connection string. Switches to Unix socket on Cloud Run."""
@@ -242,6 +256,26 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MICROSOFT_OAUTH_CLIENT_ID is set but MICROSOFT_OAUTH_CLIENT_SECRET is missing "
                 f"for ENV_NAME={self.ENV_NAME!r}. Set the per-environment OAuth client secret."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _enforce_dashboard_refresh_secret(self) -> Settings:
+        """Si el refresco del dashboard está habilitado (`DASHBOARD_REFRESH_ENABLED`), fuera de
+        `dev` el endpoint interno `/dashboards/internal/refresh` (target del Cloud Scheduler,
+        ADR-015) DEBE tener un `DASHBOARD_REFRESH_SECRET` real: es la única barrera entre internet y
+        el recálculo del rollup (el servicio es público). Falla RUIDOSA al boot ante un secret
+        vacío/corto en vez de aceptar refrescos sin auth (mismo principio que
+        `_enforce_bot_dispatch_secret`). En F0 el flag está en False → no exige nada (deploy-safe);
+        F1 lo pone en True tras provisionar el secret + el Cloud Scheduler."""
+        if self.ENV_NAME == "dev" or not self.DASHBOARD_REFRESH_ENABLED:
+            return self
+        if len(self.DASHBOARD_REFRESH_SECRET.strip()) < _MIN_SECRET_LEN:
+            raise ValueError(
+                "DASHBOARD_REFRESH_ENABLED is true but DASHBOARD_REFRESH_SECRET is missing or too "
+                f"short (need >= {_MIN_SECRET_LEN} chars) for ENV_NAME={self.ENV_NAME!r}. Set the "
+                "per-environment secret (generate with: python -c 'import secrets; "
+                "print(secrets.token_urlsafe(48))')."
             )
         return self
 

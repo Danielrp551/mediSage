@@ -224,6 +224,18 @@ SEED_PERMISSIONS: list[dict[str, str]] = [
         "name": "Read external calendar events (overlay)",
         "module": "CALENDAR",
     },
+    # ── Module: dashboards (#10, OE3, ADR-015) ──────────────────────────
+    {"code": "MENU-DASHBOARDS", "name": "Menu Dashboards", "module": "DASHBOARDS"},
+    {
+        "code": "DASHBOARD_VIEW",
+        "name": "View conversion dashboard (funnel + charts)",
+        "module": "DASHBOARDS",
+    },
+    {
+        "code": "REPORTS_EXPORT",
+        "name": "Generate/export reports (PDF/Excel)",
+        "module": "DASHBOARDS",
+    },
 ]
 
 
@@ -326,6 +338,11 @@ ASESOR_PERMISSION_CODES: set[str] = {
     "MENU-CALENDAR",
     "CALENDAR_CONNECTIONS_READ",
     "CALENDAR_EXTERNAL_EVENTS_READ",
+    # Dashboards (panel de conversión + reportes) — módulo futuro.
+    # MENU-DASHBOARDS queda reservado (ADMIN lo recibe auto); el panel vive en /dashboard
+    # (gated MENU-HOME, branch panel/welcome por DASHBOARD_VIEW en la página, F2).
+    "DASHBOARD_VIEW",
+    "REPORTS_EXPORT",
 }
 
 # SYSTEM: rol del usuario técnico no autenticable. NO lleva permisos — solo existe

@@ -12,6 +12,7 @@ const BOTS = "/api/v1/bots";
 const SCHEDULING = "/api/v1/scheduling";
 const MARKETING = "/api/v1/marketing";
 const CALENDAR = "/api/v1/calendar";
+const DASHBOARDS = "/api/v1/dashboards";
 
 export const ENDPOINTS = {
   AUTH: {
@@ -332,5 +333,19 @@ export const ENDPOINTS = {
     CONNECTION_SOURCES: (id: string) => `${CALENDAR}/connections/${id}/sources`, // PUT bulk replace del mapeo
     // Lectura informativa (overlay)
     EXTERNAL_EVENTS: `${CALENDAR}/external-events`, // GET ?branch_id=&from=&to= → ExternalEventsResponse (best-effort)
+  },
+  // Dashboards (módulo #10, OE3, ADR-015). Declarado en F0 (INERTE); el módulo backend NO está
+  // registrado todavía → estas rutas dan 404 hasta F1. Endpoints de AGREGACIÓN (no paginados,
+  // molde marketing usage_summary): leen el rollup materializado. Todas POST salvo META (GET).
+  // REPORT devuelve binario (PDF/Excel); INTERNAL_REFRESH es el target del Cloud Scheduler
+  // (auth shared-secret, NO JWT) — referencia documental, el front no lo llama.
+  DASHBOARDS: {
+    FUNNEL: `${DASHBOARDS}/funnel`, // POST DashboardFilter → SingleResponse[FunnelSummary]
+    LEADS_EVOLUTION: `${DASHBOARDS}/leads-evolution`, // POST → SingleResponse[TimeSeries] (línea)
+    APPOINTMENTS_DISTRIBUTION: `${DASHBOARDS}/appointments-distribution`, // POST → SingleResponse[DistributionSummary] (donut)
+    SUMMARY: `${DASHBOARDS}/summary`, // POST → SingleResponse[KpiSummary] (escalares + chatbot)
+    META: `${DASHBOARDS}/meta`, // GET → SingleResponse[DashboardMeta] (last_refreshed_at + catálogos/colores)
+    REPORT: `${DASHBOARDS}/report`, // POST DashboardFilter + {format,sections} → binario pdf|xlsx (REPORTS_EXPORT)
+    INTERNAL_REFRESH: `${DASHBOARDS}/internal/refresh`, // POST shared-secret (Cloud Scheduler) — no lo llama el front
   },
 } as const;
