@@ -1,14 +1,10 @@
 """
-Modelos del módulo `dashboards`. INERTE en F0 (sin tablas).
-
-F1 agrega la capa de agregación materializada (ADR-015):
-- `DashboardDailyMetric` (`dashboard_daily_metric`): rollup diario
-  `metric_date x branch_id x metric x segment -> count/value`. UNIQUE(metric_date, branch_id,
-  metric, segment) + índice (metric, metric_date, branch_id). Mixins PK·A·T (sin SoftDelete).
-- `DashboardRefreshState` (`dashboard_refresh_state`): singleton de observabilidad del job de
-  refresco (last_refreshed_at, window_days, status, last_error).
-
-NO son entidades de negocio (son derivadas; el refresco las repuebla por DELETE-de-ventana + INSERT).
-Migración `0026_dashboard_metric` + índices aditivos en las tablas fuente (lead_status_history.
-changed_at, conversation.opened_at, person_customer_status.became_customer_at).
+Modelos del módulo `dashboards` (F1). Importarlos acá los registra en Base.metadata antes de que
+Alembic lea el esquema y antes del create_all del smoke. Sin orden de dependencia entre ellos (no
+hay FK entre las 2 tablas; ambas son derivadas del rollup, PK·A·T sin SoftDelete — ADR-015).
 """
+
+from app.modules.dashboards.models.dashboard_daily_metric import DashboardDailyMetric
+from app.modules.dashboards.models.dashboard_refresh_state import DashboardRefreshState
+
+__all__ = ["DashboardDailyMetric", "DashboardRefreshState"]

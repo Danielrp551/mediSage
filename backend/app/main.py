@@ -32,6 +32,7 @@ from app.modules.catalog.routers import router as catalog_router
 from app.modules.clinic.routers import router as clinic_router
 from app.modules.conversations.routers import router as conversations_router
 from app.modules.crm.routers import router as crm_router
+from app.modules.dashboards.routers import router as dashboards_router
 from app.modules.marketing.routers import router as marketing_router
 from app.modules.scheduling.routers import router as scheduling_router
 from app.modules.staff.routers import router as staff_router
@@ -85,6 +86,7 @@ app.include_router(
 )  # /scheduling/appointment-statuses/... (F1)
 app.include_router(marketing_router, prefix=settings.API_V1_PREFIX)  # /marketing/campaigns/... (F1)
 app.include_router(calendar_router, prefix=settings.API_V1_PREFIX)  # /calendar/... (F1a)
+app.include_router(dashboards_router, prefix=settings.API_V1_PREFIX)  # /dashboards/... (F1)
 # Webhooks top-level (sin JWT) — Meta/WhatsApp. Firma HMAC / verify token, no RBAC.
 app.include_router(webhooks_router, prefix=settings.API_V1_PREFIX)  # /webhooks/whatsapp/{id}
 

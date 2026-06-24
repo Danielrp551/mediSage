@@ -104,7 +104,9 @@ flowchart TD
 | 3 | **Contactados / Interesados** | `lead_status_history.to ∈ {CONTACTADO, INTERESADO, EVALUANDO}` (o `person_lead_status` actual). | `COUNT(DISTINCT person_id)`. Resolver codes por catálogo. | Exacto | ✗ |
 | 4 | **Citas agendadas** | `appointment` (toda fila nace `SCHEDULED`). Origen chatbot = `source='bot'`. | `COUNT`, `scheduled_for`/`created_on ∈ rango`. Excluir `RESCHEDULED` (genera cita hija → doble conteo). | Exacto | ✓ `branch_id` denorm |
 | 5 | **Citas confirmadas / atendidas** | `appointment` con `status=CONFIRMED`/`ATTENDED` (o `confirmed_at`/`attended_at IS NOT NULL` = "alguna vez llegó a"). | `COUNT`. Hito-acumulado por `*_at` ó estado-actual por `status_id` (no mezclar — el donut usa estado actual). | Exacto | ✓ |
-| 6 | **Clientes** | `person_customer_status` (`became_customer_at`; lo crea **solo** `attend()→ATTENDED`, atómico). | `COUNT`, `became_customer_at ∈ rango`. | Exacto | ✗ (aprox. por sede de la 1ª cita) |
+| 6 | **Clientes** | `person_customer_status` (`became_customer_at`; lo crea **solo** `attend()→ATTENDED`, atómico). | `COUNT`, `became_customer_at ∈ rango`. | Exacto¹ | ✗ (aprox. por sede de la 1ª cita) |
+
+> **¹ Precisión del rollup materializado (lección review F1)**: el rollup persiste `COUNT(DISTINCT person_id)` **por día**; el plano de lectura **suma** esos conteos diarios sobre el rango. Para un **solo día** (o el stock "ahora") el conteo es **exacto**; para un **rango multi-día**, una misma persona que aparece en >1 día (o, en la etapa 3, en >1 estado) se suma >1 vez → es una **suma de únicos-diarios**, aproximada a nivel período (NO un `DISTINCT` de período, que es matemáticamente irrecuperable desde un rollup diario sin re-escanear las fuentes — lo que ADR-015 evita a propósito). El sesgo es chico y monótono. Las CITAS (etapas 4–5, conteo de filas) y el donut **sí** son exactos por período. Para series por día, `leads-evolution` es la fuente de verdad de únicos-por-día.
 
 **Tasas etapa-a-etapa** (numeradores/denominadores explícitos para evitar ambigüedad):
 - **Tasa de conversión global (KPI HU26)** = `leads que llegaron a CITA_AGENDADA / leads captados` en el rango (exacto vía `lead_status_history`). *Nota: el único `is_won` del catálogo es `CITA_AGENDADA`.*
@@ -228,7 +230,7 @@ sequenceDiagram
 - **Show rate** = `appointments[ATTENDED] / (ATTENDED + NO_SHOW)`.
 - **No-show rate** = `appointments[NO_SHOW] / (ATTENDED + NO_SHOW)`.
 - **Tasa de cierre a cliente** = `customers_new / appointments[ATTENDED]` (o `/ leads_created`).
-- **Aporte del chatbot** (`chatbot_share`) = `appointments[source='bot'] / appointments(total)` (aporte del bot a las citas, la métrica de negocio). `conversations_bot / conversations` (engagement) se expone aparte como campo propio de `KpiSummary`.
+- **Aporte del chatbot** (`chatbot_share`, campo de `FunnelSummary`) = `conversations_bot / conversations` (fracción de **conversaciones** atendidas por el bot — alineado con "conversaciones del chatbot" de HU26; es lo que computa `metrics.get_funnel`). *El aporte del bot a las CITAS (`appointment.source='bot'`) se materializa en el rollup (`appointments_source`) y queda disponible para una KPI futura; F1 no lo expone como `chatbot_share`.* `conversations_bot` también es un escalar propio de `KpiSummary`.
 
 > **Convención de tasas (contrato, autoritativo)**: todas las tasas (`conversion_rate`, `rate_from_prev`, `chatbot_share`, `show_rate`, …) se exponen como **fracción 0–1**; el front formatea a `%`. Los montos `Numeric` (p.ej. `bot_cost_usd`) viajan como **string** en el wire (convención del template). El espejo TS (`frontend.md`) y los schemas Pydantic (`backend.md`) deben respetar esto.
 

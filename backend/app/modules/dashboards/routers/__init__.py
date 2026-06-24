@@ -1,9 +1,17 @@
 """
-Routers del módulo `dashboards` (aggregator, prefix `/dashboards`). INERTE en F0 — NO montado en
-`app/main.py` (las rutas dan 404 hasta F1).
-
-F1 agrega los endpoints de lectura (todos `DASHBOARD_VIEW`): POST `/funnel`, `/leads-evolution`,
-`/appointments-distribution`, `/summary`; GET `/meta`. Más POST `/internal/refresh` (auth
-SHARED-SECRET, NO JWT/RBAC; `hmac.compare_digest`, molde ADR-012 — target del Cloud Scheduler).
-F3 agrega POST `/report` (`REPORTS_EXPORT`, binario PDF/Excel). Rutas estáticas antes que params.
+Aggregator del módulo `dashboards` (prefix `/dashboards`, montado bajo `/api/v1/` en main.py).
+F1: `metrics` (lecturas DASHBOARD_VIEW: funnel/leads-evolution/appointments-distribution/summary
++ GET meta) + `refresh` (interno, shared-secret, target del Cloud Scheduler). F3 sumará `report`
+(REPORTS_EXPORT, binario PDF/Excel).
 """
+
+from fastapi import APIRouter
+
+from app.modules.dashboards.routers.metrics import router as metrics_router
+from app.modules.dashboards.routers.refresh import router as refresh_router
+
+router = APIRouter(prefix="/dashboards")
+router.include_router(metrics_router)
+router.include_router(refresh_router)
+
+__all__ = ["router"]

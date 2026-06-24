@@ -42,7 +42,7 @@ export interface FunnelSummary {
   total_leads: number;
   total_appointments: number;
   total_customers: number;
-  chatbot_share: number; // citas con source='bot' / total de citas (fracción 0–1)
+  chatbot_share: number; // conversations_bot / total conversaciones (fracción 0–1; aporte del bot)
 }
 
 // ── Evolución de leads (línea) ───────────────────────────────────
