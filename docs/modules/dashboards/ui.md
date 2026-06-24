@@ -328,9 +328,11 @@ Las acciones devuelven `{ ok:false, error }` con el `detail` ya en español del 
 
 El módulo no tiene entidad de negocio que listar/editar/borrar. Cero `<DataTable>`, cero drawer, cero `RowActions`, cero confirmaciones destructivas. Las tablas internas (`dashboard_daily_metric`/`dashboard_refresh_state`) son derivadas y nunca se muestran crudas. Es deliberadamente más simple que cualquier módulo anterior.
 
-### Charts = `@fluentui/react-charts`, client-only, fuera del critical path
+### Charts = bespoke (tokens Fluent), sin librería ⚠ ACTUALIZADO EN F2
 
-Una sola dep de gráficos nueva (`@fluentui/react-charts`, v9 — ADR-015 #3, resuelve la contradicción de la tesis a favor de Fluent Charts sobre Recharts: comparte tokens Griffel con todo el stack → cero fricción de theming). Todos los charts son `"use client"` + `next/dynamic({ ssr:false })` + `<Skeleton>` fallback → su JS sale del critical path (ayuda al LCP/RNF-05; las KPI cards de texto pintan primero). Precedente "bespoke dentro de Fluent" para el embudo = `CalendarGrid` de scheduling.
+> **Actualización F2 (2026-06-24)**: `@fluentui/react-charts` **rompe el build de Next 16 App Router + Turbopack** (`@fluentui/react-icons`, su dep interna, se evalúa server-side con el React restringido → `createContext is not a function`; ni `dynamic ssr:false`, ni `transpilePackages`, ni `turbopack.root` lo arreglan). Se pivoteó a **charts bespoke SIN dependencia**: embudo = barras `div`, donut = CSS `conic-gradient`, línea = SVG (`vector-effect: non-scaling-stroke` + ejes HTML). Cumple el objetivo del ADR (gráficos nativos al design system, tokens Fluent, colores del catálogo) **mejor** que la lib, más liviano y SSR-safe. Detalle en [ADR-015 §Update](../../decisions/ADR-015-dashboards-materialized-aggregation.md). El texto de abajo refleja el plan original (Fluent Charts); el embudo bespoke ya estaba previsto, los otros dos se sumaron.
+
+El plan original era una sola dep de gráficos nueva (`@fluentui/react-charts`, v9 — ADR-015 #3, resuelve la contradicción de la tesis a favor de Fluent Charts sobre Recharts: comparte tokens Griffel con todo el stack → cero fricción de theming). El embudo siempre fue bespoke (precedente "bespoke dentro de Fluent" = `CalendarGrid` de scheduling); en F2 el donut y la línea también pasaron a bespoke. Los charts son `"use client"`; las KPI cards de texto pintan primero (LCP/RNF-05).
 
 ### Colores de segmentos = catálogos, nunca hardcodeados (ADR-008)
 

@@ -17,11 +17,16 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   {
+    // El panel de conversión (dashboards #10) reemplaza el welcome placeholder y es la home real.
+    // Re-gateado por el permiso fino DASHBOARD_VIEW (lo tienen ADMIN y ASESOR; el DOCTOR NO → no
+    // ve el item, y /dashboard le muestra el welcome mínimo). MENU-DASHBOARDS queda reservado
+    // (patrón scheduling/calendar). El child "Reportes" (gated REPORTS_EXPORT) llega en F3 (no se
+    // declara aún para no dejar un link muerto — lección crm).
     key: "home",
-    label: "Inicio",
-    icon: "HomeRegular",
+    label: "Panel",
+    icon: "DataFunnelRegular",
     url: "/dashboard",
-    permissions: ["MENU-HOME"],
+    permissions: ["DASHBOARD_VIEW"],
   },
   {
     key: "catalog",

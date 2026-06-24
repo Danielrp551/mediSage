@@ -431,9 +431,11 @@ export async function generateReport(
 
 ---
 
-## Charts — `@fluentui/react-charts` (NUEVA dependencia)
+## Charts — bespoke (sin dependencia) ⚠ ACTUALIZADO EN F2
 
-`@fluentui/react-charts` (v9, sucesora de `@fluentui/react-charting`) — **dep nueva del front** (se agrega en F2). Reglas (de `design.md` §8):
+> **Actualización F2 (2026-06-24)**: NO se agregó `@fluentui/react-charts`. Rompe el build de Next 16 App Router + Turbopack (`@fluentui/react-icons` interno → `createContext is not a function` en un chunk SSR; no lo salvan `dynamic ssr:false`/`transpilePackages`/`turbopack.root`). Los charts se hicieron **bespoke** con tokens Fluent: `ConversionFunnel` (barras `div`), `AppointmentsDonut` (CSS `conic-gradient` + leyenda), `LeadsLineChart` (SVG `viewBox`+`preserveAspectRatio="none"`+`vector-effect: non-scaling-stroke`, ejes HTML). Sin `next/dynamic` (ya no hay bundle pesado que diferir) y SSR-safe. Colores de segmento del catálogo (`bucket.color`/`series.color`, ADR-008), fallback a tokens. Ver [ADR-015 §Update](../../decisions/ADR-015-dashboards-materialized-aggregation.md). El texto de abajo describe el plan original con la librería.
+
+El plan original (NO implementado): `@fluentui/react-charts` (v9, sucesora de `@fluentui/react-charting`) como dep nueva del front. Reglas (de `design.md` §8):
 
 1. **Cada chart es un componente cliente** (`"use client"`): mide el DOM (ancho/alto) → no puede renderizar en server.
 2. **Carga con `next/dynamic({ ssr: false })` + `<Skeleton>` Fluent como fallback** → saca el JS del chart del **critical path** (LCP/RNF-05). El RSC pinta primero los KPI cards (texto) y los esqueletos; los charts hidratan después.

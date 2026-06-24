@@ -81,6 +81,17 @@ Construir un módulo nuevo **`dashboards`** **read-only** (no crea entidades de 
 - Definir permisos RBAC (`DASHBOARD_VIEW`, `REPORTS_EXPORT`, `MENU-DASHBOARDS`), nav, endpoints, types espejo — F0 inerte (molde scheduling F0).
 - Diseñar el detalle por ficha (`docs/modules/dashboards/{README,backend,ui,frontend}.md`) en la fase de documentación previa a F0.
 
+## Update (F2, 2026-06-24): gráficos implementados **bespoke** (sin `@fluentui/react-charts`)
+
+La decisión de alcance #3 ("Gráficos = Fluent UI Charts") se **revisó en la implementación de F2**. Se instaló `@fluentui/react-charts` (v9.3.20: expone `FunnelChart`, `DonutChart`, `LineChart`, `AreaChart`) pero **rompe el build de producción de Next 16 App Router + Turbopack**: al recolectar la página `/dashboard`, un chunk SSR evalúa `@fluentui/react-icons` (dependencia interna de react-charts) con el React restringido (react-server) → `TypeError: d.createContext is not a function`. Ni `next/dynamic({ ssr:false })`, ni `transpilePackages`, ni fijar `turbopack.root` lo resolvieron (el build sigue evaluando el módulo server-side).
+
+**Resolución**: los tres charts se implementaron **bespoke** con divs/SVG + tokens Fluent (precedente "bespoke dentro de Fluent" = `CalendarGrid` de scheduling) y se **removió la dependencia** `@fluentui/react-charts`:
+- **Embudo** (`ConversionFunnel`): barras horizontales decrecientes (ancho ∝ conteo) + `rate_from_prev`. Renderiza inmediato con el prefetch (sin bundle de charts → mejor LCP del widget protagonista).
+- **Distribución de citas** (`AppointmentsDonut`): anillo con CSS `conic-gradient` + agujero central con el total + leyenda.
+- **Evolución de leads** (`LeadsLineChart`): SVG `viewBox` con `preserveAspectRatio="none"` + `vector-effect: non-scaling-stroke` (responsive sin distorsión) + ejes en HTML (nítidos).
+
+**Por qué es consistente con el espíritu del ADR**: el motivo de elegir Fluent Charts sobre Recharts era "compartir tokens Griffel → cero fricción de theming". El bespoke con tokens Fluent **cumple ese objetivo aún mejor** (cero librería de charts, cero theming foráneo), es **más liviano** (sin 38 paquetes nuevos ni JS pesado), **SSR-safe** y los colores de segmento siguen saliendo del catálogo (ADR-008). Trade-off: sin tooltips/leyendas/ejes "gratis" de la lib → se construyen a mano (leyendas + `<title>` SVG nativos + ejes HTML). La contradicción de la tesis (Recharts vs §6.2.3) se resuelve igual a favor de gráficos **nativos al design system**, ahora literalmente sin dependencia externa.
+
 ## Referencias
 
 - **Documento de diseño**: [`docs/modules/dashboards/design.md`](../modules/dashboards/design.md) (arquitectura, cómputo del embudo, modelo del rollup, refresco, KPIs, UI, fases, diagramas mermaid).

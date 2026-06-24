@@ -13,6 +13,7 @@ import {
   ChevronRightRegular,
   ConferenceRoomRegular,
   ContactCardRegular,
+  DataFunnelRegular,
   DoctorRegular,
   HomeRegular,
   LockClosedRegular,
@@ -41,6 +42,8 @@ import { useLayout } from "@/providers/LayoutProvider";
 
 const ICONS: Record<string, ReactElement> = {
   HomeRegular: <HomeRegular />,
+  // Dashboards module (#10) — el embudo es el corazón del panel.
+  DataFunnelRegular: <DataFunnelRegular />,
   SettingsRegular: <SettingsRegular />,
   PeopleRegular: <PeopleRegular />,
   ShieldRegular: <ShieldRegular />,
