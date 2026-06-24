@@ -26,6 +26,11 @@ dependencies = [
     # scheduling resuelve horas locales del branch a UTC con zoneinfo; el paquete
     # tzdata provee la base IANA donde el SO/contenedor no la trae (Windows, slim images).
     "tzdata>=2024.1",
+    # dashboards F3: reportes server-side. reportlab = PDF puro-Python (sin system deps → NO toca
+    # el Dockerfile, a diferencia de weasyprint que exige cairo/pango apt); openpyxl = Excel .xlsx
+    # puro-Python. Ambos se importan LAZY dentro del service report (boot/smoke sin la dep no rompen).
+    "reportlab>=4.2,<5",
+    "openpyxl>=3.1,<4",
 ]
 
 [project.optional-dependencies]
@@ -105,4 +110,10 @@ ignore_missing_imports = true
 # boot/smoke local con ENV_NAME=dev hace NO-OP y nunca lo importa). En runtime/Docker es dep directa.
 [[tool.mypy.overrides]]
 module = ["google.cloud", "google.cloud.tasks_v2", "google.cloud.tasks_v2.*"]
+ignore_missing_imports = true
+
+# reportlab/openpyxl se importan LAZY dentro de dashboards/services/report.py (F3); reportlab no
+# publica stubs y la dep puede no estar en el venv local del smoke. En runtime/Docker son deps directas.
+[[tool.mypy.overrides]]
+module = ["reportlab.*", "openpyxl.*"]
 ignore_missing_imports = true

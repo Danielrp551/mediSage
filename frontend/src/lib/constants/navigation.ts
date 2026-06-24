@@ -17,16 +17,31 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   {
-    // El panel de conversión (dashboards #10) reemplaza el welcome placeholder y es la home real.
-    // Re-gateado por el permiso fino DASHBOARD_VIEW (lo tienen ADMIN y ASESOR; el DOCTOR NO → no
-    // ve el item, y /dashboard le muestra el welcome mínimo). MENU-DASHBOARDS queda reservado
-    // (patrón scheduling/calendar). El child "Reportes" (gated REPORTS_EXPORT) llega en F3 (no se
-    // declara aún para no dejar un link muerto — lección crm).
+    // Grupo "Panel" (dashboards #10): el panel de conversión (DASHBOARD_VIEW) + los reportes
+    // (REPORTS_EXPORT). Es la home de la app para ADMIN/ASESOR; el DOCTOR no tiene ninguno de los
+    // dos → no ve el grupo (y /dashboard le muestra el welcome mínimo). MENU-DASHBOARDS queda
+    // reservado (patrón scheduling/calendar: el nav se gatea por el permiso fino). En F2 era un
+    // item simple; F3 lo convierte en grupo al sumar Reportes. El `icon` del grupo no se renderiza
+    // (el header de grupo solo muestra label + chevron).
     key: "home",
     label: "Panel",
-    icon: "DataFunnelRegular",
-    url: "/dashboard",
-    permissions: ["DASHBOARD_VIEW"],
+    icon: "DataTrendingRegular",
+    children: [
+      {
+        key: "dashboard",
+        label: "Panel de conversión",
+        icon: "DataFunnelRegular",
+        url: "/dashboard",
+        permissions: ["DASHBOARD_VIEW"],
+      },
+      {
+        key: "reportes",
+        label: "Reportes",
+        icon: "DocumentTableRegular",
+        url: "/dashboard/reportes",
+        permissions: ["REPORTS_EXPORT"],
+      },
+    ],
   },
   {
     key: "catalog",

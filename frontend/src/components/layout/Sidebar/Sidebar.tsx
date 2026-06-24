@@ -14,7 +14,9 @@ import {
   ConferenceRoomRegular,
   ContactCardRegular,
   DataFunnelRegular,
+  DataTrendingRegular,
   DoctorRegular,
+  DocumentTableRegular,
   HomeRegular,
   LockClosedRegular,
   MailInboxRegular,
@@ -42,8 +44,11 @@ import { useLayout } from "@/providers/LayoutProvider";
 
 const ICONS: Record<string, ReactElement> = {
   HomeRegular: <HomeRegular />,
-  // Dashboards module (#10) — el embudo es el corazón del panel.
+  // Dashboards module (#10): grupo Panel (DataTrending, no se renderiza) + panel de conversión
+  // (DataFunnel) + reportes (DocumentTable).
   DataFunnelRegular: <DataFunnelRegular />,
+  DataTrendingRegular: <DataTrendingRegular />,
+  DocumentTableRegular: <DocumentTableRegular />,
   SettingsRegular: <SettingsRegular />,
   PeopleRegular: <PeopleRegular />,
   ShieldRegular: <ShieldRegular />,

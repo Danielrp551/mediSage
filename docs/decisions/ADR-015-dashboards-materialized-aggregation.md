@@ -1,6 +1,6 @@
 # ADR-015: Módulo de Dashboards y Reportes — agregación materializada (daily rollup), reportes server-side, Fluent UI Charts
 
-> **Status**: Proposed
+> **Status**: Accepted (módulo F0–F3 completo en producción 2026-06-24)
 > **Date**: 2026-06-24
 > **Deciders**: @daniel, @marco
 

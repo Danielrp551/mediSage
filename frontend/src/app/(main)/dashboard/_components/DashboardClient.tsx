@@ -13,8 +13,9 @@
  */
 
 import { Button, Spinner, Tooltip, makeStyles, tokens } from "@fluentui/react-components";
-import { ArrowSyncRegular } from "@fluentui/react-icons";
+import { ArrowSyncRegular, DocumentTableRegular } from "@fluentui/react-icons";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import {
@@ -24,6 +25,7 @@ import {
   getMeta,
   getSummary,
 } from "@/actions/dashboards.actions";
+import { PermissionGuard } from "@/components/guards/PermissionGuard";
 import { appTokens } from "@/lib/theme/brand";
 import type {
   DashboardFilter,
@@ -62,6 +64,19 @@ const useStyles = makeStyles({
     letterSpacing: "-0.02em",
   },
   headerActions: { display: "flex", alignItems: "center", gap: tokens.spacingHorizontalS },
+  reportLink: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    fontSize: tokens.fontSizeBase300,
+    color: appTokens.chromeText,
+    textDecoration: "none",
+    border: `1px solid ${appTokens.tableBorder}`,
+    borderRadius: tokens.borderRadiusMedium,
+    transition: "background-color 120ms ease",
+    "&:hover": { backgroundColor: appTokens.chromeBgHover },
+  },
   chartsRow: {
     display: "grid",
     gridTemplateColumns: "1fr",
@@ -162,6 +177,12 @@ export function DashboardClient({ initialData, initialFilter }: Props) {
       <header className={styles.header}>
         <h1 className={styles.title}>Panel de conversión</h1>
         <div className={styles.headerActions}>
+          <PermissionGuard anyOf={["REPORTS_EXPORT"]}>
+            <Link href="/dashboard/reportes" className={styles.reportLink}>
+              <DocumentTableRegular />
+              Reportes
+            </Link>
+          </PermissionGuard>
           <FreshnessBadge
             lastRefreshedAt={metaQuery.data?.last_refreshed_at ?? null}
             intervalMinutes={REFRESH_MINUTES}

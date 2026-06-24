@@ -27,3 +27,12 @@ class DashboardMetric(StrEnum):
     customers_new = "customers_new"  # COUNT(DISTINCT person_id) person_customer_status
     bot_turns = "bot_turns"  # COUNT bot_event WHERE event_type='turn_completed'
     bot_cost = "bot_cost"  # value=SUM(cost_estimated_usd); count=SUM(tokens_in+tokens_out)
+
+
+class ReportFormat(StrEnum):
+    """Formato del reporte exportable (F3). El request lo recibe como `str` (no este enum) para
+    que un formato no soportado dé un 400 de dominio (REPORT_FORMAT_NOT_SUPPORTED) y no el 422 de
+    Pydantic; el service `report` mapea el str a este enum (lección §22, igual que el rango)."""
+
+    pdf = "pdf"
+    excel = "excel"

@@ -21,17 +21,24 @@
  * el error (es un gesto del usuario → MutationResult).
  */
 
+import { cookies } from "next/headers";
+
+import { serverEnv } from "@/config/env";
+import { COOKIES } from "@/lib/constants/cookies";
 import { ENDPOINTS } from "@/lib/constants/endpoints";
 import { backendClient } from "@/services/backend.client";
-import type { ApiSingle } from "@/types/api.types";
+import { HttpError, type ApiSingle } from "@/types/api.types";
 import type {
   DashboardFilter,
   DashboardMeta,
   DistributionSummary,
   FunnelSummary,
   KpiSummary,
+  ReportRequest,
   TimeSeries,
 } from "@/types/dashboards.types";
+
+import type { MutationResult } from "./user.actions";
 
 const DASHBOARDS_TAG = "dashboards";
 
@@ -85,4 +92,54 @@ export async function getMeta(): Promise<DashboardMeta> {
     tags: [DASHBOARDS_TAG],
   });
   return res.data;
+}
+
+// ── Reporte (F3): descarga del binario PDF/Excel desde un Server Action ───────────
+// GOTCHA: `backendClient` SIEMPRE hace `res.json()` → NO sirve para un binario. `generateReport`
+// hace su PROPIO `fetch` server-side (leyendo la cookie httpOnly como Bearer), captura el
+// ArrayBuffer y lo devuelve como base64 + filename + mime; el cliente arma un Blob y dispara la
+// descarga (no se puede streamear el binario directo al navegador desde un Server Action; se
+// serializa por el canal de la action). A DIFERENCIA de los reads, SÍ captura el error → devuelve
+// MutationResult para que el ReportForm muestre el `detail` ES en un MessageBar
+// (REPORT_FORMAT_NOT_SUPPORTED / DASHBOARD_INVALID_DATE_RANGE). SIN revalidateTag (es export, no
+// muta negocio).
+export async function generateReport(
+  input: ReportRequest,
+): Promise<MutationResult<{ filename: string; mime: string; base64: string }>> {
+  try {
+    const jar = await cookies();
+    const token = jar.get(COOKIES.ACCESS_TOKEN)?.value;
+    const res = await fetch(`${serverEnv.BACKEND_URL}${ENDPOINTS.DASHBOARDS.REPORT}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(input),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      // El backend manda el error como envelope JSON (REPORT_FORMAT_NOT_SUPPORTED 400,
+      // DASHBOARD_INVALID_DATE_RANGE 400) incluso para este endpoint binario.
+      let body: unknown = null;
+      try {
+        body = await res.json();
+      } catch {
+        /* ignore */
+      }
+      throw new HttpError(res.status, body);
+    }
+    const mime = res.headers.get("content-type") ?? "application/octet-stream";
+    // Filename del Content-Disposition (el backend lo fija: "reporte-conversion_<desde>_<hasta>.pdf").
+    const cd = res.headers.get("content-disposition") ?? "";
+    const filename = /filename="?([^"]+)"?/.exec(cd)?.[1] ?? "reporte.bin";
+    const buf = await res.arrayBuffer();
+    const base64 = Buffer.from(buf).toString("base64");
+    return { ok: true, data: { filename, mime, base64 } };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof HttpError ? e.message : "No se pudo generar el reporte.",
+    };
+  }
 }
