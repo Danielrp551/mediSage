@@ -102,7 +102,7 @@ export function AppointmentsDonut({ data }: { data: DistributionSummary | undefi
         />
         <div className={styles.hole}>
           <span className={styles.holeTotal}>{formatInt(data.total)}</span>
-          <span className={styles.holeLabel}>citas</span>
+          <span className={styles.holeLabel}>{data.total === 1 ? "cita" : "citas"}</span>
         </div>
       </div>
       <div className={styles.legend}>

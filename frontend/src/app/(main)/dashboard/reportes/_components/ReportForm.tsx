@@ -81,7 +81,9 @@ const useStyles = makeStyles({
     alignItems: "flex-end",
     flexWrap: "wrap",
   },
-  control: { minWidth: "180px" },
+  // Ancho FIJO para que Rango y Sede queden IGUAL de anchos (la Sede, dentro de un Field block, se
+  // estiraba a todo el card; Rango vive en un flex). 280px entra holgado en el form (maxWidth 640).
+  control: { width: "280px", minWidth: "180px" },
   dateInput: {
     fontFamily: tokens.fontFamilyBase,
     fontSize: tokens.fontSizeBase300,

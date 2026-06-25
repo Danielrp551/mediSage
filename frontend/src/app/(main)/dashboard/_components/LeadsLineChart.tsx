@@ -109,7 +109,8 @@ export function LeadsLineChart({ data }: { data: TimeSeries | undefined }) {
       <div className={styles.plot}>
         <div className={styles.yAxis}>
           <span>{formatInt(maxY)}</span>
-          <span>{formatInt(Math.round(maxY / 2))}</span>
+          {/* El tick del medio se omite si redondea al mismo valor que el tope (ej. maxY=1 → 1/1/0). */}
+          <span>{Math.round(maxY / 2) < maxY ? formatInt(Math.round(maxY / 2)) : ""}</span>
           <span>0</span>
         </div>
 

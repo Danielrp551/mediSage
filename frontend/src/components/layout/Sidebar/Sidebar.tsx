@@ -168,7 +168,9 @@ const useStyles = makeStyles({
   },
   itemActive: {
     backgroundColor: appTokens.chromeBgActive,
-    color: tokens.colorBrandForeground1,
+    // colorBrandForeground2 (azul más oscuro) en vez de Foreground1: sobre chromeBgActive el #0F6CBD
+    // daba contraste 4.36 < 4.5 (falla AA en texto normal, Lighthouse); el #115EA3 da ~5.5.
+    color: tokens.colorBrandForeground2,
     fontWeight: tokens.fontWeightSemibold,
     "&::before": {
       content: '""',
