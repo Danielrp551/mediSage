@@ -11,7 +11,7 @@ deploy productivo.
 | 1 | Rate limiting distribuido (Redis) | 1–2 h | `max-instances > 1` y el rate-limit es defensa real (no UX) |
 | 2 | Pool de DB + concurrency de Cloud Run | 30 min + medir | Antes del primer load test productivo |
 | 3 | Migraciones como Cloud Run Job | 2 h | Cuando una migración pueda durar > 30 s o haya > 1 instancia activa |
-| 4 | Cloud Run deploy flags (SA, execution-env, ingress) | 15 min | Siempre antes de prod |
+| 4 | Cloud Run deploy flags (SA, execution-env, ingress) | Resuelto | Ya aplicado en `deploy-backend-{qa,prod}.yml` |
 | 5 | Argon2id en lugar de bcrypt | 30 min | Credenciales de alto valor (financial/health) |
 
 ---
@@ -29,13 +29,13 @@ Ver: [`app/core/rate_limit.py`](../backend/app/core/rate_limit.py),
 
 ### Por qué importa
 
-Con `--max-instances=20` y `LOGIN_RATE_LIMIT="5/minute"`, el techo real
-contra credential-stuffing es `5 × 20 = 100 intentos/minuto` por IP
+Con `--max-instances=10` (prod) y `LOGIN_RATE_LIMIT="5/minute"`, el techo real
+contra credential-stuffing es `5 × 10 = 50 intentos/minuto` por IP
 (si las requests caen en instancias distintas, lo cual es lo normal con
 un LB round-robin). Para un atacante con botnet, el rate limit deja de
 ser defensa y pasa a ser teatro.
 
-Con Redis compartido, los 20 instances comparten un bucket único → el
+Con Redis compartido, las 10 instancias comparten un bucket único → el
 limit es realmente `5/minute` global por IP.
 
 ### Cómo aplicarlo
@@ -71,7 +71,7 @@ limiter = Limiter(
 )
 ```
 
-**Paso 4.** En `backend-deploy.yml`, montar el secret:
+**Paso 4.** En `deploy-backend-prod.yml`, montar el secret:
 
 ```yaml
 --set-secrets "...,REDIS_URL=redis-url:latest"
@@ -104,10 +104,10 @@ pool_recycle=300,
 ```
 
 ```yaml
-# .github/workflows/backend-deploy.yml
+# .github/workflows/deploy-backend-prod.yml (qa: min 0 / max 3)
 --concurrency 80
 --min-instances 1
---max-instances 20
+--max-instances 10
 ```
 
 ### Por qué importa
@@ -123,8 +123,8 @@ siempre ocupa una conexión durante la mayor parte de su vida.
 
 **b. Saturación de Cloud SQL:** Cloud SQL Postgres `db-f1-micro` (tier
 de desarrollo, $7/mes) tope ~**25 conexiones totales**. Con
-`pool_size + max_overflow = 10` y `max-instances=20` el peak es
-`10 × 20 = 200 conexiones` — 8× el límite. Postgres rechaza los excedentes
+`pool_size + max_overflow = 10` y `max-instances=10` (prod) el peak es
+`10 × 10 = 100 conexiones`, 4× el límite. Postgres rechaza los excedentes
 y los logs se llenan de `FATAL: remaining connection slots are reserved`.
 
 ### Cómo aplicarlo
@@ -163,7 +163,7 @@ engine = create_async_engine(
 ```
 
 ```yaml
-# .github/workflows/backend-deploy.yml
+# .github/workflows/deploy-backend-prod.yml
 --concurrency 25
 --max-instances 5
 ```
@@ -243,7 +243,7 @@ echo "Done."
 **Paso 3.** Cambio en el workflow de deploy:
 
 ```yaml
-# .github/workflows/backend-deploy.yml
+# .github/workflows/deploy-backend-prod.yml
 - name: Run migrations job
   run: |
     gcloud run jobs deploy migrate \
@@ -285,23 +285,31 @@ pasos (la app vieja debe poder correr con el schema nuevo).
 
 ---
 
-## 4. Cloud Run deploy flags faltantes
+## 4. Cloud Run deploy flags (resuelto)
 
 ### Estado actual
 
+Ambos workflows de deploy (`deploy-backend-qa.yml` y `deploy-backend-prod.yml`)
+ya fijan de forma explícita la cuenta de servicio, el entorno de ejecución y el
+ingress. Comando real de producción (resumido):
+
 ```yaml
-# .github/workflows/backend-deploy.yml
+# .github/workflows/deploy-backend-prod.yml
 gcloud run deploy "$SERVICE" \
   --image "$IMAGE" \
   --region "$REGION" \
   --platform managed \
+  --service-account "$DEPLOY_SA" \          # medisage-sa (prod) / medisage-sa-qa (qa)
+  --execution-environment gen2 \
+  --no-cpu-throttling \
+  --ingress all \
   --add-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
   --set-env-vars "..." \
   --set-secrets "..." \
-  --memory 512Mi \
+  --memory 1Gi \                            # qa: 512Mi
   --cpu 1 \
-  --min-instances 1 \
-  --max-instances 20 \
+  --min-instances 1 \                       # qa: 0
+  --max-instances 10 \                      # qa: 3
   --concurrency 80 \
   --cpu-boost \
   --timeout 60s
@@ -309,83 +317,51 @@ gcloud run deploy "$SERVICE" \
 
 ### Por qué importa
 
-Faltan tres flags que tienen defaults variables (Google cambia los
-defaults sin previo aviso a veces) o que están en valores inseguros:
+Tres flags que el deploy fija de forma explícita, porque sus defaults son
+variables (Google los cambia sin previo aviso) o inseguros:
 
-**`--service-account`** — sin este flag, el service corre como
-**Compute Engine default service account**, que tiene roles muy amplios
-sobre el proyecto (Editor por default). Si un atacante consigue RCE,
-heredan todos esos permisos.
+**`--service-account`**: sin este flag, el service correría como la
+**Compute Engine default service account**, que tiene roles muy amplios sobre
+el proyecto (Editor por default). Aquí cada entorno usa su SA dedicada
+(`medisage-sa` en prod, `medisage-sa-qa` en qa) con permisos mínimos
+(`roles/cloudsql.client`, `roles/secretmanager.secretAccessor`,
+`roles/cloudtasks.enqueuer`).
 
-**`--execution-environment`** — `gen1` y `gen2` tienen comportamientos
-diferentes (gVisor sandbox en gen2, syscalls extra, GPU support, etc.).
-Fijar el valor te protege de cambios sorpresa.
+**`--execution-environment gen2`**: fija el sandbox (gVisor de gen2) y evita
+cambios sorpresa entre gen1 y gen2.
 
-**`--ingress`** — el default es `all` (cualquiera en internet puede
-golpear el service URL directamente, esquivando tu LB / Vercel / CDN).
+**`--ingress all`**: el service es público de forma intencional, porque debe
+recibir el webhook de WhatsApp y las llamadas del servidor de Vercel. El
+endurecimiento real vive en las otras capas: CORS, rate limit, autenticación y
+el secreto compartido del dispatch del bot.
 
-### Cómo aplicarlo
+### Cómo se configuró
 
-**Paso 1.** Crear un service account dedicado con permisos mínimos:
+La cuenta de servicio por entorno se creó con permisos mínimos (ver
+`docs/DEPLOYMENT.md` sección 2.4):
 
 ```bash
-gcloud iam service-accounts create cloud-run-backend \
-  --display-name "Cloud Run backend (least privilege)"
+gcloud iam service-accounts create medisage-sa \
+  --display-name "Medisage Cloud Run SA (prod)"
+gcloud iam service-accounts create medisage-sa-qa \
+  --display-name "Medisage Cloud Run SA (qa)"
 
-# Sólo lo que el backend necesita
+# Roles mínimos por SA (prod como ejemplo)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:cloud-run-backend@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:medisage-sa@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
-
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:cloud-run-backend@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:medisage-sa@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/cloudsql.client"
 ```
 
-**Paso 2.** Agregar los flags al workflow:
+Los flags ya están en el paso `Deploy to Cloud Run` de ambos workflows; el SA de
+cada entorno llega por el secreto de GitHub `DEPLOY_SA`.
 
-```yaml
-gcloud run deploy "$SERVICE" \
-  --image "$IMAGE" \
-  --region "$REGION" \
-  --platform managed \
-  --add-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
-  --service-account "cloud-run-backend@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --execution-environment gen2 \
-  --ingress all \
-  --set-env-vars "..." \
-  ...
-```
+### Estado
 
-**Sobre `--ingress`:**
-
-- `all` — service URL accesible desde internet. **OK** si Vercel /
-  frontend lo llama directo y no usas LB con WAF.
-- `internal-and-cloud-load-balancing` — sólo accesible desde la red GCP
-  y desde Cloud Load Balancing. Apropiado si tienes LB con Cloud Armor.
-- `internal` — sólo desde GCP. Apropiado para backends llamados
-  exclusivamente por otros services GCP.
-
-Si Vercel llama al backend público directo (lo más común con esta
-plantilla), `--ingress all` es correcto; el endurecimiento real son
-las **otras** capas: CORS, rate limit, auth.
-
-**Paso 3 (opcional).** Pin `--platform`, `--use-http2`, y `--vpc-egress`
-si tienes red privada:
-
-```yaml
---platform managed \
---use-http2 \
---vpc-connector ... \
---vpc-egress private-ranges-only
-```
-
-### Costo / cuándo postergar
-
-- **Esfuerzo:** 15 min (mayoría es la creación del SA).
-- **Sin costo runtime.**
-- **No postergar.** El SA default con permisos amplios es el footgun
-  más común de Cloud Run. Resuélvelo antes del primer deploy a prod.
+**Resuelto.** No hay acción pendiente. Mejora opcional a futuro: con una red
+privada, fijar `--use-http2`, `--vpc-connector` y `--vpc-egress`.
 
 ---
 
@@ -493,12 +469,12 @@ Habría que exponer `_pwd_context` o agregar un helper
 
 Recomendación de orden de aplicación cuando tengas la infra:
 
-- [ ] **#4 — Deploy flags** (15 min, gratis, sin postergar)
+- [x] **#4 — Deploy flags** (resuelto: ya aplicado en ambos workflows)
 - [ ] **#2 — Pool/concurrency** (30 min + medir, si vas a load-testear)
 - [ ] **#3 — Migraciones como Job** (2 h, antes de la primera migración pesada)
 - [ ] **#1 — Redis para rate limit** (1–2 h, cuando `max-instances > 3` y rate-limit es defensa real)
 - [ ] **#5 — Argon2id** (30 min, evaluar contra el perfil de credenciales)
 
-Los items 1, 3, y 5 escalan con el tamaño del producto. Los items 2 y 4
-son **disciplina de bootstrap** — vale la pena tenerlos resueltos
-antes de la primera demo seria.
+Los items 1, 3, y 5 escalan con el tamaño del producto. El item 2 es
+**disciplina de bootstrap** (vale la pena resolverlo antes de la primera demo
+seria). El item 4 ya está resuelto.

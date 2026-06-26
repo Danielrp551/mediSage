@@ -265,7 +265,7 @@ Para **cada Environment** (`qa` y `prod`), agregar estos secrets:
 | `CLOUD_RUN_SERVICE` | `medisage-api-qa` | `medisage-api` |
 | `CLOUD_SQL_INSTANCE` | `proyecto-ifc-497317:us-central1:medisage-db` | (igual) |
 | `CORS_ORIGINS` | `https://medisage-git-qa-tuorg.vercel.app` | `https://medisage.vercel.app` (o el dominio prod) |
-| `SERVICE_URL` *(solo prod)* | — | `https://medisage-api-87449178744.us-central1.run.app` |
+| `SERVICE_BASE_URL` | `https://medisage-api-qa-87449178744.us-central1.run.app` | `https://medisage-api-87449178744.us-central1.run.app` |
 
 > **Nota:** los secrets compartidos (`GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`,
 > `CLOUD_SQL_INSTANCE`) hay que duplicarlos en cada Environment porque GitHub

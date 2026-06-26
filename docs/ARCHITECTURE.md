@@ -1,7 +1,7 @@
 # Arquitectura
 
 > **Diagramas detallados** → [`diagrams/`](diagrams/README.md) (ER, class, sequence, C4 en Mermaid).
-> **Decisiones técnicas** → [`adr/`](adr/README.md) (por qué cookies httpOnly, por qué 5 capas, etc.).
+> **Decisiones técnicas** → [`decisions/`](decisions/README.md) (por qué cookies httpOnly, por qué 5 capas, etc.).
 
 Este documento da la vista narrativa. Para profundizar en cada pieza, ir a los diagramas o ADRs enlazados.
 

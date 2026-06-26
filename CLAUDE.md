@@ -51,7 +51,7 @@ Browser ──HTTPS+cookie─▶ Next.js (Vercel) ──Bearer JWT (server-only)
 - **El backend es la fuente de verdad de los permisos.** El frontend solo pre-filtra UX (esconde botones, redirige). Nunca se asume que ocultar un botón es suficiente — el backend rechaza con 403 sin importar lo que el front haya hecho.
 - **Los permisos viajan en el access token** como claim `permissions[]`. No se consulta la BD por request. Implicancia: si revocas un permiso a un usuario activo, el cambio surte efecto al siguiente refresh (≤15 min default) o cuando se revoque la familia de refresh tokens.
 
-Diagramas de clases y ER en [`docs/diagrams/`](docs/diagrams/README.md) (PlantUML). Decisiones técnicas en [`docs/adr/`](docs/adr/README.md).
+Diagramas de clases y ER en [`docs/diagrams/`](docs/diagrams/README.md) (PlantUML). Decisiones técnicas en [`docs/decisions/`](docs/decisions/README.md).
 
 ## Contratos cross-cutting (back ↔ front)
 
@@ -99,7 +99,7 @@ El módulo `admin` es la referencia. Para un módulo nuevo (p.ej. `inventory`):
 - `backend/tests/test_inventory/` — al menos un smoke test que cubra el path principal con autenticación real (no mockear DB; usar `aiosqlite` en memoria configurado en conftest).
 
 **Documentación del módulo nuevo**:
-- ADR en `docs/adr/NNNN-...md` si la decisión es no-obvia.
+- ADR en `docs/decisions/ADR-NNN-...md` si la decisión es no-obvia.
 - Diagrama de clases / ER en `docs/diagrams/class-backend-<modulo>.puml` y `er-<modulo>.puml`. Renderizar con `java -jar tools/plantuml.jar -tsvg -o out docs/diagrams/*.puml`.
 
 ## Hardening pre-prod
@@ -131,6 +131,6 @@ Si vas a desplegar a prod, revisar `docs/HARDENING.md` antes.
 - [docs/PERMISSIONS.md](docs/PERMISSIONS.md) — modelo RBAC y cómo agregar permisos
 - [docs/HARDENING.md](docs/HARDENING.md) — checklist pre-prod (5 items)
 - [docs/diagrams/](docs/diagrams/README.md) — diagramas PlantUML (class, ER, sequence, …)
-- [docs/adr/](docs/adr/README.md) — Architecture Decision Records
+- [docs/decisions/](docs/decisions/README.md) — Architecture Decision Records
 - [backend/CLAUDE.md](backend/CLAUDE.md) — específico de FastAPI
 - [frontend/CLAUDE.md](frontend/CLAUDE.md) — específico de Next.js
