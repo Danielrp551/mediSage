@@ -154,7 +154,6 @@ export function OfficeHoursTab({ officeId, branchTimezone }: Props) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [officeId]);
 
   const blocksByDay = useMemo(() => {

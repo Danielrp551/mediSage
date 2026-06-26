@@ -17,6 +17,7 @@ node_modules/
 .next/
 out/
 *.tsbuildinfo
+coverage/
 
 # Env
 .env

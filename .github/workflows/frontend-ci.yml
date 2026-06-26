@@ -39,6 +39,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Test
+        # vitest run --coverage: ejecuta la suite y aplica el gate de cobertura del
+        # modulo de Dashboards (RNF-04, equivalente al --cov-fail-under del backend).
+        run: npm run test:cov
+
       - name: Build
         env:
           BACKEND_URL: http://localhost:8080

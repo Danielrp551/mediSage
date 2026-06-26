@@ -255,7 +255,7 @@ export interface ConversationBotStateItem {
 }
 
 // Detalle = Item (sin campos extra por ahora).
-export interface ConversationBotStateDetail extends ConversationBotStateItem {}
+export type ConversationBotStateDetail = ConversationBotStateItem;
 
 // Reset explícito del estado del bot en una conversación. `reason` opcional;
 // el cid va por path.

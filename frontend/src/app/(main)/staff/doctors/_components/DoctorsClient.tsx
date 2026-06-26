@@ -25,7 +25,6 @@ import { deleteDoctor, listDoctors } from "@/actions/doctor.actions";
 import { PermissionGuard } from "@/components/guards/PermissionGuard";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog/ConfirmDialog";
 import { DataTable } from "@/components/ui/DataTable/DataTable";
-import { Drawer } from "@/components/ui/Drawer/Drawer";
 import { RowActions, type RowAction } from "@/components/ui/RowActions/RowActions";
 import { useTableQuery } from "@/hooks/useTableQuery";
 import { appTokens } from "@/lib/theme/brand";

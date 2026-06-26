@@ -39,7 +39,7 @@ import { appTokens } from "@/lib/theme/brand";
 import { formatDate } from "@/lib/utils/date";
 import type { ProductOption } from "@/types/catalog.types";
 import type { BranchOption } from "@/types/clinic.types";
-import { APPOINTMENT_SOURCES, type AppointmentStatusOption } from "@/types/scheduling.types";
+import type { APPOINTMENT_SOURCES, AppointmentStatusOption } from "@/types/scheduling.types";
 import type { DoctorOption } from "@/types/staff.types";
 
 import { EditAppointmentDrawer } from "./EditAppointmentDrawer";
